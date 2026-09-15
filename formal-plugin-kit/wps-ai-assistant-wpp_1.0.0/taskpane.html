@@ -118,7 +118,10 @@
         </section>
 
         <section id="structure-review-controls" class="controls" hidden>
-          <p class="task-guidance">结构审查只读取页码、主标题和可选副标题；无标题页最多补充 120 个正文字符。单次最多审查 60 页，不会修改幻灯片。</p>
+          <details class="context-help task-context-help">
+            <summary aria-label="查看结构审查说明">!</summary>
+            <div class="context-help-popover" role="note">结构审查只读取页码、主标题和可选副标题；无标题页最多补充 120 个正文字符。单次最多审查 60 页，不会修改幻灯片。</div>
+          </details>
           <div class="structure-range-grid">
             <label class="field" for="ppt-structure-start-slide">
               <span>起始页</span>
@@ -139,7 +142,7 @@
 
         <section id="structure-result-section" class="result-panel" hidden>
           <div class="panel-head">
-            <h2>结构审查结果</h2>
+            <h2 id="structure-result-title">结果预览</h2>
             <div class="result-actions">
               <button id="btn-view-structure-history" class="ghost-action history-entry-button" type="button" title="查看成功历史">
                 历史记录<span id="structure-history-unread-badge" class="history-badge" hidden>0</span>
@@ -197,17 +200,74 @@
               </div>
             </section>
 
+            <section id="model-configuration-card" class="settings-card workflow-settings-card">
+              <div class="workflow-settings-heading">
+                <h4>模型配置</h4>
+                <button id="workflow-help-button" class="info-button" type="button" aria-label="查看模型配置说明" aria-expanded="false" aria-controls="workflow-help-popover">!</button>
+              </div>
+              <div id="workflow-help-popover" class="workflow-help-popover" role="tooltip" hidden>每项任务可保存多个独立模型配置，并选择工作流平台或模型直连接入。</div>
+              <div id="workflow-task-tabs" class="workflow-task-tabs" role="tablist" aria-label="PPT 任务">
+                <button type="button" role="tab" data-workflow-task-tab="ppt.slide_assistant" aria-selected="true">智能总结</button>
+                <button type="button" role="tab" data-workflow-task-tab="ppt.structure_review" aria-selected="false">结构审查</button>
+              </div>
+              <section id="ppt-task-direct-service-section" class="task-model-selection-card">
+                <div class="task-selection-heading">
+                  <h4 id="ppt-task-direct-service-title">接入选择</h4>
+                  <details class="context-help">
+                    <summary aria-label="查看接入选择说明">!</summary>
+                    <div id="ppt-task-direct-service-hint" class="context-help-popover" role="note">使用工作流平台或绑定直连模型配置，独立调整任务参数。</div>
+                  </details>
+                </div>
+                <label class="field" for="ppt-task-direct-service-select">
+                  <span class="sr-only">接入选择</span>
+                  <select id="ppt-task-direct-service-select">
+                    <option value="">-- 使用工作流平台配置 --</option>
+                  </select>
+                </label>
+                <div id="ppt-task-direct-params" hidden>
+                  <label class="field" for="ppt-task-model-select">
+                    <span>任务模型</span>
+                    <select id="ppt-task-model-select">
+                      <option value="">继承服务默认模型</option>
+                    </select>
+                  </label>
+                  <label class="workflow-activate-check" for="ppt-task-custom-model-check">
+                    <input id="ppt-task-custom-model-check" type="checkbox" />
+                    <span>使用自定义模型标识</span>
+                  </label>
+                  <label id="ppt-task-custom-model-row" class="field" for="ppt-task-custom-model-input" hidden>
+                    <span>自定义模型</span>
+                    <input id="ppt-task-custom-model-input" type="text" placeholder="例如：deepseek-reasoner" />
+                  </label>
+                  <div class="grid-three-col">
+                    <label class="field"><span>温度</span><input id="ppt-task-temperature" type="number" min="0" max="2" step="0.1" placeholder="默认" /></label>
+                    <label class="field"><span>最大 Token</span><input id="ppt-task-max-output" type="number" min="1" placeholder="默认" /></label>
+                    <label class="field"><span>上下文容量</span><input id="ppt-task-context" type="number" min="1000" placeholder="40000" /></label>
+                  </div>
+                  <div class="button-row" style="margin-top: 8px;">
+                    <button id="btn-validate-task-model-selection" class="ghost-action" type="button">验证调用</button>
+                    <button id="btn-save-task-model-selection" type="button">保存并设为当前</button>
+                  </div>
+                  <p id="ppt-task-model-cost-warning" class="field-hint">验证调用会真实请求模型，可能产生费用并等待服务返回。</p>
+                  <p id="ppt-task-model-validation-status" class="inline-status"></p>
+                </div>
+              </section>
+            </section>
+
             <section id="direct-services-card" class="settings-card direct-services-card">
               <div class="direct-services-heading">
-                <div>
-                  <h4>共享直连服务</h4>
-                  <p class="field-hint">同一运行环境所有宿主共享配置，最多 5 个。仅需录入一次单份 API Key。</p>
+                <div class="section-heading-with-help">
+                  <h4>直连模型配置</h4>
+                  <details class="context-help">
+                    <summary aria-label="查看直连模型配置说明">!</summary>
+                    <div class="context-help-popover" role="note">同一运行环境所有宿主共享配置，最多 5 个。仅需录入一次单份 API Key。</div>
+                  </details>
                 </div>
-                <button id="btn-new-direct-service" type="button">新建直连服务</button>
+                <button id="btn-new-direct-service" type="button">新建</button>
               </div>
               <p id="legacy-direct-pending-status" class="inline-status" aria-live="polite" hidden></p>
               <div id="direct-services-list" class="direct-services-list">
-                <p class="field-hint">正在读取共享直连服务...</p>
+                <p class="field-hint">正在读取直连模型配置...</p>
               </div>
 
               <section id="direct-service-editor-view" class="direct-service-editor-view" hidden>
@@ -215,7 +275,7 @@
                   <button id="btn-direct-service-editor-back" class="icon-button is-back" type="button" title="返回直连服务列表" aria-label="返回直连服务列表">
                     <span class="back-icon" aria-hidden="true">←</span>
                   </button>
-                  <h3 id="direct-service-editor-title">新建直连服务</h3>
+                  <h3 id="direct-service-editor-title">新建直连模型配置</h3>
                 </div>
                 <label class="field" for="direct-service-name">
                   <span>服务名称</span>
@@ -264,60 +324,13 @@
               </section>
             </section>
 
-            <section class="settings-card workflow-settings-card">
-              <div class="workflow-settings-heading">
-                <h4>模型配置</h4>
-                <button id="workflow-help-button" class="info-button" type="button" aria-label="查看模型配置说明" aria-expanded="false" aria-controls="workflow-help-popover">i</button>
-              </div>
-              <div id="workflow-help-popover" class="workflow-help-popover" role="tooltip" hidden>每项任务可保存多个独立模型配置，并选择工作流平台或模型直连接入。</div>
-              <div id="workflow-task-tabs" class="workflow-task-tabs" role="tablist" aria-label="PPT 任务">
-                <button type="button" role="tab" data-workflow-task-tab="ppt.slide_assistant" aria-selected="true">智能总结</button>
-                <button type="button" role="tab" data-workflow-task-tab="ppt.structure_review" aria-selected="false">结构审查</button>
-              </div>
-              <section id="ppt-task-direct-service-section" class="task-model-selection-card">
-                <div class="workflow-manager-head">
-                  <div>
-                    <h4 id="ppt-task-direct-service-title">智能总结接入选择</h4>
-                    <p id="ppt-task-direct-service-hint" class="field-hint">使用工作流平台或绑定上方共享直连服务，独立调整任务参数。</p>
-                  </div>
+            <section id="workflow-configuration-card" class="settings-card workflow-configuration-card">
+              <div class="workflow-manager-head">
+                <div>
+                  <h3>工作流配置</h3>
+                  <p id="workflow-profile-count" class="inline-status">正在读取...</p>
                 </div>
-                <label class="field" for="ppt-task-direct-service-select">
-                  <span>接入模式</span>
-                  <select id="ppt-task-direct-service-select">
-                    <option value="">-- 使用工作流平台配置 --</option>
-                  </select>
-                </label>
-                <div id="ppt-task-direct-params" hidden>
-                  <label class="field" for="ppt-task-model-select">
-                    <span>任务模型</span>
-                    <select id="ppt-task-model-select">
-                      <option value="">继承服务默认模型</option>
-                    </select>
-                  </label>
-                  <label class="workflow-activate-check" for="ppt-task-custom-model-check">
-                    <input id="ppt-task-custom-model-check" type="checkbox" />
-                    <span>使用自定义模型标识</span>
-                  </label>
-                  <label id="ppt-task-custom-model-row" class="field" for="ppt-task-custom-model-input" hidden>
-                    <span>自定义模型</span>
-                    <input id="ppt-task-custom-model-input" type="text" placeholder="例如：deepseek-reasoner" />
-                  </label>
-                  <div class="grid-three-col">
-                    <label class="field"><span>温度</span><input id="ppt-task-temperature" type="number" min="0" max="2" step="0.1" placeholder="默认" /></label>
-                    <label class="field"><span>最大 Token</span><input id="ppt-task-max-output" type="number" min="1" placeholder="默认" /></label>
-                    <label class="field"><span>上下文容量</span><input id="ppt-task-context" type="number" min="1000" placeholder="40000" /></label>
-                  </div>
-                  <div class="button-row" style="margin-top: 8px;">
-                    <button id="btn-validate-task-model-selection" class="ghost-action" type="button">验证调用</button>
-                    <button id="btn-save-task-model-selection" type="button">保存并设为当前</button>
-                  </div>
-                  <p id="ppt-task-model-cost-warning" class="field-hint">验证调用会真实请求模型，可能产生费用并等待服务返回。</p>
-                  <p id="ppt-task-model-validation-status" class="inline-status"></p>
-                </div>
-              </section>
-              <div class="settings-card-head">
-                <p id="workflow-profile-count" class="inline-status">正在读取...</p>
-                <button id="btn-new-workflow-profile" type="button">新建模型配置</button>
+                <button id="btn-new-workflow-profile" type="button">新建工作流配置</button>
               </div>
               <div id="workflow-profile-manager" class="workflow-profile-manager"></div>
             </section>
@@ -339,9 +352,9 @@
 
           <section id="workflow-editor-view" class="settings-card workflow-editor-view" hidden>
             <div class="workflow-editor-head">
-              <button id="btn-back-workflow-editor" class="ghost-action mini-button" type="button" title="返回模型配置列表">返回</button>
+              <button id="btn-back-workflow-editor" class="ghost-action mini-button" type="button" title="返回工作流配置列表">返回</button>
               <div>
-                <h2 id="workflow-editor-title">新建模型配置</h2>
+                <h2 id="workflow-editor-title">新建工作流配置</h2>
                 <p id="workflow-editor-key-status" class="inline-status">API Key 可稍后配置</p>
               </div>
             </div>

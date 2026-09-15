@@ -1309,6 +1309,8 @@ button.danger-action:not(:disabled) {
   font-size: 13px;
   line-height: 1.55;
   overflow-wrap: anywhere;
+}
+
 .direct-services-heading {
   display: flex;
   align-items: flex-start;
@@ -2191,4 +2193,153 @@ select:focus-visible,
   display: grid;
   gap: 8px;
   padding-top: 4px;
+}
+
+/* Compact, native-feeling action hierarchy shared across WPS hosts. */
+#connection-settings-section,
+#workflow-settings-home {
+  display: grid;
+  gap: 12px;
+}
+
+.section-heading-with-help,
+.task-selection-heading {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.section-heading-with-help {
+  position: static;
+  flex: 1 1 auto;
+}
+
+.direct-services-heading {
+  position: relative;
+}
+
+.workflow-manager-head {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.workflow-manager-head > div {
+  min-width: 0;
+}
+
+.section-heading-with-help .context-help,
+.task-selection-heading .context-help {
+  position: static;
+}
+
+.section-heading-with-help h4,
+.task-selection-heading h4 {
+  margin: 0;
+}
+
+.context-help {
+  position: relative;
+  flex: 0 0 auto;
+  margin: 0;
+}
+
+.context-help > summary {
+  display: inline-flex;
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  min-height: 28px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--border-color);
+  border-radius: 50%;
+  background: var(--color-surface);
+  color: var(--host-accent);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  list-style: none;
+}
+
+.context-help > summary::-webkit-details-marker { display: none; }
+
+.context-help > summary:hover,
+.context-help[open] > summary {
+  background: var(--host-accent-soft);
+  color: var(--host-accent-strong);
+}
+
+.context-help > summary:focus-visible {
+  outline: 2px solid var(--host-accent);
+  outline-offset: 2px;
+}
+
+.context-help-popover {
+  position: absolute;
+  z-index: 20;
+  top: 34px;
+  right: 0;
+  width: max-content;
+  max-width: min(280px, calc(100vw - 44px));
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-panel);
+  background: var(--color-surface);
+  color: var(--color-text);
+  box-shadow: 0 8px 24px rgba(23, 38, 46, 0.14);
+  font-size: 12px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.task-context-help {
+  display: flex;
+  justify-content: flex-end;
+  margin: -2px 0 8px;
+}
+
+.copy-toolbar {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.result-actions .ghost-action,
+.copy-toolbar .ghost-action,
+.history-panel-actions .ghost-action {
+  min-height: 32px;
+  padding: 6px 12px;
+  border-radius: var(--radius-control);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.history-entry-button {
+  min-width: 82px;
+  justify-content: center;
+}
+
+@media (min-width: 381px) and (max-width: 720px) {
+  .panel-head {
+    flex-direction: row;
+    align-items: flex-start;
+    justify-content: space-between;
+  }
+
+  .panel-head .result-actions {
+    margin-left: auto;
+  }
+
+  .workflow-configuration-card .workflow-manager-head {
+    flex-wrap: nowrap;
+    align-items: center;
+  }
 }

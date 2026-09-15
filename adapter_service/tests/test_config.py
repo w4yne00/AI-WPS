@@ -2,10 +2,12 @@ from pathlib import Path
 import importlib.util
 import json
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 
-from app.core.config import load_settings
+from app.core.config import load_settings, save_config_payload
+from app.services.health import _core_subsystems
 
 HAS_API_DEPS = importlib.util.find_spec("fastapi") is not None and importlib.util.find_spec("pydantic") is not None
 
@@ -39,6 +41,46 @@ def test_load_settings_defaults_timeout_for_slow_model_backend(tmp_path: Path) -
     settings = load_settings(config_file)
 
     assert settings.timeout_seconds == 75
+
+
+def test_health_never_observes_partial_config_during_repeated_saves(
+    tmp_path: Path,
+) -> None:
+    config_file = tmp_path / "adapter.json"
+    payload = {
+        "modelConfigurations": {},
+        "activeModelConfigurations": {},
+        "taskRoutes": {},
+        "padding": "x" * 524288,
+    }
+    save_config_payload(payload, config_file)
+    statuses = []
+    writer_errors = []
+    start = threading.Barrier(2)
+
+    def write_revisions() -> None:
+        try:
+            start.wait()
+            for revision in range(120):
+                save_config_payload(dict(payload, revision=revision), config_file)
+        except Exception as error:
+            writer_errors.append(error)
+
+    writer = threading.Thread(target=write_revisions)
+    with patch("app.services.health.default_config_path", return_value=config_file):
+        writer.start()
+        start.wait()
+        while writer.is_alive():
+            model_status, route_status, unused_payload = _core_subsystems()
+            del unused_payload
+            statuses.append((model_status["status"], route_status["status"]))
+        writer.join()
+
+    if writer_errors:
+        raise writer_errors[0]
+    assert len(statuses) >= 5
+    assert set(statuses) == {("ready", "ready")}
+    assert json.loads(config_file.read_text(encoding="utf-8"))["revision"] == 119
 
 
 class ConfigSettingsTests(unittest.TestCase):

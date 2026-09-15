@@ -54,7 +54,7 @@ test("Compact menu items: word.document_review includes shared direct services",
   assert.strictEqual(directItem.disabled, false);
 });
 
-test("Settings section: renders direct service card for word.document_review with title '文档审查接入选择'", () => {
+test("Settings section: renders direct service card for word.document_review with generic access title", () => {
   const mockNodes = {};
   const nodeIds = [
     "word-task-direct-service-section",
@@ -129,7 +129,7 @@ test("Settings section: renders direct service card for word.document_review wit
   ctx.renderTaskModelSelectionSection();
 
   assert.strictEqual(mockNodes["word-task-direct-service-section"].hidden, false, "section must be visible for word.document_review");
-  assert.strictEqual(mockNodes["word-task-direct-service-title"].textContent, "文档审查接入选择", "title must be '文档审查接入选择'");
+  assert.strictEqual(mockNodes["word-task-direct-service-title"].textContent, "接入选择", "title must follow the selected tab context");
   assert.strictEqual(mockNodes["word-task-image-mode-row"].hidden, true, "image mode row must be hidden for document review");
   assert.strictEqual(mockNodes["word-task-max-output"].value, 4096);
   assert.strictEqual(mockNodes["word-task-context"].value, 64000);

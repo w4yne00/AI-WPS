@@ -2,6 +2,7 @@ import importlib.util
 import os
 import subprocess
 import sys
+import tarfile
 import tempfile
 import unittest
 from pathlib import Path
@@ -196,39 +197,40 @@ class Python38RuntimeGateTests(unittest.TestCase):
         self.assertEqual(result.stdout.strip(), "0.23.1-alpha")
 
     def test_final_delivery_starts_uvicorn_and_checks_key_contracts(self) -> None:
+        archive = (
+            ROOT
+            / "dist-phase1-delivery-kit"
+            / "ai-wps-phase1-delivery-20260811-v0231.tar.gz"
+        )
         with tempfile.TemporaryDirectory() as temp_dir:
-            environment = dict(os.environ)
-            environment.update(
-                {
-                    "DATE_TAG": "20260811",
-                    "PYTHON_BIN": sys.executable,
-                    "PYTHON38_BIN": PYTHON38_BIN,
-                }
+            with tarfile.open(archive, "r:gz") as package:
+                package.extractall(temp_dir)
+            packaged_gate = (
+                Path(temp_dir)
+                / "ai-wps-phase1-delivery-20260811-v0231"
+                / "scripts/python38_delivery_runtime_gate.py"
             )
-            build = subprocess.run(
+            gate = subprocess.run(
                 [
-                    "bash",
-                    str(ROOT / "packaging/build_phase1_delivery_kit.sh"),
-                    temp_dir,
+                    PYTHON38_BIN,
+                    str(packaged_gate),
+                    str(archive),
+                    "--expected-version",
+                    "0.23.1-alpha",
                 ],
                 cwd=ROOT,
-                env=environment,
                 check=False,
                 capture_output=True,
                 text=True,
             )
-            self.assertEqual(build.returncode, 0, build.stderr + build.stdout)
+            self.assertEqual(gate.returncode, 0, gate.stderr + gate.stdout)
 
-            archive = Path(temp_dir) / "ai-wps-phase1-delivery-20260811-v0231.tar.gz"
-            archive_exists = archive.is_file()
-
-        self.assertTrue(archive_exists)
-        self.assertIn("original_failure_reproduction=passed", build.stdout)
-        self.assertIn("adapter_import=passed", build.stdout)
-        self.assertIn("uvicorn_start=passed", build.stdout)
-        self.assertIn("key_contracts=passed", build.stdout)
-        self.assertIn("runtime_path_contract=passed", build.stdout)
-        self.assertIn("python38_delivery_runtime_gate=passed", build.stdout)
+        self.assertIn("original_failure_reproduction=passed", gate.stdout)
+        self.assertIn("adapter_import=passed", gate.stdout)
+        self.assertIn("uvicorn_start=passed", gate.stdout)
+        self.assertIn("key_contracts=passed", gate.stdout)
+        self.assertIn("runtime_path_contract=passed", gate.stdout)
+        self.assertIn("python38_delivery_runtime_gate=passed", gate.stdout)
 
 
 if __name__ == "__main__":

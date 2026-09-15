@@ -9,9 +9,11 @@ from app.services.workflow_profiles import WorkflowProfileStore
 HAS_API_DEPS = importlib.util.find_spec("fastapi") is not None and importlib.util.find_spec("pydantic") is not None
 
 if HAS_API_DEPS:
+    from fastapi.testclient import TestClient
+
+    from app.main import app
     from app.core.errors import AdapterError
     from app.api.provider import (
-        ModelConfigurationCreateRequest,
         ModelConfigurationImageAuthorizationRequest,
         WorkflowProfileApiKeyRequest,
         WorkflowProfileCreateRequest,
@@ -25,7 +27,6 @@ if HAS_API_DEPS:
         save_provider_task_api_key,
         update_workflow_profile,
         ProviderTaskApiKeyRequest,
-        create_model_configuration,
         set_model_configuration_image_authorization,
         validate_model_configuration,
     )
@@ -48,27 +49,23 @@ class WorkflowProfileApiTests(unittest.TestCase):
             config_path = root / "adapter.json"
             config_path.write_text("{}\n", encoding="utf-8")
             store = ModelConfigurationStore(config_path, root / "provider_api_keys")
-            with patch("app.api.provider.get_model_configuration_store", return_value=store):
-                created = create_model_configuration(
-                    ModelConfigurationCreateRequest(
-                        taskType="word.format_review",
-                        name="视觉配置",
-                        accessMethod=ACCESS_DIRECT_MODEL,
-                        serviceBaseUrl="https://vision.example/v1",
-                        modelName="vision-1",
-                        imageInputMode="openai_image_url",
-                    )
-                )
-                configuration_id = created["data"]["configuration"]["id"]
-                authorized = set_model_configuration_image_authorization(
-                    configuration_id,
-                    ModelConfigurationImageAuthorizationRequest(authorized=True),
-                )
-
-            self.assertEqual(
-                authorized["data"]["configuration"]["imageSemanticReadiness"]["code"],
-                "validation_required",
+            created = store.create_configuration(
+                "word.format_review",
+                "迁移前视觉配置",
+                ACCESS_DIRECT_MODEL,
+                service_base_url="https://vision.example/v1",
+                model_name="vision-1",
+                image_input_mode="openai_image_url",
+                allow_direct=True,
             )
+            with patch("app.api.provider.get_model_configuration_store", return_value=store):
+                with self.assertRaises(AdapterError) as raised:
+                    set_model_configuration_image_authorization(
+                        created["id"],
+                        ModelConfigurationImageAuthorizationRequest(authorized=True),
+                    )
+
+            self.assertEqual(raised.exception.code, "MODEL_CONFIG_DIRECT_WRITE_RETIRED")
 
     def test_direct_format_validation_returns_identity_without_activation(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -84,8 +81,11 @@ class WorkflowProfileApiTests(unittest.TestCase):
                 model_name="format-role-model",
                 max_output_tokens=1024,
                 context_window_tokens=40000,
+                allow_direct=True,
             )
-            store.replace_api_key(created["id"], "format-secret")
+            store.replace_api_key(
+                created["id"], "format-secret", allow_direct=True
+            )
             validation = {
                 "success": True,
                 "taskType": "word.format_review",
@@ -137,6 +137,7 @@ class WorkflowProfileApiTests(unittest.TestCase):
                 model_name="format-role-model",
                 max_output_tokens=1024,
                 context_window_tokens=40000,
+                allow_direct=True,
             )
             with patch("app.api.provider.get_model_configuration_store", return_value=store), patch(
                 "app.api.provider.ProviderClient.validate_model_configuration",
@@ -160,6 +161,76 @@ class WorkflowProfileApiTests(unittest.TestCase):
             self.assertEqual(
                 configuration["formatSemanticValidation"]["errorCode"],
                 "FORMAT_SEMANTIC_BINDING_INVALID",
+            )
+
+    def test_legacy_direct_api_key_replacement_is_retired_at_fastapi_boundary(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = ModelConfigurationStore(
+                root / "adapter.json", root / "provider_api_keys"
+            )
+            created = store.create_configuration(
+                "word.format_review",
+                "迁移前直连配置",
+                ACCESS_DIRECT_MODEL,
+                service_base_url="https://format-model.example/v1",
+                model_name="format-role-model",
+                allow_direct=True,
+            )
+
+            with patch(
+                "app.api.provider.get_model_configuration_store",
+                return_value=store,
+            ):
+                response = TestClient(app).post(
+                    "/provider/model-configurations/{0}/api-key".format(created["id"]),
+                    json={"apiKey": "must-not-be-written"},
+                )
+
+            self.assertEqual(response.status_code, 400)
+            self.assertEqual(
+                response.json()["errors"][0]["code"],
+                "MODEL_CONFIG_DIRECT_WRITE_RETIRED",
+            )
+            self.assertFalse(
+                (store.key_dir / created["apiKeyRef"]).exists()
+            )
+
+    def test_legacy_direct_copy_is_retired_at_fastapi_boundary(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = ModelConfigurationStore(
+                root / "adapter.json", root / "provider_api_keys"
+            )
+            created = store.create_configuration(
+                "word.format_review",
+                "迁移前直连配置",
+                ACCESS_DIRECT_MODEL,
+                service_base_url="https://format-model.example/v1",
+                model_name="format-role-model",
+                allow_direct=True,
+            )
+
+            with patch(
+                "app.api.provider.get_model_configuration_store",
+                return_value=store,
+            ):
+                response = TestClient(app).post(
+                    "/provider/model-configurations/{0}/copy".format(created["id"]),
+                    json={
+                        "targetTaskType": "word.format_review",
+                        "name": "不得创建的副本",
+                    },
+                )
+
+            self.assertEqual(response.status_code, 400)
+            self.assertEqual(
+                response.json()["errors"][0]["code"],
+                "MODEL_CONFIG_DIRECT_WRITE_RETIRED",
+            )
+            self.assertEqual(
+                store.list_for_task("word.format_review")["configurationCount"],
+                1,
             )
 
     def test_crud_routes_return_sanitized_profile_data(self) -> None:

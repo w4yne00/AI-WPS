@@ -137,7 +137,7 @@ test("renderTaskModelSelectionSection supports word.format_review with image mod
   // 1. Render for word.format_review
   renderFn();
   assert.strictEqual(mockNodes["word-task-direct-service-section"].hidden, false, "section must be visible for format_review");
-  assert.strictEqual(mockNodes["word-task-direct-service-title"].textContent, "格式审查接入选择");
+  assert.strictEqual(mockNodes["word-task-direct-service-title"].textContent, "接入选择");
   assert.strictEqual(mockNodes["word-task-image-mode-row"].hidden, false, "image mode row must be visible for format_review");
   assert.strictEqual(mockNodes["word-task-image-input-mode"].value, "openai_image_url");
 
@@ -145,7 +145,7 @@ test("renderTaskModelSelectionSection supports word.format_review with image mod
   state.settingsWorkflowTaskType = "word.smart_write";
   renderFn();
   assert.strictEqual(mockNodes["word-task-direct-service-section"].hidden, false);
-  assert.strictEqual(mockNodes["word-task-direct-service-title"].textContent, "智能编写接入选择");
+  assert.strictEqual(mockNodes["word-task-direct-service-title"].textContent, "接入选择");
   assert.strictEqual(mockNodes["word-task-image-mode-row"].hidden, true, "image mode row must be hidden for smart_write");
 });
 

@@ -189,12 +189,6 @@
 
         <section id="word-result-section" class="panel result-panel glass-card">
           <div class="panel-head">
-            <div class="result-actions">
-              <button id="btn-copy-result" class="ghost-action copy-button" type="button" title="复制结果" aria-label="复制结果">复制</button>
-              <button id="btn-view-history" class="ghost-action history-entry-button" type="button" title="查看成功历史" hidden>
-                历史记录<span id="history-unread-badge" class="history-badge" hidden>0</span>
-              </button>
-            </div>
             <div>
               <h2>结果预览</h2>
               <div id="result-view-switch" class="result-view-switch" hidden>
@@ -206,6 +200,11 @@
                 <button type="button" id="btn-copy-review-record" class="view-switch-button">复制审查记录</button>
                 <button type="button" id="btn-preview-review-record" class="view-switch-button">预览审查记录</button>
               </div>
+            </div>
+            <div class="result-actions">
+              <button id="btn-view-history" class="ghost-action history-entry-button" type="button" title="查看成功历史" hidden>
+                历史记录<span id="history-unread-badge" class="history-badge" hidden>0</span>
+              </button>
             </div>
           </div>
           <section id="writing-policy-usage-strip" class="writing-policy-usage-strip" aria-live="polite" hidden>
@@ -228,6 +227,9 @@
             </details>
           </section>
           <div id="result-output" class="markdown-output">等待运行。</div>
+          <div class="copy-toolbar result-copy-toolbar" aria-label="复制当前结果">
+            <button id="btn-copy-result" class="ghost-action" type="button" title="复制结果" aria-label="复制结果">复制结果</button>
+          </div>
           <details id="deterministic-format-review-diagnostics" class="advanced-diagnostics" hidden>
             <summary>展开诊断</summary>
             <pre id="deterministic-format-review-diagnostics-content" class="advanced-diagnostics-content"></pre>
@@ -399,17 +401,93 @@
               </div>
             </section>
 
+            <section id="model-configuration-card" class="settings-card workflow-settings-card">
+              <div class="workflow-settings-heading">
+                <h4>模型配置</h4>
+                <button id="workflow-help-button" class="info-button" type="button" aria-label="查看模型配置说明" aria-expanded="false" aria-controls="workflow-help-popover">!</button>
+              </div>
+              <div id="workflow-help-popover" class="workflow-help-popover" role="tooltip" hidden>每项任务可保存多个独立模型配置，并选择工作流平台或模型直连接入。</div>
+              <div id="workflow-task-tabs" class="workflow-task-tabs" role="tablist" aria-label="Word 任务">
+                <button type="button" role="tab" data-workflow-task-tab="word.smart_write" aria-selected="true">智能编写</button>
+                <button type="button" role="tab" data-workflow-task-tab="word.smart_imitation" aria-selected="false">智能仿写</button>
+                <button type="button" role="tab" data-workflow-task-tab="word.document_review" aria-selected="false">文档审查</button>
+                <button type="button" role="tab" data-workflow-task-tab="word.format_review" aria-selected="false">格式审查</button>
+              </div>
+              <div class="model-configuration-home">
+                <section id="word-task-direct-service-section" class="task-model-selection-card">
+                  <div class="task-selection-heading">
+                    <h4 id="word-task-direct-service-title">接入选择</h4>
+                    <details class="context-help">
+                      <summary aria-label="查看接入选择说明">!</summary>
+                      <div id="word-task-direct-service-hint" class="context-help-popover" role="note">使用工作流平台或绑定直连模型配置，独立调整任务参数。</div>
+                    </details>
+                  </div>
+                  <label class="field" for="word-task-direct-service-select">
+                    <span class="sr-only">接入选择</span>
+                    <select id="word-task-direct-service-select">
+                      <option value="">-- 使用工作流平台配置 --</option>
+                    </select>
+                  </label>
+                  <div id="word-task-direct-params" hidden>
+                    <label class="field" for="word-task-model-select">
+                      <span>任务模型</span>
+                      <select id="word-task-model-select">
+                        <option value="">继承服务默认模型</option>
+                      </select>
+                    </label>
+                    <label class="workflow-activate-check" for="word-task-custom-model-check">
+                      <input id="word-task-custom-model-check" type="checkbox" />
+                      <span>使用自定义模型标识</span>
+                    </label>
+                    <label id="word-task-custom-model-row" class="field" for="word-task-custom-model-input" hidden>
+                      <span>自定义模型</span>
+                      <input id="word-task-custom-model-input" type="text" placeholder="例如：deepseek-reasoner" />
+                    </label>
+                    <div class="grid-three-col">
+                      <label class="field"><span>温度</span><input id="word-task-temperature" type="number" min="0" max="2" step="0.1" placeholder="默认" /></label>
+                      <label class="field"><span>最大 Token</span><input id="word-task-max-output" type="number" min="1" placeholder="默认" /></label>
+                      <label class="field"><span>上下文容量</span><input id="word-task-context" type="number" min="1000" placeholder="40000" /></label>
+                    </div>
+                    <div id="word-task-image-mode-row" class="field" hidden>
+                      <label class="field" for="word-task-image-input-mode">
+                        <span>图片输入模式</span>
+                        <select id="word-task-image-input-mode">
+                          <option value="openai_image_url">OpenAI 格式图片 URL (openai_image_url)</option>
+                          <option value="disabled">关闭图片输入 (disabled)</option>
+                        </select>
+                      </label>
+                      <p class="field-hint">保存选择后授权本任务图片外发，再用无敏感内容的合成图片验证视觉能力。</p>
+                      <div class="button-row">
+                        <button id="btn-authorize-task-images" class="ghost-action" type="button">授权图片外发</button>
+                        <button id="btn-revoke-task-images" class="ghost-action" type="button">撤销授权</button>
+                        <button id="btn-validate-task-images" class="ghost-action" type="button">验证视觉能力</button>
+                      </div>
+                    </div>
+                    <div class="button-row" style="margin-top: 8px;">
+                      <button id="btn-validate-task-model-selection" class="ghost-action" type="button">验证调用</button>
+                      <button id="btn-save-task-model-selection" type="button">保存并设为当前</button>
+                    </div>
+                    <p id="word-task-model-cost-warning" class="field-hint">验证调用会真实请求模型，可能产生费用并等待服务返回。</p>
+                    <p id="word-task-model-validation-status" class="inline-status"></p>
+                  </div>
+                </section>
+              </div>
+            </section>
+
             <section id="direct-services-card" class="settings-card direct-services-card">
               <div class="direct-services-heading">
-                <div>
-                  <h4>共享直连服务</h4>
-                  <p class="field-hint">同一运行环境所有宿主共享配置，最多 5 个。仅需录入一次单份 API Key。</p>
+                <div class="section-heading-with-help">
+                  <h4>直连模型配置</h4>
+                  <details class="context-help">
+                    <summary aria-label="查看直连模型配置说明">!</summary>
+                    <div class="context-help-popover" role="note">同一运行环境所有宿主共享配置，最多 5 个。仅需录入一次单份 API Key。</div>
+                  </details>
                 </div>
-                <button id="btn-new-direct-service" type="button">新建直连服务</button>
+                <button id="btn-new-direct-service" type="button">新建</button>
               </div>
               <p id="legacy-direct-pending-status" class="inline-status" aria-live="polite" hidden></p>
               <div id="direct-services-list" class="direct-services-list">
-                <p class="field-hint">正在读取共享直连服务...</p>
+                <p class="field-hint">正在读取直连模型配置...</p>
               </div>
 
               <section id="direct-service-editor-view" class="direct-service-editor-view" hidden>
@@ -417,7 +495,7 @@
                   <button id="btn-direct-service-editor-back" class="icon-button is-back" type="button" title="返回直连服务列表" aria-label="返回直连服务列表">
                     <span class="back-icon" aria-hidden="true">←</span>
                   </button>
-                  <h3 id="direct-service-editor-title">新建直连服务</h3>
+                  <h3 id="direct-service-editor-title">新建直连模型配置</h3>
                 </div>
                 <label class="field" for="direct-service-name">
                   <span>服务名称</span>
@@ -466,82 +544,14 @@
               </section>
             </section>
 
-            <section class="settings-card workflow-settings-card">
-              <div class="workflow-settings-heading">
-                <h4>模型配置</h4>
-                <button id="workflow-help-button" class="info-button" type="button" aria-label="查看模型配置说明" aria-expanded="false" aria-controls="workflow-help-popover">i</button>
-              </div>
-              <div id="workflow-help-popover" class="workflow-help-popover" role="tooltip" hidden>每项任务可保存多个独立模型配置，并选择工作流平台或模型直连接入。</div>
-              <div id="workflow-task-tabs" class="workflow-task-tabs" role="tablist" aria-label="Word 任务">
-                <button type="button" role="tab" data-workflow-task-tab="word.smart_write" aria-selected="true">智能编写</button>
-                <button type="button" role="tab" data-workflow-task-tab="word.smart_imitation" aria-selected="false">智能仿写</button>
-                <button type="button" role="tab" data-workflow-task-tab="word.document_review" aria-selected="false">文档审查</button>
-                <button type="button" role="tab" data-workflow-task-tab="word.format_review" aria-selected="false">格式审查</button>
-              </div>
+            <section id="workflow-configuration-card" class="settings-card workflow-configuration-card">
               <div id="workflow-settings-home" class="workflow-settings-home">
-                <section id="word-task-direct-service-section" class="task-model-selection-card">
-                  <div class="workflow-manager-head">
-                    <div>
-                      <h4 id="word-task-direct-service-title">智能编写接入选择</h4>
-                      <p id="word-task-direct-service-hint" class="field-hint">使用工作流平台或绑定上方共享直连服务，独立调整任务参数。</p>
-                    </div>
-                  </div>
-                  <label class="field" for="word-task-direct-service-select">
-                    <span>接入模式</span>
-                    <select id="word-task-direct-service-select">
-                      <option value="">-- 使用工作流平台配置 --</option>
-                    </select>
-                  </label>
-                  <div id="word-task-direct-params" hidden>
-                    <label class="field" for="word-task-model-select">
-                      <span>任务模型</span>
-                      <select id="word-task-model-select">
-                        <option value="">继承服务默认模型</option>
-                      </select>
-                    </label>
-                    <label class="workflow-activate-check" for="word-task-custom-model-check">
-                      <input id="word-task-custom-model-check" type="checkbox" />
-                      <span>使用自定义模型标识</span>
-                    </label>
-                    <label id="word-task-custom-model-row" class="field" for="word-task-custom-model-input" hidden>
-                      <span>自定义模型</span>
-                      <input id="word-task-custom-model-input" type="text" placeholder="例如：deepseek-reasoner" />
-                    </label>
-                    <div class="grid-three-col">
-                      <label class="field"><span>温度</span><input id="word-task-temperature" type="number" min="0" max="2" step="0.1" placeholder="默认" /></label>
-                      <label class="field"><span>最大 Token</span><input id="word-task-max-output" type="number" min="1" placeholder="默认" /></label>
-                      <label class="field"><span>上下文容量</span><input id="word-task-context" type="number" min="1000" placeholder="40000" /></label>
-                    </div>
-                    <div id="word-task-image-mode-row" class="field" hidden>
-                      <label class="field" for="word-task-image-input-mode">
-                        <span>图片输入模式</span>
-                        <select id="word-task-image-input-mode">
-                          <option value="openai_image_url">OpenAI 格式图片 URL (openai_image_url)</option>
-                          <option value="disabled">关闭图片输入 (disabled)</option>
-                        </select>
-                      </label>
-                      <p class="field-hint">保存选择后授权本任务图片外发，再用无敏感内容的合成图片验证视觉能力。</p>
-                      <div class="button-row">
-                        <button id="btn-authorize-task-images" class="ghost-action" type="button">授权图片外发</button>
-                        <button id="btn-revoke-task-images" class="ghost-action" type="button">撤销授权</button>
-                        <button id="btn-validate-task-images" class="ghost-action" type="button">验证视觉能力</button>
-                      </div>
-                    </div>
-                    <div class="button-row" style="margin-top: 8px;">
-                      <button id="btn-validate-task-model-selection" class="ghost-action" type="button">验证调用</button>
-                      <button id="btn-save-task-model-selection" type="button">保存并设为当前</button>
-                    </div>
-                    <p id="word-task-model-cost-warning" class="field-hint">验证调用会真实请求模型，可能产生费用并等待服务返回。</p>
-                    <p id="word-task-model-validation-status" class="inline-status"></p>
-                  </div>
-                </section>
-
                 <div class="workflow-manager-head">
                   <div>
-                    <h3 id="workflow-manager-title">模型配置</h3>
-                    <p id="workflow-manager-summary">正在读取模型配置...</p>
+                    <h3 id="workflow-manager-title">工作流配置</h3>
+                    <p id="workflow-manager-summary">正在读取工作流配置...</p>
                   </div>
-                  <button id="btn-new-workflow-profile" type="button" data-workflow-action="create-open">新建模型配置</button>
+                  <button id="btn-new-workflow-profile" type="button" data-workflow-action="create-open">新建工作流配置</button>
                 </div>
                 <div id="workflow-profile-manager" class="workflow-profile-manager"></div>
               </div>

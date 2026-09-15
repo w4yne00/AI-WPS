@@ -2005,7 +2005,13 @@
       if (startNew) {
         startNew.hidden = true;
       }
+      if (summaryNode) {
+        summaryNode.hidden = true;
+      }
       return;
+    }
+    if (summaryNode) {
+      summaryNode.hidden = false;
     }
     controls = helpers.resolveExcelSmartFillLifecycleControls
       ? helpers.resolveExcelSmartFillLifecycleControls(state.smartFillPreview, {
@@ -5571,10 +5577,10 @@
     }
     summary.textContent = "当前：" + getActiveWorkflowProfileName(data) + "，共 " + data.profileCount + " 个配置";
     if (data.loadError) {
-      rows.push('<div class="workflow-empty-state"><p>无法读取模型配置：' + escaped(data.loadError) +
+      rows.push('<div class="workflow-empty-state"><p>无法读取工作流配置：' + escaped(data.loadError) +
         '</p><button type="button" class="ghost-action" data-workflow-action="retry">重新读取</button></div>');
     } else if (!data.profiles.length) {
-      rows.push('<div class="workflow-empty-state"><p>尚未建立模型配置。</p></div>');
+      rows.push('<div class="workflow-empty-state"><p>尚未建立工作流配置。</p></div>');
     }
     rows.push('<div class="workflow-profile-list">');
     data.profiles.forEach(function (profile) {
@@ -5602,7 +5608,7 @@
       rows.push('<button type="button" class="ghost-action mini-button" data-workflow-action="edit" data-profile-id="' + id + '">编辑</button>');
       rows.push('<button type="button" class="ghost-action mini-button" data-workflow-action="copy" data-profile-id="' + id + '">复制</button>');
       rows.push('<button type="button" class="ghost-action mini-button danger-action" data-workflow-action="delete" data-profile-id="' + id + '"' +
-        (canDelete ? "" : ' disabled title="当前模型配置不能删除"') + '>删除</button>');
+        (canDelete ? "" : ' disabled title="当前工作流配置不能删除"') + '>删除</button>');
       rows.push('</div></div>');
     });
     rows.push('</div>');
@@ -5784,7 +5790,7 @@
     var profile = mode === "edit" ? findWorkflowProfile(profileId, state.workflowTaskType) : null;
     var activateChecked;
     if (mode === "edit" && !profile) {
-      setStatus("未找到要编辑的模型配置，请重新进入设置。");
+      setStatus("未找到要编辑的工作流配置，请重新进入设置。");
       return;
     }
     activateChecked = helpers.shouldActivateNewWorkflowProfile
@@ -5800,7 +5806,7 @@
     };
     byId("workflow-settings-home").hidden = true;
     byId("workflow-editor-view").hidden = false;
-    byId("workflow-editor-title").textContent = profile ? "编辑模型配置" : "新建模型配置";
+    byId("workflow-editor-title").textContent = profile ? "编辑工作流配置" : "新建工作流配置";
     byId("workflow-editor-name").value = profile ? profile.name : "";
     byId("workflow-editor-note").value = profile ? profile.note : "";
     byId("workflow-editor-method").value = "workflow_platform";
@@ -5825,7 +5831,7 @@
 
   function closeWorkflowEditor(force) {
     if (!force && state.workflowEditor.dirty && window.confirm &&
-        !window.confirm("当前模型配置尚未保存，确认放弃修改并返回？")) {
+        !window.confirm("当前工作流配置尚未保存，确认放弃修改并返回？")) {
       return false;
     }
     state.workflowEditor = { open: false, mode: "create", profileId: "", dirty: false };
@@ -5846,14 +5852,14 @@
   function validateCurrentModelConfiguration() {
     var profileId = state.workflowEditor.profileId;
     if (!profileId || state.workflowEditor.dirty) {
-      setStatus("请先保存模型配置，再执行验证调用。");
+      setStatus("请先保存工作流配置，再执行验证调用。");
       return;
     }
     if (window.confirm && !window.confirm("验证调用会向模型后台发送一条内置测试请求，是否继续？")) {
       return;
     }
     setWorkflowMutationBusy(true);
-    setStatus("正在验证模型配置，模型响应较慢时请耐心等待...");
+    setStatus("正在验证工作流配置，模型响应较慢时请耐心等待...");
     request("/provider/model-configurations/" + encodeURIComponent(profileId) + "/validate", {})
       .then(function (body) {
         var duration = Number(body && body.data && body.data.durationMs || 0);
@@ -5863,7 +5869,7 @@
           state.workflowEditor.dirty = false;
           byId("model-validation-summary").textContent = "验证成功，用时 " + (duration / 1000).toFixed(1) + " 秒";
           byId("btn-validate-model-configuration").disabled = !profile || !profile.complete;
-          setStatus("模型配置验证成功。");
+          setStatus("工作流配置验证成功。");
         });
       }).catch(function (error) {
         setWorkflowMutationBusy(false);
@@ -5877,9 +5883,9 @@
     request("/provider/model-configurations/" + encodeURIComponent(profileId) + "/copy", {
       targetTaskType: state.workflowTaskType
     }).then(function () {
-      return finishWorkflowMutation("模型配置副本已创建，请检查后再启用。");
+      return finishWorkflowMutation("工作流配置副本已创建，请检查后再启用。");
     }).catch(function (error) {
-      failWorkflowMutation("复制模型配置失败", error);
+      failWorkflowMutation("复制工作流配置失败", error);
     });
   }
 
@@ -5925,7 +5931,7 @@
     var profileId = state.workflowEditor.profileId;
     var activateChecked = byId("workflow-editor-activate").checked;
     if (!checked.ok) {
-      showWorkflowEditorError(checked.field, checked.message || "请检查模型配置。");
+      showWorkflowEditorError(checked.field, checked.message || "请检查工作流配置。");
       return;
     }
     if (draft.apiKey !== draft.apiKeyConfirm) {
@@ -5958,25 +5964,25 @@
             : null;
         });
       }).then(function () {
-        return finishWorkflowEditorSave("模型配置已新建。");
+        return finishWorkflowEditorSave("工作流配置已新建。");
       }).catch(function (error) {
-        failWorkflowEditorSave("新建模型配置失败", error);
+        failWorkflowEditorSave("新建工作流配置失败", error);
       });
       return;
     }
     request("/provider/model-configurations/" + encodeURIComponent(profileId), configurationPayload, { method: "PATCH" }).then(function () {
       if (!draft.apiKey) {
-        return finishWorkflowEditorSave("模型配置已保存，API Key 保持不变。");
+        return finishWorkflowEditorSave("工作流配置已保存，API Key 保持不变。");
       }
       return request("/provider/model-configurations/" + encodeURIComponent(profileId) + "/api-key", {
         apiKey: draft.apiKey
       }).then(function () {
-        return finishWorkflowEditorSave("模型配置和 API Key 已保存。");
+        return finishWorkflowEditorSave("工作流配置和 API Key 已保存。");
       }).catch(function (error) {
-        return showPartialKeyFailure(error, "模型配置已保存，但 API Key 更换失败，原 Key 仍然有效");
+        return showPartialKeyFailure(error, "工作流配置已保存，但 API Key 更换失败，原 Key 仍然有效");
       });
     }).catch(function (error) {
-      failWorkflowEditorSave("保存模型配置失败", error);
+      failWorkflowEditorSave("保存工作流配置失败", error);
     });
   }
 
@@ -6107,7 +6113,7 @@
       return;
     }
     if (profile.id === data.activeProfileId) {
-      setStatus("当前模型配置不能删除，请先切换到其他模型配置。");
+      setStatus("当前工作流配置不能删除，请先切换到其他工作流配置。");
       return;
     }
     state.workflowDeleteCandidate = { id: profile.id, name: profile.name };
@@ -6128,17 +6134,17 @@
     }
     if (candidate.id === activeProfileId) {
       hideWorkflowDeleteDialog();
-      setStatus("当前模型配置不能删除，请先切换到其他模型配置。");
+      setStatus("当前工作流配置不能删除，请先切换到其他工作流配置。");
       return;
     }
     setWorkflowMutationBusy(true);
     request("/provider/model-configurations/" + encodeURIComponent(candidate.id), null, { method: "DELETE" })
       .then(function () {
         hideWorkflowDeleteDialog();
-        return finishWorkflowMutation("模型配置“" + candidate.name + "”已删除。");
+        return finishWorkflowMutation("工作流配置“" + candidate.name + "”已删除。");
       }).catch(function (error) {
         hideWorkflowDeleteDialog();
-        failWorkflowMutation("删除模型配置失败", error);
+        failWorkflowMutation("删除工作流配置失败", error);
       });
   }
 
@@ -6325,7 +6331,7 @@
       btnNew.disabled = (state.directServices || []).length >= 5;
     }
     if (!state.directServices || state.directServices.length === 0) {
-      list.innerHTML = '<p class="field-hint">尚未建立共享直连服务。</p>';
+      list.innerHTML = '<p class="field-hint">尚未建立直连模型配置。</p>';
       return;
     }
     state.directServices.forEach(function (svc) {
@@ -6366,7 +6372,7 @@
     var errorBox = byId("direct-service-editor-error");
 
     if (isCreate && (state.directServices || []).length >= 5) {
-      setStatus("最多只能保存 5 份共享直连服务。");
+      setStatus("最多只能保存 5 份直连模型配置。");
       return;
     }
     if (!isCreate && !svc) {
@@ -6383,7 +6389,7 @@
     };
 
     if (title) {
-      title.textContent = isCreate ? "新建直连服务" : "编辑直连服务";
+      title.textContent = isCreate ? "新建直连模型配置" : "编辑直连模型配置";
     }
     if (nameInput) {
       nameInput.value = isCreate ? "" : svc.name;
@@ -6590,7 +6596,7 @@
           closeDirectServiceEditor();
           return loadDirectServices().then(function () {
             setWorkflowMutationBusy(false);
-            setStatus("共享直连服务已新建，模型目录已自动刷新。");
+            setStatus("直连模型配置已新建，模型目录已自动刷新。");
           });
         });
       }).catch(function (error) {
@@ -6600,7 +6606,7 @@
             errorBox.textContent = "服务已被其他操作修改（版本冲突），已停止保存。请刷新后重新编辑，本次修改未自动合并。";
           }
         } else if (errorBox) {
-          errorBox.textContent = "新建直连服务失败：" + describeFetchError(error);
+          errorBox.textContent = "新建直连模型配置失败：" + describeFetchError(error);
         }
       });
       return;
@@ -6618,7 +6624,7 @@
         closeDirectServiceEditor();
         return loadDirectServices().then(function () {
           setWorkflowMutationBusy(false);
-          setStatus("共享直连服务已保存。");
+          setStatus("直连模型配置已保存。");
         });
       }
       return request("/provider/direct-services/" + encodeURIComponent(serviceId) + "/api-key", {
@@ -6628,7 +6634,7 @@
         closeDirectServiceEditor();
         return loadDirectServices().then(function () {
           setWorkflowMutationBusy(false);
-          setStatus("共享直连服务与 API Key 已保存。");
+          setStatus("直连模型配置与 API Key 已保存。");
         });
       });
     }).catch(function (error) {
@@ -6864,16 +6870,10 @@
     }
 
     if (titleNode) {
-      if (taskType === EXCEL_FORMULA_WORKFLOW_TASK_TYPE) {
-        titleNode.textContent = "公式助手接入选择";
-      } else if (taskType === EXCEL_SMART_FILL_WORKFLOW_TASK_TYPE) {
-        titleNode.textContent = "智能填写接入选择";
-      } else {
-        titleNode.textContent = "智能分析接入选择";
-      }
+      titleNode.textContent = "接入选择";
     }
     if (hintNode) {
-      hintNode.textContent = "使用工作流平台或绑定上方共享直连服务，独立调整任务参数。";
+      hintNode.textContent = "使用工作流平台或绑定直连模型配置，独立调整任务参数。";
     }
 
     var directServices = state.directServices || [];

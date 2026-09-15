@@ -296,14 +296,14 @@ test("Direct services behavior: max 5 limit, single key contract, and activation
 
   // Attempt to open editor for create when limit reached
   ctx.openDirectServiceEditor("create", "");
-  assert.strictEqual(statusText, "最多只能保存 5 份共享直连服务。");
+  assert.strictEqual(statusText, "最多只能保存 5 份直连模型配置。");
   assert.strictEqual(state.directServiceEditor.open, false);
 
   // 2. Open editor when < 5 services
   state.directServices.pop(); // now 4
   ctx.openDirectServiceEditor("create", "");
   assert.strictEqual(state.directServiceEditor.open, true);
-  assert.strictEqual(mockNodes["direct-service-editor-title"].textContent, "新建直连服务");
+  assert.strictEqual(mockNodes["direct-service-editor-title"].textContent, "新建直连模型配置");
   assert.strictEqual(mockNodes["direct-service-key-label"].textContent, "API Key（仅需录入一次）");
   assert.strictEqual(mockNodes["direct-service-key"].value, "", "key input must be empty, no echo");
 
@@ -553,7 +553,7 @@ test("Excel settings tabs dynamically show task direct service section for all 3
   state.workflowTaskType = "excel.formula_assistant";
   ctx.renderTaskModelSelectionSection();
   assert.strictEqual(mockNodes["excel-task-direct-service-section"].hidden, false, "section must NOT be hidden for formula_assistant");
-  assert.strictEqual(mockNodes["excel-task-direct-service-title"].textContent, "公式助手接入选择");
+  assert.strictEqual(mockNodes["excel-task-direct-service-title"].textContent, "接入选择");
   assert.strictEqual(mockNodes["excel-task-temperature"].value, 0.2);
   assert.strictEqual(mockNodes["excel-task-max-output"].value, 1024);
 
@@ -561,7 +561,7 @@ test("Excel settings tabs dynamically show task direct service section for all 3
   state.workflowTaskType = "excel.smart_fill";
   ctx.renderTaskModelSelectionSection();
   assert.strictEqual(mockNodes["excel-task-direct-service-section"].hidden, false, "section must NOT be hidden for smart_fill");
-  assert.strictEqual(mockNodes["excel-task-direct-service-title"].textContent, "智能填写接入选择");
+  assert.strictEqual(mockNodes["excel-task-direct-service-title"].textContent, "接入选择");
   assert.strictEqual(mockNodes["excel-task-temperature"].value, 0.1);
   assert.strictEqual(mockNodes["excel-task-max-output"].value, 2048);
   assert.strictEqual(mockNodes["excel-task-custom-model-check"].checked, true);

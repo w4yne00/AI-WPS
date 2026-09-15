@@ -196,7 +196,7 @@ function testManagerAndEditorContract() {
     '{ method: "PATCH" }',
     '"/api-key"',
     "if (!rawDraft.apiKey)",
-    "模型配置已保存，但 API Key 更换失败；原 Key 保持不变",
+    "工作流配置已保存，但 API Key 更换失败；原 Key 保持不变",
     'byId("workflow-editor-error")',
     "state.workflowEditor.dirty = true"
   ], "ordered metadata and optional Key save");
@@ -213,7 +213,7 @@ function testManagerAndEditorContract() {
     "activeProfileId",
     "profile.name",
     "window.confirm",
-    "请先切换到其他模型配置"
+    "请先切换到其他工作流配置"
   ], "named delete confirmation and current-profile guard");
   includesAll(functionSource("closeWorkflowEditor"), [
     'byId("workflow-editor-key").value = ""',

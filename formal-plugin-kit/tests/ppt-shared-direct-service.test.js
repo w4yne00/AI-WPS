@@ -303,14 +303,14 @@ test("PPT direct services behavior: max 5 limit, single key, and activation roll
   assert.strictEqual(mockNodes["btn-new-direct-service"].disabled, true, "New button must be disabled when 5 services exist");
 
   ctx.openDirectServiceEditor("create", "");
-  assert.strictEqual(statusText, "最多只能保存 5 份共享直连服务。");
+  assert.strictEqual(statusText, "最多只能保存 5 份直连模型配置。");
   assert.strictEqual(state.directServiceEditor.open, false);
 
   // 2. Open editor when < 5
   state.directServices.pop();
   ctx.openDirectServiceEditor("create", "");
   assert.strictEqual(state.directServiceEditor.open, true);
-  assert.strictEqual(mockNodes["direct-service-editor-title"].textContent, "新建直连服务");
+  assert.strictEqual(mockNodes["direct-service-editor-title"].textContent, "新建直连模型配置");
   assert.strictEqual(mockNodes["direct-service-key-label"].textContent, "API Key（仅需录入一次）");
 
   // 3. Activate direct service for ppt.slide_assistant
@@ -415,7 +415,7 @@ test("PPT task model selection: parameters override, draft generation", () => {
   // Render selection section
   ctx.renderTaskModelSelectionSection();
   assert.strictEqual(mockNodes["ppt-task-direct-params"].hidden, false);
-  assert.strictEqual(mockNodes["ppt-task-direct-service-title"].textContent, "智能总结接入选择");
+  assert.strictEqual(mockNodes["ppt-task-direct-service-title"].textContent, "接入选择");
 
   // Get draft
   const draft = ctx.getTaskModelSelectionDraft();
@@ -428,7 +428,7 @@ test("PPT task model selection: parameters override, draft generation", () => {
   // Switch to ppt.structure_review
   state.settingsWorkflowTaskType = "ppt.structure_review";
   ctx.renderTaskModelSelectionSection();
-  assert.strictEqual(mockNodes["ppt-task-direct-service-title"].textContent, "结构审查接入选择");
+  assert.strictEqual(mockNodes["ppt-task-direct-service-title"].textContent, "接入选择");
 });
 
 test("Preflight readiness check: validateActiveDirectTaskSelection blocks unready services", () => {

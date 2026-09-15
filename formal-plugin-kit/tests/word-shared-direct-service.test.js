@@ -307,14 +307,14 @@ test("Word direct services behavior: max 5 limit, single key, and activation rol
   assert.strictEqual(mockNodes["btn-new-direct-service"].disabled, true, "New button must be disabled when 5 services exist");
 
   ctx.openDirectServiceEditor("create", "");
-  assert.strictEqual(statusText, "最多只能保存 5 份共享直连服务。");
+  assert.strictEqual(statusText, "最多只能保存 5 份直连模型配置。");
   assert.strictEqual(state.directServiceEditor.open, false);
 
   // 2. Open editor when < 5
   state.directServices.pop();
   ctx.openDirectServiceEditor("create", "");
   assert.strictEqual(state.directServiceEditor.open, true);
-  assert.strictEqual(mockNodes["direct-service-editor-title"].textContent, "新建直连服务");
+  assert.strictEqual(mockNodes["direct-service-editor-title"].textContent, "新建直连模型配置");
   assert.strictEqual(mockNodes["direct-service-key-label"].textContent, "API Key（仅需录入一次）");
 
   // 3. Activate direct service for smart_write
@@ -460,7 +460,7 @@ test("Word task model selection: parameters override, draft generation, and revi
   // 1. Render smart_write task model selection
   ctx.renderTaskModelSelectionSection();
   assert.strictEqual(mockNodes["word-task-direct-service-section"].hidden, false);
-  assert.strictEqual(mockNodes["word-task-direct-service-title"].textContent, "智能编写接入选择");
+  assert.strictEqual(mockNodes["word-task-direct-service-title"].textContent, "接入选择");
 
   // 2. Draft generation
   const draft = ctx.getTaskModelSelectionDraft();
@@ -474,18 +474,18 @@ test("Word task model selection: parameters override, draft generation, and revi
   state.settingsWorkflowTaskType = "word.smart_imitation";
   ctx.renderTaskModelSelectionSection();
   assert.strictEqual(mockNodes["word-task-direct-service-section"].hidden, false);
-  assert.strictEqual(mockNodes["word-task-direct-service-title"].textContent, "智能仿写接入选择");
+  assert.strictEqual(mockNodes["word-task-direct-service-title"].textContent, "接入选择");
 
   // 4. Review tabs: document_review and format_review both supported
   state.settingsWorkflowTaskType = "word.document_review";
   ctx.renderTaskModelSelectionSection();
   assert.strictEqual(mockNodes["word-task-direct-service-section"].hidden, false, "task direct service section must be visible for document_review");
-  assert.strictEqual(mockNodes["word-task-direct-service-title"].textContent, "文档审查接入选择");
+  assert.strictEqual(mockNodes["word-task-direct-service-title"].textContent, "接入选择");
 
   state.settingsWorkflowTaskType = "word.format_review";
   ctx.renderTaskModelSelectionSection();
   assert.strictEqual(mockNodes["word-task-direct-service-section"].hidden, false, "task direct service section must be visible for format_review");
-  assert.strictEqual(mockNodes["word-task-direct-service-title"].textContent, "格式审查接入选择");
+  assert.strictEqual(mockNodes["word-task-direct-service-title"].textContent, "接入选择");
 });
 
 test("Preflight readiness check: validateActiveDirectTaskSelection blocks unready services", () => {

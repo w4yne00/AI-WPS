@@ -11,6 +11,7 @@ from app.services.model_configurations import (
     ACCESS_WORKFLOW_PLATFORM,
     ModelConfigurationStore,
 )
+from app.services.direct_services import DirectServiceStore
 from app.services.word.image_semantics import (
     ImageSemanticConfigStore,
     ImageSemanticRuntime,
@@ -170,95 +171,110 @@ class NewInstallImageSemanticConfigTests(unittest.TestCase):
         self.assertNotIn("wpsAcceptanceConfirmed", image)
 
 
-class FormatReviewDirectConfigDefaultTests(unittest.TestCase):
+class FormatReviewDirectServiceDefaultTests(unittest.TestCase):
     def _store(self, root):
         config_path = root / "adapter.json"
         config_path.write_text("{}\n", encoding="utf-8")
-        return ModelConfigurationStore(config_path, root / "provider_api_keys")
+        return DirectServiceStore(config_path, root / "provider_api_keys")
+
+    def _create_service(self, store, name="视觉直连服务", base_url="https://vision.example/v1"):
+        service = store.create_service(
+            name=name,
+            service_base_url=base_url,
+            default_model="vision-1",
+        )
+        keyed = store.replace_api_key(
+            service["id"], "secret", expected_revision=service["revision"]
+        )
+        store.update_model_list(
+            service["id"],
+            ["vision-1", "writer-1"],
+            expected_revision=keyed["revision"],
+            trusted=True,
+        )
+        return store.get_service(service["id"])
 
     def test_new_format_review_direct_defaults_to_openai_image_url(self):
         # Break: new format-review direct config still defaults to disabled.
         with TemporaryDirectory() as tmp:
             store = self._store(Path(tmp))
-            configuration = store.create_configuration(
-                "word.format_review",
-                "直连格式审查",
-                ACCESS_DIRECT_MODEL,
-                service_base_url="https://vision.example/v1",
-                model_name="vision-1",
+            service = self._create_service(store)
+            selection = store.update_task_model_selection(
+                "word.format_review", service_id=service["id"]
             )
-            self.assertEqual(configuration["imageInputMode"], "openai_image_url")
+            self.assertEqual(selection["imageInputMode"], "openai_image_url")
 
     def test_workflow_and_other_tasks_still_default_disabled(self):
         # Break: image mode leaks to workflow or non-format-review tasks.
         with TemporaryDirectory() as tmp:
-            store = self._store(Path(tmp))
-            workflow = store.create_configuration(
+            root = Path(tmp)
+            store = self._store(root)
+            service = self._create_service(store)
+            writing = store.update_task_model_selection(
+                "word.smart_write", service_id=service["id"]
+            )
+            workflow_store = ModelConfigurationStore(
+                store.config_path, store.key_dir
+            )
+            workflow = workflow_store.create_configuration(
                 "word.format_review",
                 "工作流格式审查",
                 ACCESS_WORKFLOW_PLATFORM,
                 service_base_url="https://dify.example/v1",
             )
-            writing = store.create_configuration(
-                "word.smart_write",
-                "智能编写直连",
-                ACCESS_DIRECT_MODEL,
-                service_base_url="https://vision.example/v1",
-                model_name="writer-1",
-            )
             self.assertEqual(workflow["imageInputMode"], "disabled")
             self.assertEqual(writing["imageInputMode"], "disabled")
 
-    def test_saving_usable_format_review_direct_writes_egress_binding(self):
-        # Break: usable save still requires a separate authorization click.
+    def test_explicit_authorization_writes_current_egress_binding(self):
+        # Break: explicit authorization does not bind the current service/model/mode.
         with TemporaryDirectory() as tmp:
             store = self._store(Path(tmp))
-            created = store.create_configuration(
+            service = self._create_service(store)
+            store.update_task_model_selection(
                 "word.format_review",
-                "直连格式审查",
-                ACCESS_DIRECT_MODEL,
-                service_base_url="https://vision.example/v1",
+                service_id=service["id"],
                 model_name="vision-1",
             )
-            saved = store.replace_api_key(created["id"], "secret")
-            authorization = saved["imageExternalAuthorization"]
+            authorized = store.set_image_external_authorization(
+                "word.format_review", True
+            )
+            authorization = authorized["imageExternalAuthorization"]
             self.assertTrue(authorization["authorized"])
             self.assertFalse(authorization.get("stale", False))
             self.assertEqual(authorization["serviceHost"], "vision.example")
             self.assertEqual(authorization["imageInputMode"], "openai_image_url")
             self.assertEqual(authorization["modelName"], "vision-1")
-            self.assertTrue(saved["complete"])
-            self.assertIsNone(saved["imageSemanticValidation"])
+            self.assertIsNone(authorized["imageSemanticValidation"])
 
     def test_host_mode_or_model_change_invalidates_binding_until_next_save(self):
-        # Break: changed target keeps the old binding, or the changing save rebinds itself.
+        # Break: changed target keeps the old binding, or ordinary save reauthorizes it.
         with TemporaryDirectory() as tmp:
             store = self._store(Path(tmp))
-            created = store.create_configuration(
+            service = self._create_service(store)
+            store.update_task_model_selection(
                 "word.format_review",
-                "直连格式审查",
-                ACCESS_DIRECT_MODEL,
-                service_base_url="https://vision.example/v1",
+                service_id=service["id"],
                 model_name="vision-1",
             )
-            saved = store.replace_api_key(created["id"], "secret")
-            changed = store.update_configuration(
-                saved["id"],
-                name="直连格式审查",
-                access_method=ACCESS_DIRECT_MODEL,
+            store.set_image_external_authorization("word.format_review", True)
+            store.update_service(
+                service["id"],
+                name=service["name"],
                 service_base_url="https://other-vision.example/v1",
-                model_name="vision-1",
-                image_input_mode="openai_image_url",
+                expected_revision=service["revision"],
             )
+            changed = store.get_task_model_selection("word.format_review")
             self.assertTrue(changed["imageExternalAuthorization"]["stale"])
 
-            rebound = store.update_configuration(
-                saved["id"],
-                name="直连格式审查",
-                access_method=ACCESS_DIRECT_MODEL,
-                service_base_url="https://other-vision.example/v1",
+            unchanged = store.update_task_model_selection(
+                "word.format_review",
+                service_id=service["id"],
                 model_name="vision-1",
                 image_input_mode="openai_image_url",
+            )
+            self.assertTrue(unchanged["imageExternalAuthorization"]["stale"])
+            rebound = store.set_image_external_authorization(
+                "word.format_review", True
             )
             self.assertFalse(rebound["imageExternalAuthorization"]["stale"])
             self.assertEqual(
@@ -269,18 +285,16 @@ class FormatReviewDirectConfigDefaultTests(unittest.TestCase):
     def test_format_review_direct_can_be_set_back_to_disabled(self):
         with TemporaryDirectory() as tmp:
             store = self._store(Path(tmp))
-            created = store.create_configuration(
+            service = self._create_service(store)
+            store.update_task_model_selection(
                 "word.format_review",
-                "直连格式审查",
-                ACCESS_DIRECT_MODEL,
-                service_base_url="https://vision.example/v1",
+                service_id=service["id"],
                 model_name="vision-1",
             )
-            disabled = store.update_configuration(
-                created["id"],
-                name="直连格式审查",
-                access_method=ACCESS_DIRECT_MODEL,
-                service_base_url="https://vision.example/v1",
+            store.set_image_external_authorization("word.format_review", True)
+            disabled = store.update_task_model_selection(
+                "word.format_review",
+                service_id=service["id"],
                 model_name="vision-1",
                 image_input_mode="disabled",
             )
@@ -291,41 +305,40 @@ class FormatReviewDirectConfigDefaultTests(unittest.TestCase):
         # Break: probe failure blocks complete/activate.
         with TemporaryDirectory() as tmp:
             store = self._store(Path(tmp))
-            created = store.create_configuration(
+            service = self._create_service(store)
+            store.update_task_model_selection(
                 "word.format_review",
-                "直连格式审查",
-                ACCESS_DIRECT_MODEL,
-                service_base_url="https://vision.example/v1",
+                service_id=service["id"],
                 model_name="vision-1",
             )
-            saved = store.replace_api_key(created["id"], "secret")
+            store.set_image_external_authorization("word.format_review", True)
             failed = store.record_image_semantic_validation(
-                saved["id"], {"validated": False, "errorCode": "IMAGE_PROBE_FAILED"}
+                "word.format_review",
+                {"validated": False, "errorCode": "IMAGE_PROBE_FAILED"},
             )
-            self.assertTrue(failed["complete"])
             self.assertFalse(failed["imageSemanticValidation"]["validated"])
-            activated = store.activate_configuration(failed["id"])
-            self.assertEqual(activated["activeConfigurationId"], failed["id"])
+            activated = store.activate_direct_service(
+                service["id"], "word.format_review"
+            )
+            self.assertEqual(activated["activeConfigurationId"], service["id"])
 
-    def test_copying_usable_format_review_direct_writes_egress_binding(self):
-        # Break: copy drops authorization even when the copy is already usable.
+    def test_shared_direct_service_is_reused_across_tasks_without_copying(self):
+        # Break: shared-service migration regresses into per-task direct copies.
         with TemporaryDirectory() as tmp:
             store = self._store(Path(tmp))
-            created = store.create_configuration(
-                "word.format_review",
-                "直连格式审查",
-                ACCESS_DIRECT_MODEL,
-                service_base_url="https://vision.example/v1",
-                model_name="vision-1",
+            service = self._create_service(store)
+            store.activate_direct_service(
+                service["id"], "word.format_review"
             )
-            store.replace_api_key(created["id"], "secret")
-            copied = store.copy_configuration(created["id"], name="直连副本")
-            authorization = copied["imageExternalAuthorization"]
-            self.assertEqual(copied["imageInputMode"], "openai_image_url")
-            self.assertTrue(authorization["authorized"])
-            self.assertFalse(authorization.get("stale", False))
-            self.assertEqual(authorization["serviceHost"], "vision.example")
-            self.assertTrue(copied["complete"])
+            store.activate_direct_service(
+                service["id"], "word.smart_write"
+            )
+            shared = store.get_service(service["id"])
+            self.assertEqual(store.list_services()["directServiceCount"], 1)
+            self.assertEqual(
+                sorted(shared["referencedTasks"]),
+                ["word.format_review", "word.smart_write"],
+            )
 
 
 @unittest.skipUnless(HAS_PYDANTIC, "pydantic is required for format review tests")

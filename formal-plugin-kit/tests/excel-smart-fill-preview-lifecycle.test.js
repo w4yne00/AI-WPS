@@ -438,6 +438,7 @@ function loadTaskpane(fetchImpl, selection) {
       writeExcelSmartFillResult: writeExcelSmartFillResult,
       returnToExcelSmartFillEditAction: returnToExcelSmartFillEditAction,
       renderSmartFillCaptureState: renderSmartFillCaptureState,
+      applySmartFillLifecycleControls: applySmartFillLifecycleControls,
       tryRebindSmartFillTarget: tryRebindSmartFillTarget
     };
     return;
@@ -488,7 +489,17 @@ function loadTaskpane(fetchImpl, selection) {
   exported.setInstruction = function (value) {
     el("excel-smart-fill-instruction").value = value;
   };
+  exported.smartFillSummaryHidden = function () {
+    return el("smart-fill-write-summary").hidden;
+  };
   return exported;
+}
+
+function testSmartFillSummaryIsHiddenOutsideSmartFillMode() {
+  const exported = loadTaskpane();
+  exported.state.currentMode = "excelFormulaAssistant";
+  exported.applySmartFillLifecycleControls();
+  assert.strictEqual(exported.smartFillSummaryHidden(), true);
 }
 
 function testGeneratePreflightFailureIsVisibleInResultPreview() {
@@ -697,6 +708,7 @@ testRebindClearsTransientWriteConflict();
 testSuccessfulTargetBindClearsTargetError();
 testReturnToEditRebindsLiveTargetWhenUnchanged();
 testGeneratePreflightFailureIsVisibleInResultPreview();
+testSmartFillSummaryIsHiddenOutsideSmartFillMode();
 
 (async function main() {
   await testWriteReservesBeforeHostWrite();

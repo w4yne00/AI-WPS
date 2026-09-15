@@ -2283,116 +2283,96 @@ class EnterpriseProviderTests(unittest.TestCase):
         self.assertIn("request", debug)
 
     def test_load_settings_defaults_provider_base_url_to_empty(self) -> None:
-        tmp_dir = Path("tmp-test-config")
-        tmp_dir.mkdir(exist_ok=True)
-        config_file = tmp_dir / "adapter.json"
-        config_file.write_text(
-            """
-            {
-              "providerName": "仅配置名称"
-            }
-            """,
-            encoding="utf-8",
-        )
+        with TemporaryDirectory() as tmp:
+            config_file = Path(tmp) / "adapter.json"
+            config_file.write_text(
+                """
+                {
+                  "providerName": "仅配置名称"
+                }
+                """,
+                encoding="utf-8",
+            )
 
-        settings = load_settings(config_file)
+            settings = load_settings(config_file)
 
-        self.assertEqual(settings.provider_base_url, "")
-
-        config_file.unlink()
-        tmp_dir.rmdir()
+            self.assertEqual(settings.provider_base_url, "")
 
     def test_save_provider_base_url_updates_config_file(self) -> None:
-        tmp_dir = Path("tmp-test-config")
-        tmp_dir.mkdir(exist_ok=True)
-        config_file = tmp_dir / "adapter.json"
-        config_file.write_text(
-            """
-            {
-              "servicePort": 19100,
-              "providerType": "enterprise-chat-api",
-              "providerBaseUrl": "https://old.example/v1"
-            }
-            """,
-            encoding="utf-8",
-        )
+        with TemporaryDirectory() as tmp:
+            config_file = Path(tmp) / "adapter.json"
+            config_file.write_text(
+                """
+                {
+                  "servicePort": 19100,
+                  "providerType": "enterprise-chat-api",
+                  "providerBaseUrl": "https://old.example/v1"
+                }
+                """,
+                encoding="utf-8",
+            )
 
-        save_provider_base_url("https://new.example/v1", config_file)
-        settings = load_settings(config_file)
+            save_provider_base_url("https://new.example/v1", config_file)
+            settings = load_settings(config_file)
 
-        self.assertEqual(settings.provider_base_url, "https://new.example/v1")
-        self.assertEqual(settings.service_port, 19100)
-
-        config_file.unlink()
-        tmp_dir.rmdir()
+            self.assertEqual(settings.provider_base_url, "https://new.example/v1")
+            self.assertEqual(settings.service_port, 19100)
 
     def test_save_task_api_key_ref_updates_config_file(self) -> None:
-        tmp_dir = Path("tmp-test-config")
-        tmp_dir.mkdir(exist_ok=True)
-        config_file = tmp_dir / "adapter.json"
-        config_file.write_text(
-            """
-            {
-              "providerBaseUrl": "https://old.example/v1"
-            }
-            """,
-            encoding="utf-8",
-        )
+        with TemporaryDirectory() as tmp:
+            config_file = Path(tmp) / "adapter.json"
+            config_file.write_text(
+                """
+                {
+                  "providerBaseUrl": "https://old.example/v1"
+                }
+                """,
+                encoding="utf-8",
+            )
 
-        save_task_api_key_ref("word.format_review", "format_key", config_file)
-        settings = load_settings(config_file)
+            save_task_api_key_ref("word.format_review", "format_key", config_file)
+            settings = load_settings(config_file)
 
-        self.assertEqual(settings.task_api_key_refs["word.format_review"], "format_key")
-        self.assertEqual(settings.provider_base_url, "https://old.example/v1")
-
-        config_file.unlink()
-        tmp_dir.rmdir()
+            self.assertEqual(settings.task_api_key_refs["word.format_review"], "format_key")
+            self.assertEqual(settings.provider_base_url, "https://old.example/v1")
 
     def test_save_provider_base_url_updates_provider_name(self) -> None:
-        tmp_dir = Path("tmp-test-config")
-        tmp_dir.mkdir(exist_ok=True)
-        config_file = tmp_dir / "adapter.json"
-        config_file.write_text(
-            """
-            {
-              "providerName": "旧名称",
-              "providerBaseUrl": "https://old.example/v1"
-            }
-            """,
-            encoding="utf-8",
-        )
+        with TemporaryDirectory() as tmp:
+            config_file = Path(tmp) / "adapter.json"
+            config_file.write_text(
+                """
+                {
+                  "providerName": "旧名称",
+                  "providerBaseUrl": "https://old.example/v1"
+                }
+                """,
+                encoding="utf-8",
+            )
 
-        save_provider_base_url("https://new.example/v1", config_file, provider_name="新名称")
-        settings = load_settings(config_file)
+            save_provider_base_url("https://new.example/v1", config_file, provider_name="新名称")
+            settings = load_settings(config_file)
 
-        self.assertEqual(settings.provider_name, "新名称")
-        self.assertEqual(settings.provider_base_url, "https://new.example/v1")
-
-        config_file.unlink()
-        tmp_dir.rmdir()
+            self.assertEqual(settings.provider_name, "新名称")
+            self.assertEqual(settings.provider_base_url, "https://new.example/v1")
 
     def test_save_provider_base_url_allows_empty_url_and_updates_name(self) -> None:
-        tmp_dir = Path("tmp-test-config")
-        tmp_dir.mkdir(exist_ok=True)
-        config_file = tmp_dir / "adapter.json"
-        config_file.write_text(
-            """
-            {
-              "providerName": "旧名称",
-              "providerBaseUrl": "https://old.example/v1"
-            }
-            """,
-            encoding="utf-8",
-        )
+        with TemporaryDirectory() as tmp:
+            config_file = Path(tmp) / "adapter.json"
+            config_file.write_text(
+                """
+                {
+                  "providerName": "旧名称",
+                  "providerBaseUrl": "https://old.example/v1"
+                }
+                """,
+                encoding="utf-8",
+            )
 
-        save_provider_base_url("", config_file, provider_name="自定义供应商")
-        settings = load_settings(config_file)
+            save_provider_base_url("", config_file, provider_name="自定义供应商")
+            settings = load_settings(config_file)
 
-        self.assertEqual(settings.provider_name, "自定义供应商")
-        self.assertEqual(settings.provider_base_url, "")
-
-        config_file.unlink()
-        tmp_dir.rmdir()
+            self.assertEqual(settings.provider_name, "自定义供应商")
+            self.assertEqual(settings.provider_base_url, "")
 
     def test_provider_requires_key_and_base_url_to_be_configured(self) -> None:
         previous = os.environ.get("ENTERPRISE_AI_API_KEY")

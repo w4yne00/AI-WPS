@@ -303,7 +303,7 @@ assert.ok(activateSource.includes("切换模型配置失败"));
 const deleteSource = functionSource("deleteWorkflowProfile");
 assert.ok(deleteSource.includes("canDeleteWorkflowProfile"));
 assert.ok(deleteSource.includes("profile.name"));
-assert.ok(deleteSource.includes("确认删除模型配置“"));
+assert.ok(deleteSource.includes("确认删除工作流配置“"));
 
 const saveEditSource = functionSource("saveWorkflowProfileEdit");
 const patchIndex = saveEditSource.indexOf('{ method: "PATCH" }');
@@ -312,7 +312,7 @@ assert.ok(patchIndex >= 0, "edit must PATCH metadata");
 assert.ok(replaceKeyIndex > patchIndex, "key replacement must follow metadata PATCH");
 const saveKeySource = functionSource("saveModelConfigurationKey");
 assert.ok(saveKeySource.includes("if (!draft.apiKey)"), "blank edit key must skip replacement");
-assert.ok(saveEditSource.includes("模型配置已保存，但 API Key 更换失败"));
+assert.ok(saveEditSource.includes("工作流配置已保存，但 API Key 更换失败"));
 assert.ok(saveEditSource.includes("describeFetchError(validation.error)"));
 const createProfileSource = functionSource("createWorkflowProfile");
 assert.ok(createProfileSource.includes("describeFetchError(validation.error)"));

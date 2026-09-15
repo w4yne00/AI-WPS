@@ -149,7 +149,7 @@ function assertEditorSaveContract() {
   assert.ok(emptyKeyGuardIndex > patchIndex, "empty Key guard must follow PATCH success");
   assert.ok(keyPathIndex > emptyKeyGuardIndex, "Key replacement must be optional and ordered after PATCH");
   assertIncludesAll(saveEditor, [
-    "模型配置已保存",
+    "工作流配置已保存",
     "Key 更换失败",
     "原 Key 仍然有效"
   ]);
@@ -161,7 +161,7 @@ function assertDeleteAndBusyContracts() {
   assert.ok(renderManager.includes("helpers.canDeleteWorkflowProfile"));
   assertIncludesAll(confirmDelete, [
     "activeProfileId",
-    "当前模型配置不能删除",
+    "当前工作流配置不能删除",
     'method: "DELETE"'
   ]);
   assert.ok(js.includes("state.busy = Boolean(isBusy)"));

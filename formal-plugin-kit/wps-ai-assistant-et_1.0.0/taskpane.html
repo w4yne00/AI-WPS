@@ -49,7 +49,10 @@
 
           <div id="excel-formula-options" class="mode-block" hidden>
             <div id="excel-formula-range-summary" class="excel-range-summary">请先框选相关表格范围。</div>
-            <p class="field-note">公式助手只读取明确选区，最多 30 行 × 20 列，不读取工作表已用范围。</p>
+            <details class="context-help task-context-help">
+              <summary aria-label="查看公式助手说明">!</summary>
+              <div class="context-help-popover" role="note">公式助手只读取明确选区，最多 30 行 × 20 列，不读取工作表已用范围。</div>
+            </details>
             <div id="excel-formula-mode-segment" class="formula-mode-segment" role="tablist" aria-label="公式助手模式">
               <button type="button" role="tab" data-formula-mode="generate" aria-selected="true" tabindex="0">生成公式</button>
               <button type="button" role="tab" data-formula-mode="explain" aria-selected="false" tabindex="-1">解释排错</button>
@@ -66,7 +69,10 @@
               <span>需要生成什么？</span>
               <textarea id="excel-smart-fill-instruction" rows="4" maxlength="4000" placeholder="例如：根据姓名和部门生成统一格式的岗位标签。"></textarea>
             </label>
-            <p class="field-note">选择包含表头的数据范围后点击生成预览。本步骤不选择写入位置。</p>
+            <details class="context-help task-context-help">
+              <summary aria-label="查看智能填写说明">!</summary>
+              <div class="context-help-popover" role="note">选择包含表头的数据范围后点击生成预览。本步骤不选择写入位置。</div>
+            </details>
             <p id="smart-fill-validation-line" class="field-hint" aria-live="polite"></p>
           </div>
 
@@ -75,7 +81,7 @@
             <button id="btn-write-smart-fill" class="secondary-action" type="button" hidden disabled>写入内容</button>
             <button id="btn-edit-smart-fill" class="secondary-action" type="button" hidden>返回修改</button>
             <button id="btn-new-smart-fill" class="secondary-action" type="button" hidden>开始新的填写</button>
-            <span id="smart-fill-write-summary" class="field-hint" aria-live="polite" tabindex="-1">尚无可写入的智能填写预览。</span>
+            <span id="smart-fill-write-summary" class="field-hint" aria-live="polite" tabindex="-1" hidden>尚无可写入的智能填写预览。</span>
             <button id="btn-cancel-excel-analysis-job" class="secondary-action" type="button" hidden>取消排队任务</button>
             <button id="btn-cancel-excel-formula-job" class="secondary-action" type="button" hidden>取消排队任务</button>
             <button id="btn-cancel-excel-smart-fill-job" class="secondary-action" type="button" hidden>取消任务</button>
@@ -88,13 +94,6 @@
 
         <section id="excel-result-panel" class="panel result-panel glass-card">
           <div class="panel-head">
-            <div class="result-actions">
-              <button id="btn-copy-result" class="ghost-action copy-button" type="button" title="复制结果" aria-label="复制结果">复制</button>
-              <button id="btn-copy-formula" class="ghost-action copy-button" type="button" title="复制主公式" aria-label="复制主公式" hidden>复制公式</button>
-              <button id="btn-view-history" class="ghost-action history-entry-button" type="button" title="查看成功历史" hidden>
-                历史记录<span id="history-unread-badge" class="history-badge" hidden>0</span>
-              </button>
-            </div>
             <div>
               <h2>结果预览</h2>
               <div id="result-view-switch" class="result-view-switch excel-result-switch" hidden>
@@ -102,12 +101,21 @@
                 <button type="button" id="btn-result-plain" class="view-switch-button" aria-pressed="false">汇报段落</button>
               </div>
             </div>
+            <div class="result-actions">
+              <button id="btn-view-history" class="ghost-action history-entry-button" type="button" title="查看成功历史" hidden>
+                历史记录<span id="history-unread-badge" class="history-badge" hidden>0</span>
+              </button>
+            </div>
           </div>
           <div id="result-output" class="markdown-output">等待运行。</div>
           <details id="excel-formula-alternative" class="formula-alternative" hidden>
             <summary>备选公式（与主公式确有差异时显示）</summary>
             <pre><code id="excel-formula-alternative-code"></code></pre>
           </details>
+          <div class="copy-toolbar result-copy-toolbar" aria-label="复制当前结果">
+            <button id="btn-copy-result" class="ghost-action" type="button" title="复制结果" aria-label="复制结果">复制结果</button>
+            <button id="btn-copy-formula" class="ghost-action" type="button" title="复制主公式" aria-label="复制主公式" hidden>复制公式</button>
+          </div>
         </section>
 
         <section id="excel-history-view" class="panel result-panel glass-card excel-history-view" hidden>
@@ -165,17 +173,77 @@
               </div>
             </section>
 
+            <section id="model-configuration-card" class="settings-card workflow-settings-card">
+              <div class="workflow-settings-heading">
+                <h4>模型配置</h4>
+                <button id="workflow-help-button" class="info-button" type="button" aria-label="查看模型配置说明" aria-expanded="false" aria-controls="workflow-help-popover">!</button>
+              </div>
+              <div id="workflow-help-popover" class="workflow-help-popover" role="tooltip" hidden>每项任务可保存多个独立模型配置，并选择工作流平台或模型直连接入。</div>
+              <div id="workflow-task-tabs" class="workflow-task-tabs" role="tablist" aria-label="Excel 任务">
+                <button type="button" role="tab" data-workflow-task-tab="excel.analysis" aria-selected="true">智能分析</button>
+                <button type="button" role="tab" data-workflow-task-tab="excel.formula_assistant" aria-selected="false">公式助手</button>
+                <button type="button" role="tab" data-workflow-task-tab="excel.smart_fill" aria-selected="false">智能填写</button>
+              </div>
+              <section class="model-configuration-home">
+                <section id="excel-task-direct-service-section" class="task-model-selection-card">
+                  <div class="task-selection-heading">
+                    <h4 id="excel-task-direct-service-title">接入选择</h4>
+                    <details class="context-help">
+                      <summary aria-label="查看接入选择说明">!</summary>
+                      <div id="excel-task-direct-service-hint" class="context-help-popover" role="note">使用工作流平台或绑定直连模型配置，独立调整任务参数。</div>
+                    </details>
+                  </div>
+                  <label class="field" for="excel-task-direct-service-select">
+                    <span class="sr-only">接入选择</span>
+                    <select id="excel-task-direct-service-select">
+                      <option value="">-- 使用工作流平台配置 --</option>
+                    </select>
+                  </label>
+                  <div id="excel-task-direct-params" hidden>
+                    <label class="field" for="excel-task-model-select">
+                      <span>任务模型</span>
+                      <select id="excel-task-model-select">
+                        <option value="">继承服务默认模型</option>
+                      </select>
+                    </label>
+                    <label class="workflow-activate-check" for="excel-task-custom-model-check">
+                      <input id="excel-task-custom-model-check" type="checkbox" />
+                      <span>使用自定义模型标识</span>
+                    </label>
+                    <label id="excel-task-custom-model-row" class="field" for="excel-task-custom-model-input" hidden>
+                      <span>自定义模型</span>
+                      <input id="excel-task-custom-model-input" type="text" placeholder="例如：deepseek-reasoner" />
+                    </label>
+                    <div class="grid-three-col">
+                      <label class="field"><span>温度</span><input id="excel-task-temperature" type="number" min="0" max="2" step="0.1" placeholder="默认" /></label>
+                      <label class="field"><span>最大 Token</span><input id="excel-task-max-output" type="number" min="1" placeholder="默认" /></label>
+                      <label class="field"><span>上下文容量</span><input id="excel-task-context" type="number" min="1000" placeholder="40000" /></label>
+                    </div>
+                    <div class="button-row" style="margin-top: 8px;">
+                      <button id="btn-validate-task-model-selection" class="ghost-action" type="button">验证调用</button>
+                      <button id="btn-save-task-model-selection" type="button">保存并设为当前</button>
+                    </div>
+                    <p id="excel-task-model-cost-warning" class="field-hint">验证调用会真实请求模型，可能产生费用并等待服务返回。</p>
+                    <p id="excel-task-model-validation-status" class="inline-status"></p>
+                  </div>
+                </section>
+              </section>
+            </section>
+
             <section id="direct-services-card" class="settings-card direct-services-card">
               <div class="direct-services-heading">
-                <div>
-                  <h4>共享直连服务</h4>
-                  <p class="field-hint">同一运行环境所有宿主共享配置，最多 5 个。仅需录入一次单份 API Key。</p>
+                <div class="section-heading-with-help">
+                  <h4>直连模型配置</h4>
+                  <details class="context-help">
+                    <summary aria-label="查看直连模型配置说明">!</summary>
+                    <div class="context-help-popover" role="note">同一运行环境所有宿主共享配置，最多 5 个。仅需录入一次单份 API Key。</div>
+                  </details>
                 </div>
-                <button id="btn-new-direct-service" type="button">新建直连服务</button>
+                <button id="btn-new-direct-service" type="button">新建</button>
               </div>
               <p id="legacy-direct-pending-status" class="inline-status" aria-live="polite" hidden></p>
               <div id="direct-services-list" class="direct-services-list">
-                <p class="field-hint">正在读取共享直连服务...</p>
+                <p class="field-hint">正在读取直连模型配置...</p>
               </div>
 
               <section id="direct-service-editor-view" class="direct-service-editor-view" hidden>
@@ -183,7 +251,7 @@
                   <button id="btn-direct-service-editor-back" class="icon-button is-back" type="button" title="返回直连服务列表" aria-label="返回直连服务列表">
                     <span class="back-icon" aria-hidden="true">←</span>
                   </button>
-                  <h3 id="direct-service-editor-title">新建直连服务</h3>
+                  <h3 id="direct-service-editor-title">新建直连模型配置</h3>
                 </div>
                 <label class="field" for="direct-service-name">
                   <span>服务名称</span>
@@ -232,76 +300,24 @@
               </section>
             </section>
 
-            <section class="settings-card workflow-settings-card">
-              <div class="workflow-settings-heading">
-                <h4>模型配置</h4>
-                <button id="workflow-help-button" class="info-button" type="button" aria-label="查看模型配置说明" aria-expanded="false" aria-controls="workflow-help-popover">i</button>
-              </div>
-              <div id="workflow-help-popover" class="workflow-help-popover" role="tooltip" hidden>每项任务可保存多个独立模型配置，并选择工作流平台或模型直连接入。</div>
-              <div id="workflow-task-tabs" class="workflow-task-tabs" role="tablist" aria-label="Excel 任务">
-                <button type="button" role="tab" data-workflow-task-tab="excel.analysis" aria-selected="true">智能分析</button>
-                <button type="button" role="tab" data-workflow-task-tab="excel.formula_assistant" aria-selected="false">公式助手</button>
-                <button type="button" role="tab" data-workflow-task-tab="excel.smart_fill" aria-selected="false">智能填写</button>
-              </div>
+            <section id="workflow-configuration-card" class="settings-card workflow-configuration-card">
               <section id="workflow-settings-home">
-                <section id="excel-task-direct-service-section" class="task-model-selection-card">
-                  <div class="workflow-manager-head">
-                    <div>
-                      <h4 id="excel-task-direct-service-title">智能分析接入选择</h4>
-                      <p id="excel-task-direct-service-hint" class="field-hint">使用工作流平台或绑定上方共享直连服务，独立调整任务参数。</p>
-                    </div>
-                  </div>
-                  <label class="field" for="excel-task-direct-service-select">
-                    <span>接入模式</span>
-                    <select id="excel-task-direct-service-select">
-                      <option value="">-- 使用工作流平台配置 --</option>
-                    </select>
-                  </label>
-                  <div id="excel-task-direct-params" hidden>
-                    <label class="field" for="excel-task-model-select">
-                      <span>任务模型</span>
-                      <select id="excel-task-model-select">
-                        <option value="">继承服务默认模型</option>
-                      </select>
-                    </label>
-                    <label class="workflow-activate-check" for="excel-task-custom-model-check">
-                      <input id="excel-task-custom-model-check" type="checkbox" />
-                      <span>使用自定义模型标识</span>
-                    </label>
-                    <label id="excel-task-custom-model-row" class="field" for="excel-task-custom-model-input" hidden>
-                      <span>自定义模型</span>
-                      <input id="excel-task-custom-model-input" type="text" placeholder="例如：deepseek-reasoner" />
-                    </label>
-                    <div class="grid-three-col">
-                      <label class="field"><span>温度</span><input id="excel-task-temperature" type="number" min="0" max="2" step="0.1" placeholder="默认" /></label>
-                      <label class="field"><span>最大 Token</span><input id="excel-task-max-output" type="number" min="1" placeholder="默认" /></label>
-                      <label class="field"><span>上下文容量</span><input id="excel-task-context" type="number" min="1000" placeholder="40000" /></label>
-                    </div>
-                    <div class="button-row" style="margin-top: 8px;">
-                      <button id="btn-validate-task-model-selection" class="ghost-action" type="button">验证调用</button>
-                      <button id="btn-save-task-model-selection" type="button">保存并设为当前</button>
-                    </div>
-                    <p id="excel-task-model-cost-warning" class="field-hint">验证调用会真实请求模型，可能产生费用并等待服务返回。</p>
-                    <p id="excel-task-model-validation-status" class="inline-status"></p>
-                  </div>
-                </section>
-
                 <div class="workflow-manager-head">
                   <div>
-                    <h3 id="workflow-manager-title">模型配置</h3>
-                    <p id="workflow-manager-summary">正在读取模型配置...</p>
+                    <h3 id="workflow-manager-title">工作流配置</h3>
+                    <p id="workflow-manager-summary">正在读取工作流配置...</p>
                   </div>
-                  <button id="btn-new-workflow-profile" type="button">新建模型配置</button>
+                  <button id="btn-new-workflow-profile" type="button">新建工作流配置</button>
                 </div>
                 <div id="workflow-profile-manager" class="workflow-profile-manager"></div>
               </section>
 
               <section id="workflow-editor-view" class="workflow-editor-view" hidden>
                 <div class="workflow-editor-head">
-                  <button id="btn-workflow-editor-back" class="icon-button is-back" type="button" title="返回模型配置列表" aria-label="返回模型配置列表">
+                  <button id="btn-workflow-editor-back" class="icon-button is-back" type="button" title="返回工作流配置列表" aria-label="返回工作流配置列表">
                     <span class="back-icon" aria-hidden="true">←</span>
                   </button>
-                  <h3 id="workflow-editor-title">新建模型配置</h3>
+                  <h3 id="workflow-editor-title">新建工作流配置</h3>
                 </div>
                 <label class="field" for="workflow-editor-name">
                   <span>配置名称</span>
@@ -348,7 +364,7 @@
 
               <section id="workflow-delete-dialog" class="workflow-delete-dialog" role="dialog" aria-modal="true" aria-labelledby="workflow-delete-title" hidden>
                 <div class="workflow-delete-dialog-panel">
-                  <h3 id="workflow-delete-title">删除模型配置</h3>
+                  <h3 id="workflow-delete-title">删除工作流配置</h3>
                   <p>确认删除“<strong id="workflow-delete-name"></strong>”？删除后无法恢复其 Key。</p>
                   <div class="workflow-editor-actions">
                     <button id="btn-cancel-workflow-delete" class="ghost-action" type="button">取消</button>

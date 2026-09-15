@@ -1619,44 +1619,23 @@ esac
             self.assertEqual(database.read_bytes(), original)
             self.assertIn("writing_policy_database=reused", second_result.stdout)
 
-    @unittest.skipUnless(
-        PYTHON38_BIN,
-        "AI_WPS_PYTHON38_BIN is required for the final delivery build gate",
-    )
-    def test_built_v0231_delivery_has_complete_safe_release_inventory(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            environment = dict(os.environ)
-            environment["DATE_TAG"] = "20260811"
-            environment["PYTHON_BIN"] = sys.executable
-            environment["PYTHON38_BIN"] = PYTHON38_BIN
-            result = subprocess.run(
-                [
-                    "bash",
-                    str(ROOT / "packaging/build_phase1_delivery_kit.sh"),
-                    temp_dir,
-                ],
-                check=False,
-                capture_output=True,
-                text=True,
-                env=environment,
-            )
-            self.assertEqual(result.returncode, 0, result.stderr)
-
-            archive = (
-                Path(temp_dir)
-                / "ai-wps-phase1-delivery-20260811-v0231.tar.gz"
-            )
-            self.assertTrue(archive.is_file())
-            checksum = archive.with_name(archive.name + ".sha256")
-            self.assertTrue(checksum.is_file())
-            self.assertEqual(
-                checksum.read_text(encoding="utf-8"),
-                "{0}  {1}\n".format(
-                    hashlib.sha256(archive.read_bytes()).hexdigest(),
-                    archive.name,
-                ),
-            )
-            with tarfile.open(archive, "r:gz") as package:
+    def test_frozen_v0231_delivery_has_complete_safe_release_inventory(self) -> None:
+        archive = (
+            ROOT
+            / "dist-phase1-delivery-kit"
+            / "ai-wps-phase1-delivery-20260811-v0231.tar.gz"
+        )
+        self.assertTrue(archive.is_file())
+        checksum = archive.with_name(archive.name + ".sha256")
+        self.assertTrue(checksum.is_file())
+        self.assertEqual(
+            checksum.read_text(encoding="utf-8"),
+            "{0}  {1}\n".format(
+                hashlib.sha256(archive.read_bytes()).hexdigest(),
+                archive.name,
+            ),
+        )
+        with tarfile.open(archive, "r:gz") as package:
                 names = package.getnames()
                 root = "ai-wps-phase1-delivery-20260811-v0231"
                 manifest_member = package.extractfile(
