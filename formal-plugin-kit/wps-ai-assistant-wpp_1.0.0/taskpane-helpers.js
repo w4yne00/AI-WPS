@@ -2137,9 +2137,40 @@
 
   var _presentationSessionMap = typeof WeakMap !== "undefined" ? new WeakMap() : null;
 
+  function hashDocumentIdentity(value, seed) {
+    var text = String(value || "");
+    var hash = seed >>> 0;
+    var index;
+    for (index = 0; index < text.length; index += 1) {
+      hash ^= text.charCodeAt(index);
+      hash += (hash << 1) + (hash << 4) + (hash << 7) + (hash << 8) + (hash << 24);
+      hash >>>= 0;
+    }
+    return ("00000000" + hash.toString(16)).slice(-8);
+  }
+
+  function getStableDocumentSessionId(presentation) {
+    var fullName = safeText(resolveValue(safeRead(presentation, "FullName") || safeRead(presentation, "fullName"), presentation));
+    var name = safeText(resolveValue(safeRead(presentation, "Name") || safeRead(presentation, "name"), presentation));
+    var identity = String(fullName || name || "").trim().replace(/\\/g, "/");
+    if (!identity) {
+      return "";
+    }
+    identity = (fullName ? "full:" : "name:") + identity;
+    return "doc_session_v2_" +
+      hashDocumentIdentity(identity, 2166136261) +
+      hashDocumentIdentity(identity, 2246822507) +
+      "_" + identity.length.toString(36);
+  }
+
   function getDocumentSessionId(presentation) {
+    var stableSessionId;
     if (!presentation) {
       return "doc_session_default";
+    }
+    stableSessionId = getStableDocumentSessionId(presentation);
+    if (stableSessionId) {
+      return stableSessionId;
     }
     if (_presentationSessionMap && typeof presentation === "object") {
       try {

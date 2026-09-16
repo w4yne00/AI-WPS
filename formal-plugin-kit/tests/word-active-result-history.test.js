@@ -235,6 +235,57 @@ function testDocumentSessionIdentification() {
   // Must not leak full path
   assert.ok(!session1_a.includes("/Users/wayne"), "Session ID must not contain full path");
   assert.ok(!session2.includes("/Secret"), "Session ID must not contain full path");
+
+  // WPS may return a fresh JS proxy for the same open document on each access.
+  const doc1FreshProxy = { Name: "技术方案1.docx", FullName: "/Users/wayne/Documents/技术方案1.docx" };
+  const session1_fresh = helpers.getDocumentSessionId(doc1FreshProxy);
+  assert.strictEqual(
+    session1_fresh,
+    session1_a,
+    "Session ID must stay stable across different WPS proxies for the same document"
+  );
+}
+
+function testFreshProxyCompletionRendersCurrentWritingResult() {
+  const submittedDocument = {
+    Name: "技术方案.docx",
+    FullName: "/data/home/cloud/Documents/技术方案.docx"
+  };
+  const completionDocumentProxy = {
+    Name: "技术方案.docx",
+    FullName: "/data/home/cloud/Documents/技术方案.docx"
+  };
+  const submittedSession = helpers.getDocumentSessionId(submittedDocument);
+  const { ctx, state, byId } = createBaseContext({
+    state: {
+      currentMode: "smartWrite",
+      documentSessionId: submittedSession,
+      writingJobId: "job-fresh-proxy",
+      writingJobTaskType: "word.smart_write",
+      writingJobMode: "smartWrite"
+    },
+    ctx: {
+      getActiveDocument: () => completionDocumentProxy,
+      helpers
+    }
+  });
+
+  ctx.completeWritingJob(
+    { rewrittenText: "## 当前任务结果\n\n- 已正确显示" },
+    "trace-fresh-proxy",
+    "word.smart_write",
+    false,
+    "smartWrite",
+    "job-fresh-proxy",
+    submittedSession
+  );
+
+  assert.strictEqual(
+    byId("result-output").textContent,
+    "## 当前任务结果\n\n- 已正确显示",
+    "Current task result must render when WPS returns a fresh proxy for the same document"
+  );
+  assert.strictEqual(state.historyUnreadCount, 0, "Current task result must not be misclassified as background history");
 }
 
 // Test 2: Document Display Name extraction (no path leak)
@@ -833,6 +884,7 @@ function testRealSwitchModePathAndWritebackEligibility() {
 
 async function runAll() {
   testDocumentSessionIdentification();
+  testFreshProxyCompletionRendersCurrentWritingResult();
   testDocumentDisplayName();
   testActiveTaskSlotGuard();
   testWritingHistoryRenderingHelper();

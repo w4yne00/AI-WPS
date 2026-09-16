@@ -120,6 +120,51 @@ function testRawAnswerFallbackStillShowsPageRoles() {
   assert.ok(view.copyConclusionText.includes("未确认页角色"));
 }
 
+function testPlainTextFallbackRendersMarkdownInPreview() {
+  // Break: a valid plainText-only model response leaves the preview card empty.
+  const elements = {
+    "structure-result-output": {
+      innerHTML: "",
+      children: [],
+      appendChild(node) { this.children.push(node); }
+    },
+    "btn-copy-review-conclusion": { disabled: true },
+    "btn-copy-recommended-outline": { disabled: true }
+  };
+  const ctx = {
+    state: {},
+    helpers,
+    byId: (id) => elements[id],
+    safeText: (value) => String(value || "").trim(),
+    createTextElement: (tagName, className, text) => ({ tagName, className, textContent: text }),
+    appendPresentedHtml: (_parent, html) => {
+      if (html) {
+        throw new Error("Unexpected structured HTML for plainText-only result");
+      }
+    },
+    appendStructureList: () => {},
+    document: {
+      createElement: (tagName) => ({ tagName, className: "", innerHTML: "", textContent: "" })
+    }
+  };
+  const renderStructureResult = vm.runInNewContext(
+    `(${functionSource(pptJs, "renderStructureResult")})`,
+    ctx
+  );
+
+  renderStructureResult({
+    reviewedRange: { startSlide: 1, endSlide: 2, totalSlides: 2 },
+    plainText: "## 审查结论\n\n- 第一项\n- 第二项"
+  });
+
+  const markdownNode = elements["structure-result-output"].children.find(
+    (node) => node.className === "structure-review-raw markdown-output"
+  );
+  assert.ok(markdownNode, "plainText-only model response must create a Markdown preview node");
+  assert.ok(markdownNode.innerHTML.includes("<h2>审查结论</h2>"));
+  assert.ok(markdownNode.innerHTML.includes("<li>第一项</li>"));
+}
+
 function testRenderKeepsListFirstAndRecommendationsInOriginalSlot() {
   // Break: list+recs are dumped as one html blob before 整体主线.
   const render = functionSource(pptJs, "renderStructureResult");
@@ -141,7 +186,7 @@ function testRenderKeepsListFirstAndRecommendationsInOriginalSlot() {
   assert.ok(!render.includes("view.html"));
   assert.ok(!render.includes("item.role"));
   assert.ok(!render.includes("slides["));
-  assert.ok(render.includes("helpers.renderMarkdown(data.rawAnswer)"), "raw model Markdown must use the safe preview renderer");
+  assert.ok(render.includes("helpers.renderMarkdown(markdownAnswer)"), "model Markdown must use the safe preview renderer");
   assert.ok(copyHandler.includes("copyConclusionText"));
 }
 
@@ -150,6 +195,7 @@ testRecommendationsUseReturnedPageRolesNotFreeRoles();
 testUnconfirmedRoleStaysVisibleAndIsNotBody();
 testCopyConclusionKeepsPageRoles();
 testRawAnswerFallbackStillShowsPageRoles();
+testPlainTextFallbackRendersMarkdownInPreview();
 testRenderKeepsListFirstAndRecommendationsInOriginalSlot();
 
 console.log("ppt structure page role tests passed");

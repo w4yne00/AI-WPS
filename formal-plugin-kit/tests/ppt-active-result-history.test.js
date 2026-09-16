@@ -41,6 +41,14 @@ function testDocumentSessionIdentification() {
   // Must not leak full path
   assert.ok(!session1_a.includes("/Users/wayne"), "Session ID must not contain full path");
   assert.ok(!session2.includes("/Secret"), "Session ID must not contain full path");
+
+  const pres1FreshProxy = { Name: "演示文稿1.pptx", FullName: "/Users/wayne/Documents/演示文稿1.pptx" };
+  const session1_fresh = helpers.getDocumentSessionId(pres1FreshProxy);
+  assert.strictEqual(
+    session1_fresh,
+    session1_a,
+    "Session ID must stay stable across different WPS proxies for the same presentation"
+  );
 }
 
 // Test 2: Document Display Name extraction (no path leak)

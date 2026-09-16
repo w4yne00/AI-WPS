@@ -1279,6 +1279,17 @@
     var output = byId("structure-result-output");
     var data = result || {};
     var range = data.reviewedRange || {};
+    var hasStructuredDetails = Boolean(
+      data.overallStoryline ||
+      (Array.isArray(data.inferredChapters) && data.inferredChapters.length) ||
+      (Array.isArray(data.highPriorityIssues) && data.highPriorityIssues.length) ||
+      (Array.isArray(data.generalSuggestions) && data.generalSuggestions.length) ||
+      (Array.isArray(data.slideRecommendations) && data.slideRecommendations.length) ||
+      (Array.isArray(data.recommendedOutline) && data.recommendedOutline.length)
+    );
+    var markdownAnswer = safeText(
+      data.rawAnswer || (!hasStructuredDetails && (data.plainText || data.reviewConclusion))
+    );
     var view = helpers.presentPptStructureReviewResultView
       ? helpers.presentPptStructureReviewResultView({ result: data })
       : null;
@@ -1291,13 +1302,13 @@
       helpers.formatPptStructureRange(range)
     ));
     appendPresentedHtml(output, view && view.listHtml);
-    if (data.rawAnswer) {
+    if (markdownAnswer) {
       var rawAnswer = document.createElement("div");
       rawAnswer.className = "structure-review-raw markdown-output";
       if (helpers.renderMarkdown) {
-        rawAnswer.innerHTML = helpers.renderMarkdown(data.rawAnswer);
+        rawAnswer.innerHTML = helpers.renderMarkdown(markdownAnswer);
       } else {
-        rawAnswer.textContent = data.rawAnswer;
+        rawAnswer.textContent = markdownAnswer;
       }
       output.appendChild(rawAnswer);
     } else {

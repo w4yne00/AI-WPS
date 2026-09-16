@@ -6234,9 +6234,47 @@
 
   var _documentSessionMap = typeof WeakMap !== "undefined" ? new WeakMap() : null;
 
+  function hashDocumentIdentity(value, seed) {
+    var text = String(value || "");
+    var hash = seed >>> 0;
+    var index;
+    for (index = 0; index < text.length; index += 1) {
+      hash ^= text.charCodeAt(index);
+      hash += (hash << 1) + (hash << 4) + (hash << 7) + (hash << 8) + (hash << 24);
+      hash >>>= 0;
+    }
+    return ("00000000" + hash.toString(16)).slice(-8);
+  }
+
+  function getStableDocumentSessionId(document) {
+    var fullName = "";
+    var name = "";
+    var identity;
+    try {
+      fullName = document.FullName || document.fullName || "";
+    } catch (e) {}
+    try {
+      name = document.Name || document.name || "";
+    } catch (e) {}
+    identity = String(fullName || name || "").trim().replace(/\\/g, "/");
+    if (!identity) {
+      return "";
+    }
+    identity = (fullName ? "full:" : "name:") + identity;
+    return "doc_session_v2_" +
+      hashDocumentIdentity(identity, 2166136261) +
+      hashDocumentIdentity(identity, 2246822507) +
+      "_" + identity.length.toString(36);
+  }
+
   function getDocumentSessionId(document) {
+    var stableSessionId;
     if (!document) {
       return "doc_session_default";
+    }
+    stableSessionId = getStableDocumentSessionId(document);
+    if (stableSessionId) {
+      return stableSessionId;
     }
     if (_documentSessionMap && typeof document === "object") {
       try {
