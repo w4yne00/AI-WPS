@@ -102,7 +102,14 @@ function createBaseTestContext(initialOverrides = {}) {
         removeItem: () => {}
       }
     },
-    helpers,
+    helpers: {
+      ...helpers,
+      getDocumentSessionId: (workbook) => (
+        workbook && workbook.__ai_wps_doc_session__
+          ? workbook.__ai_wps_doc_session__
+          : helpers.getDocumentSessionId(workbook)
+      )
+    },
     requests,
     request: (url, body, options) => {
       requests.push({ url, body, options });
@@ -358,6 +365,151 @@ test("Behavioral: Analysis and Formula acknowledge a valid click before deferred
     assert.ok(String(ctx.state.statusMessage || "").includes(expected), `${functionName} must acknowledge the click immediately`);
     assert.strictEqual(deferred.length, 1, `${functionName} must still defer WPS extraction`);
     assert.strictEqual(ctx.requests.length, 0, `${functionName} must not submit before extraction runs`);
+  });
+});
+
+test("Behavioral: Analysis and Formula show progress in the result card before deferred extraction", () => {
+  [
+    {
+      functionName: "runExcelAnalysisAction",
+      state: { currentMode: "excelAnalysis" },
+      inputId: "excel-analysis-requirement",
+      expected: "正在读取 Excel 表格范围"
+    },
+    {
+      functionName: "runExcelFormulaAction",
+      state: { currentMode: "excelFormulaAssistant", formulaMode: "generate" },
+      inputId: "excel-formula-requirement",
+      expected: "正在读取明确选区"
+    }
+  ].forEach(({ functionName, state, inputId, expected }) => {
+    const deferred = [];
+    const ctx = createBaseTestContext({
+      state,
+      context: {
+        setTimeout: (callback) => {
+          deferred.push(callback);
+          return deferred.length;
+        }
+      }
+    });
+    ctx.byId(inputId).value = "分析并生成结果";
+    const sandbox = vm.createContext(ctx);
+    vm.runInContext(functionSource(functionName), sandbox);
+
+    vm.runInContext(`${functionName}();`, sandbox);
+
+    assert.ok(
+      ctx.byId("result-output").textContent.includes(expected),
+      `${functionName} must put immediate progress in the visible result card`
+    );
+  });
+});
+
+test("Behavioral: Analysis and Formula submit when WPS returns fresh proxies for the same workbook", () => {
+  [
+    {
+      functionName: "runExcelAnalysisAction",
+      state: { currentMode: "excelAnalysis" },
+      inputId: "excel-analysis-requirement",
+      extractName: "extractExcelRange",
+      payload: { scope: { sheetName: "Sheet1" }, table: { headers: ["A"], rows: [["1"]] } },
+      expectedPath: "/excel/analysis/jobs"
+    },
+    {
+      functionName: "runExcelFormulaAction",
+      state: { currentMode: "excelFormulaAssistant", formulaMode: "generate" },
+      inputId: "excel-formula-requirement",
+      extractName: "extractExcelFormulaRange",
+      payload: { selection: { address: "A1:A2" } },
+      expectedPath: "/excel/formula-assistant/jobs"
+    }
+  ].forEach(({ functionName, state, inputId, extractName, payload, expectedPath }) => {
+    const deferred = [];
+    const ctx = createBaseTestContext({
+      state,
+      context: {
+        setTimeout: (callback) => {
+          deferred.push(callback);
+          return deferred.length;
+        },
+        getEtApplication: () => ({
+          ActiveWorkbook: {
+            Name: "设备评估.xlsx",
+            FullName: "/data/home/cloud/桌面/设备评估.xlsx"
+          }
+        })
+      }
+    });
+    ctx.byId(inputId).value = "分析并生成结果";
+    ctx[extractName] = () => payload;
+    const sandbox = vm.createContext(ctx);
+    vm.runInContext(functionSource(functionName), sandbox);
+
+    vm.runInContext(`${functionName}();`, sandbox);
+    assert.strictEqual(deferred.length, 1);
+    deferred[0]();
+
+    assert.strictEqual(ctx.requests.length, 1, `${functionName} must not silently stop on proxy churn`);
+    assert.strictEqual(ctx.requests[0].url, expectedPath);
+  });
+});
+
+test("Behavioral: extraction failure restores the previous result card and copy text", () => {
+  [
+    {
+      functionName: "runExcelAnalysisAction",
+      state: {
+        currentMode: "excelAnalysis",
+        analysisResult: { plainText: "旧分析结果" },
+        copyText: "旧分析结果"
+      },
+      inputId: "excel-analysis-requirement",
+      extractName: "extractExcelRange",
+      renderName: "renderExcelAnalysisResult",
+      oldVisibleText: "旧分析结果"
+    },
+    {
+      functionName: "runExcelFormulaAction",
+      state: {
+        currentMode: "excelFormulaAssistant",
+        formulaMode: "generate",
+        formulaResult: { primaryFormula: "=SUM(A1:A2)", copyText: "=SUM(A1:A2)" },
+        copyText: "=SUM(A1:A2)"
+      },
+      inputId: "excel-formula-requirement",
+      extractName: "extractExcelFormulaRange",
+      renderName: "renderExcelFormulaResult",
+      oldVisibleText: "=SUM(A1:A2)"
+    }
+  ].forEach(({ functionName, state, inputId, extractName, renderName, oldVisibleText }) => {
+    const deferred = [];
+    const ctx = createBaseTestContext({
+      state,
+      context: {
+        setTimeout: (callback) => {
+          deferred.push(callback);
+          return deferred.length;
+        }
+      }
+    });
+    ctx.byId(inputId).value = "分析并生成结果";
+    ctx.byId("result-output").textContent = oldVisibleText;
+    ctx[extractName] = () => { throw new Error("模拟取数失败"); };
+    ctx[renderName] = (result) => {
+      const text = result.plainText || result.copyText || result.primaryFormula || "";
+      ctx.byId("result-output").textContent = text;
+      ctx.state.copyText = result.copyText || result.plainText || result.primaryFormula || "";
+    };
+    const sandbox = vm.createContext(ctx);
+    vm.runInContext(functionSource(functionName), sandbox);
+
+    vm.runInContext(`${functionName}();`, sandbox);
+    deferred[0]();
+
+    assert.strictEqual(ctx.byId("result-output").textContent, oldVisibleText);
+    assert.strictEqual(ctx.state.copyText, state.copyText);
+    assert.ok(ctx.state.statusMessage.includes("模拟取数失败"));
   });
 });
 
@@ -735,7 +887,7 @@ test("Behavioral: Clear history sends DELETE request for current task type", (t,
   }, 10);
 });
 
-test("Behavioral: Smart Fill draft, exclusions, and locked status preserved across mode switches", () => {
+test("Behavioral: Smart Fill output-only result is preserved across mode switches", () => {
   const ctx = createBaseTestContext();
   const session = "doc_session_smart_fill";
   ctx.defaultWorkbook.__ai_wps_doc_session__ = session;
@@ -746,14 +898,8 @@ test("Behavioral: Smart Fill draft, exclusions, and locked status preserved acro
       { itemId: "item-2", status: "completed", value: "值2" }
     ]
   };
-  ctx.state.smartFillPreview = {
-    consumed: false,
-    status: "ready"
-  };
-  ctx.state.smartFillDraftItems = [
-    { itemId: "item-1", status: "completed", value: "用户修改的值1", selected: true },
-    { itemId: "item-2", status: "completed", value: "值2", selected: false }
-  ];
+  ctx.state.smartFillPreview = null;
+  ctx.state.smartFillDraftItems = [];
   ctx.state.smartFillItems = [{ itemId: "item-1" }, { itemId: "item-2" }];
 
   const sandbox = vm.createContext(ctx);
@@ -767,6 +913,7 @@ test("Behavioral: Smart Fill draft, exclusions, and locked status preserved acro
     "function setExcelResultViewSwitchForMode() {}",
     "function tryRebindSmartFillTarget() {}",
     "function setSmartFillWriteButtonState() {}",
+    "function renderExcelSmartFillResult(result) { state.smartFillResult = result; state.smartFillDraftItems = []; byId('result-output').textContent = result.items.map(function (item) { return item.value; }).join('\\n'); }",
     "function resumeExcelSmartFillActiveJob() {}",
     "function syncActiveTaskBusyUi() {}"
   ].join("\n"), sandbox);
@@ -774,21 +921,22 @@ test("Behavioral: Smart Fill draft, exclusions, and locked status preserved acro
   // 1. Save state
   vm.runInContext("saveCurrentSmartFillSessionState('doc_session_smart_fill');", sandbox);
   assert.ok(ctx.state.activeSmartFillStatesBySession["doc_session_smart_fill"]);
-  assert.strictEqual(ctx.state.activeSmartFillStatesBySession["doc_session_smart_fill"].draftItems[0].value, "用户修改的值1");
-  assert.strictEqual(ctx.state.activeSmartFillStatesBySession["doc_session_smart_fill"].draftItems[1].selected, false);
+  assert.strictEqual(ctx.state.activeSmartFillStatesBySession["doc_session_smart_fill"].result.items[0].value, "值1");
+  assert.deepStrictEqual(ctx.state.activeSmartFillStatesBySession["doc_session_smart_fill"].draftItems, []);
 
   // 2. User switches to excelAnalysis, changing state.smartFillDraftItems
   ctx.state.currentMode = "excelAnalysis";
+  ctx.state.smartFillResult = null;
   ctx.state.smartFillDraftItems = [];
 
   // 3. User switches back to excelSmartFill
   ctx.state.currentMode = "excelSmartFill";
   vm.runInContext("syncActiveSessionView('doc_session_smart_fill');", sandbox);
 
-  // Drafts, exclusions, and preview must be restored without reset!
-  assert.strictEqual(ctx.state.smartFillDraftItems.length, 2);
-  assert.strictEqual(ctx.state.smartFillDraftItems[0].value, "用户修改的值1");
-  assert.strictEqual(ctx.state.smartFillDraftItems[1].selected, false);
+  assert.strictEqual(ctx.state.smartFillResult.items.length, 2);
+  assert.strictEqual(ctx.state.smartFillResult.items[0].value, "值1");
+  assert.strictEqual(ctx.state.smartFillDraftItems.length, 0);
+  assert.strictEqual(ctx.byId("result-output").textContent, "值1\n值2");
 });
 
 test("Behavioral: finishCancelledExcelAnalysis and finishCancelledExcelFormula release targetDocSession slot", () => {

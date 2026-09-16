@@ -332,16 +332,16 @@ function testSmartFillPageUsesConfirmedButtonGeometry() {
   assert.ok(css.includes("@media (max-width: 320px)") || css.includes("@media (max-width: 420px)"));
 }
 
-function testWriteEntryStaysUnavailableWithoutTargetMapping() {
-  assert.ok(/id="btn-write-smart-fill"[^>]*hidden/.test(html));
-  assert.ok(/id="btn-write-smart-fill"[^>]*disabled/.test(html));
+function testOutputOnlyPreviewHasNoWriteEntryOrTargetMapping() {
+  assert.ok(!html.includes('id="btn-write-smart-fill"'));
+  assert.ok(!html.includes('id="btn-edit-smart-fill"'));
+  assert.ok(!html.includes('id="btn-new-smart-fill"'));
+  assert.ok(!html.includes('id="smart-fill-write-summary"'));
   assert.ok(html.includes("生成预览"));
-  assert.ok(html.includes("本步骤不选择写入位置"));
-  assert.ok(js.includes("tryRebindSmartFillTarget"));
-  assert.ok(/function tryRebindSmartFillTarget/.test(js));
-  assert.ok(!js.includes("确认无误后点击“写入内容”"));
-  assert.ok(js.includes("写入位置在后续步骤选择"));
-  assert.ok(js.includes("writeBound"));
+  assert.ok(html.includes("结果只在预览中显示，不会自动写入工作簿"));
+  assert.ok(!js.includes('byId("btn-write-smart-fill").addEventListener'));
+  assert.ok(js.includes("buildExcelSmartFillCopyText"));
+  assert.ok(js.includes("请人工核对后复制到对应单元格"));
 }
 
 function testFunctionAddressIsInvokedWithRangeThis() {
@@ -512,7 +512,7 @@ testInstructionIsRequiredAndNotInferred();
 testPreviewKeepsSourceOrderEditExcludeAndFailedSlots();
 testTaskPageDropsTargetFirstChrome();
 testSmartFillPageUsesConfirmedButtonGeometry();
-testWriteEntryStaysUnavailableWithoutTargetMapping();
+testOutputOnlyPreviewHasNoWriteEntryOrTargetMapping();
 testFunctionAddressIsInvokedWithRangeThis();
 testUnreadAddressFailsClosed();
 testMissingDirectHiddenUsesReadableRowAndColumnVisibility();

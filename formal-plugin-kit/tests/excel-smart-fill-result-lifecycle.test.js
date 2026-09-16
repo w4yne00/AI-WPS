@@ -89,7 +89,14 @@ function createBaseTestContext(initialOverrides = {}) {
         getAttribute: function(attr) { return this.attributes[attr]; }
       }
     },
-    helpers,
+    helpers: {
+      ...helpers,
+      getDocumentSessionId: (workbook) => (
+        workbook && workbook.__ai_wps_doc_session__
+          ? workbook.__ai_wps_doc_session__
+          : helpers.getDocumentSessionId(workbook)
+      )
+    },
     requests,
     request: (url, body, options) => {
       requests.push({ url, body, options });
@@ -162,6 +169,157 @@ test("Helper: getDocumentSessionId produces stable, path-sanitized session ID", 
   assert.notStrictEqual(session1_a, session2, "different workbooks must return different session IDs");
   assert.ok(!session1_a.includes("/Users/wayne"), "session ID must not leak local filesystem path");
   assert.ok(!session1_a.includes("Secret"), "session ID must not contain directory names");
+
+  const wb1FreshProxy = { Name: "测试表1.xlsx", FullName: "/Users/wayne/Secret/测试表1.xlsx" };
+  assert.strictEqual(
+    helpers.getDocumentSessionId(wb1FreshProxy),
+    session1_a,
+    "same workbook must keep its session ID when WPS returns a fresh proxy"
+  );
+
+  const unsavedProxy = {
+    Name: "工作簿1",
+    FullName: "工作簿1",
+    Windows: { Item: () => ({ Hwnd: 41001 }) }
+  };
+  const savedProxy = {
+    Name: "设备评估.xlsx",
+    FullName: "/data/home/cloud/桌面/设备评估.xlsx",
+    Windows: { Item: () => ({ Hwnd: 41001 }) }
+  };
+  const otherWorkbook = {
+    Name: "设备评估.xlsx",
+    FullName: "/data/home/cloud/文档/设备评估.xlsx",
+    Windows: { Item: () => ({ Hwnd: 41002 }) }
+  };
+  const savedWorkbookSecondWindow = {
+    Name: "设备评估.xlsx",
+    FullName: "/data/home/cloud/桌面/设备评估.xlsx",
+    Windows: { Item: () => ({ Hwnd: 41003 }) }
+  };
+  const originalA = {
+    Name: "A.xlsx",
+    FullName: "/data/home/cloud/桌面/A.xlsx",
+    Windows: { Item: () => ({ Hwnd: 99101 }) }
+  };
+  const savedAsB = {
+    Name: "B.xlsx",
+    FullName: "/data/home/cloud/桌面/B.xlsx",
+    Windows: { Item: () => ({ Hwnd: 99101 }) }
+  };
+  const reopenedA = {
+    Name: "A.xlsx",
+    FullName: "/data/home/cloud/桌面/A.xlsx",
+    Windows: { Item: () => ({ Hwnd: 99102 }) }
+  };
+  assert.strictEqual(
+    helpers.getDocumentSessionId(savedProxy),
+    helpers.getDocumentSessionId(unsavedProxy),
+    "saving or renaming an open workbook must preserve its window-bound session"
+  );
+  assert.notStrictEqual(
+    helpers.getDocumentSessionId(savedProxy),
+    helpers.getDocumentSessionId(otherWorkbook),
+    "different workbook paths and windows must remain isolated"
+  );
+  assert.strictEqual(
+    helpers.getDocumentSessionId(savedWorkbookSecondWindow),
+    helpers.getDocumentSessionId(savedProxy),
+    "a saved workbook must keep its session when its first window changes"
+  );
+  const originalASession = helpers.getDocumentSessionId(originalA);
+  const savedAsBSession = helpers.getDocumentSessionId(savedAsB);
+  assert.strictEqual(savedAsBSession, originalASession, "Save As must preserve the running workbook session");
+  assert.notStrictEqual(
+    helpers.getDocumentSessionId(reopenedA),
+    savedAsBSession,
+    "reopening the original path after Save As must create an isolated session"
+  );
+});
+
+test("Behavioral: Smart Fill result is output-only Markdown with tab-separated copy text", () => {
+  const ctx = createBaseTestContext({
+    state: {
+      smartFillItems: [
+        { itemId: "sf_1", sourceRowLabel: "第 2 行" },
+        { itemId: "sf_2", sourceRowLabel: "第 3 行" }
+      ],
+      smartFillDraftItems: []
+    }
+  });
+  let targetRebinds = 0;
+  let writeControlUpdates = 0;
+  ctx.setExcelResultViewSwitchForMode = () => {};
+  ctx.currentSmartFillInputFingerprint = () => ({
+    sourceAddress: "$A$1:$B$3",
+    sourceSnapshotHash: "hash-source",
+    instruction: "生成分类",
+    workbookId: "wb-1",
+    sheetName: "Sheet1"
+  });
+  ctx.tryRebindSmartFillTarget = () => { targetRebinds += 1; };
+  ctx.setSmartFillWriteButtonState = () => { writeControlUpdates += 1; };
+  ctx.setResult = (markdown, copyText) => {
+    ctx.byId("result-output").innerHTML = helpers.renderMarkdown(markdown);
+    ctx.state.copyText = copyText;
+  };
+  ctx.document.querySelector = () => null;
+
+  const sandbox = vm.createContext(ctx);
+  vm.runInContext([
+    functionSource("smartFillResultAddress"),
+    functionSource("buildExcelSmartFillMarkdown"),
+    functionSource("buildExcelSmartFillCopyText"),
+    functionSource("renderExcelSmartFillResult")
+  ].join("\n"), sandbox);
+  vm.runInContext(`renderExcelSmartFillResult({
+    items: [
+      { itemId: "sf_1", status: "completed", valueType: "text", value: "甲\\t类\\n补充" },
+      { itemId: "sf_2", status: "completed", valueType: "text", value: "乙类" }
+    ]
+  });`, sandbox);
+
+  const html = ctx.byId("result-output").innerHTML;
+  assert.ok(html.includes("<h2>智能填写预览</h2>"));
+  assert.ok(html.includes("甲\t类"));
+  assert.ok(html.includes("乙类"));
+  assert.ok(!html.includes("<input"), "output-only preview must not contain editable fields or selections");
+  assert.strictEqual(ctx.state.copyText, "第 2 行\t甲 类 补充\n第 3 行\t乙类");
+  assert.strictEqual(targetRebinds, 0, "output-only preview must not bind a write target");
+  assert.strictEqual(writeControlUpdates, 0, "output-only preview must not update writeback controls");
+});
+
+test("Behavioral: Smart Fill selection changes refresh source without binding a write target", () => {
+  const ctx = createBaseTestContext({
+    state: {
+      currentMode: "excelSmartFill",
+      smartFillResult: { items: [{ itemId: "sf_1", status: "completed", value: "甲类" }] },
+      smartFillPreview: null
+    }
+  });
+  let sourceRefreshes = 0;
+  let targetRebinds = 0;
+  let controlUpdates = 0;
+  ctx.refreshExcelSmartFillSourceSelection = () => { sourceRefreshes += 1; };
+  ctx.tryRebindSmartFillTarget = () => { targetRebinds += 1; };
+  ctx.setSmartFillWriteButtonState = () => { controlUpdates += 1; };
+  const sandbox = vm.createContext(ctx);
+  vm.runInContext(functionSource("renderSmartFillCaptureState"), sandbox);
+
+  vm.runInContext("renderSmartFillCaptureState();", sandbox);
+
+  assert.strictEqual(sourceRefreshes, 1, "selection watcher must refresh the source for the next generation");
+  assert.strictEqual(targetRebinds, 0, "output-only mode must never bind the selection as a write target");
+  assert.strictEqual(controlUpdates, 1);
+});
+
+test("Markup: Smart Fill exposes generation and copy without writeback controls", () => {
+  assert.doesNotMatch(taskpaneHtml, /id="btn-write-smart-fill"/);
+  assert.doesNotMatch(taskpaneHtml, /id="btn-edit-smart-fill"/);
+  assert.doesNotMatch(taskpaneHtml, /id="btn-new-smart-fill"/);
+  assert.doesNotMatch(taskpaneHtml, /id="smart-fill-write-summary"/);
+  assert.doesNotMatch(taskpaneSource, /addEventListener\("click", writeExcelSmartFillResult\)/);
+  assert.match(taskpaneHtml, /id="btn-copy-result"/);
 });
 
 test("Helper: getDocumentDisplayName extracts basename without leaking path", () => {

@@ -350,11 +350,13 @@ function testSmartFillUiContract() {
     'id="excel-smart-fill-options"',
     'id="excel-smart-fill-instruction"',
     'id="smart-fill-source-summary"',
-    'id="btn-write-smart-fill"',
-    'id="smart-fill-write-summary"',
-    "写入内容",
     "需要生成什么？"
   ].forEach((marker) => assert.ok(html.includes(marker), `missing smart fill UI marker: ${marker}`));
+  assert.ok(!html.includes('id="btn-write-smart-fill"'));
+  assert.ok(!html.includes('id="btn-edit-smart-fill"'));
+  assert.ok(!html.includes('id="btn-new-smart-fill"'));
+  assert.ok(!html.includes('id="smart-fill-write-summary"'));
+  assert.ok(html.includes('id="btn-copy-result"'));
   assert.ok(js.includes("生成预览"));
   assert.ok(!html.includes('id="btn-capture-smart-fill-target"'));
   assert.ok(!html.includes('id="btn-capture-smart-fill-source"'));
@@ -362,16 +364,8 @@ function testSmartFillUiContract() {
   assert.ok(ribbonJs.includes('btnAiExcelSmartFill: "excelSmartFill"'));
   assert.ok(js.includes('var EXCEL_SMART_FILL_WORKFLOW_TASK_TYPE = "excel.smart_fill";'));
   assert.ok(js.includes("/excel/smart-fill/jobs"));
-  assert.ok(js.includes("writeExcelSmartFillResult"));
-  assert.ok(js.includes("smartFillDraftItems"));
-  assert.ok(js.includes("smartFillRetryBaseDraftItems"));
-  assert.ok(js.includes("retryExcelSmartFillItem"));
-  assert.ok(js.includes("window.confirm"));
-  assert.ok(!html.includes("撤销"));
-  assert.ok(js.includes("buildExcelSmartFillReadonlyPreview"));
-  assert.ok(js.includes("finalizeExcelSmartFillWriteSuccess"));
-  assert.ok(js.includes("mapExcelSmartFillPreviewToTarget"));
-  assert.ok(js.includes("/write-commits"));
+  assert.ok(js.includes("buildExcelSmartFillCopyText"));
+  assert.ok(!js.includes('byId("btn-write-smart-fill").addEventListener'));
   assert.ok(js.includes("requireExcelSmartFillInstruction"));
   assert.ok(!js.includes("buildSmartFillDefaultSource"));
   assert.ok(!js.includes("sanitizeExcelSmartFillSource"));
@@ -427,8 +421,8 @@ function testSmartFillJobLifecycleAndCancellationContract() {
 function testSmartFillPartialPreviewContract() {
   assert.ok(js.includes("stopReason"), "taskpane.js must recognize stopReason in job results");
   assert.ok(js.includes("partial"), "taskpane.js must recognize partial flag in job results");
-  assert.ok(js.includes("智能填写任务已取消，已保留部分预览；未完成项不会写入。"), "must inform user on cancellation with partial preview");
-  assert.ok(js.includes("智能填写任务失败，已保留部分预览；未完成项不会写入。"), "must inform user on timeout/failure with partial preview");
+  assert.ok(js.includes("智能填写任务已取消，已保留部分预览；未完成项不会显示。"), "must inform user on cancellation with partial preview");
+  assert.ok(js.includes("智能填写任务失败，已保留部分预览；未完成项不会显示。"), "must inform user on timeout/failure with partial preview");
 
   // Test that helper formats partial preview correctly
   const fullResult = {

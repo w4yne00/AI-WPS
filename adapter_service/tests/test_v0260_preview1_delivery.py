@@ -1435,8 +1435,8 @@ def test_preview_acceptance_template_covers_nine_tasks_and_pending_status(tmp_pa
     assert "当前记录状态：`target-accepted`" not in acceptance
     assert "智能填写" in acceptance
     assert "九类任务" in acceptance or "九任务" in acceptance
-    assert "单列连续区域" in acceptance or "单列" in acceptance
-    assert "失败补偿" in acceptance
+    assert "复制结果" in acceptance
+    assert "不修改任何单元格" in acceptance
     assert "自动目录" in acceptance
     assert "手工目录" in acceptance
     assert "疑似目录" in acceptance

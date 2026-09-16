@@ -4913,12 +4913,136 @@
   }
 
   var _workbookSessionMap = typeof WeakMap === "function" ? new WeakMap() : null;
+  var _workbookSessionByIdentity = {};
+  var _workbookSessionByWindow = {};
+  var _workbookIdentityByWindow = {};
+  var _workbookIdentityBySession = {};
+  var _workbookSessionGeneration = 0;
+
+  function hashDocumentIdentity(value, seed) {
+    var text = String(value || "");
+    var hash = seed >>> 0;
+    var index;
+    for (index = 0; index < text.length; index += 1) {
+      hash ^= text.charCodeAt(index);
+      hash += (hash << 1) + (hash << 4) + (hash << 7) + (hash << 8) + (hash << 24);
+      hash >>>= 0;
+    }
+    return ("00000000" + hash.toString(16)).slice(-8);
+  }
+
+  function getWorkbookWindowHandle(workbook) {
+    var windows = safeRead(workbook, "Windows") || safeRead(workbook, "windows");
+    var windowObject;
+    var handle;
+    if (typeof windows === "function") {
+      windows = safeCall(windows, workbook);
+    }
+    windowObject = getCollectionItem(windows, 1);
+    handle = safeRead(windowObject, "Hwnd");
+    if (typeof handle === "undefined" || handle === null) {
+      handle = safeRead(windowObject, "HWND");
+    }
+    if (typeof handle === "function") {
+      handle = safeCall(handle, windowObject);
+    }
+    handle = String(handle === null || typeof handle === "undefined" ? "" : handle).trim();
+    return handle && handle !== "0" ? handle : "";
+  }
+
+  function getWorkbookIdentityKey(workbook) {
+    var fullName = "";
+    var name = "";
+    var path = "";
+    var identity;
+    try {
+      fullName = workbook.FullName || workbook.fullName || "";
+    } catch (e) {}
+    try {
+      name = workbook.Name || workbook.name || "";
+    } catch (e) {}
+    try {
+      path = workbook.Path || workbook.path || "";
+    } catch (e) {}
+    fullName = String(fullName || "").trim().replace(/\\/g, "/");
+    name = String(name || "").trim();
+    path = String(path || "").trim().replace(/\\/g, "/");
+    identity = fullName || name;
+    if (!identity) {
+      return "";
+    }
+    return (path || /\//.test(fullName) ? "full:" : "name:") + identity;
+  }
+
+  function makeStableDocumentSessionId(identity) {
+    if (!identity) {
+      return "";
+    }
+    return "doc_session_v2_" +
+      hashDocumentIdentity(identity, 2166136261) +
+      hashDocumentIdentity(identity, 2246822507) +
+      "_" + identity.length.toString(36);
+  }
 
   function getDocumentSessionId(workbook) {
+    var identityKey;
+    var windowHandle;
+    var previousWindowIdentity;
+    var ownerIdentity;
+    var stableSessionId;
+    var existing = null;
     if (!workbook) {
       return "doc_session_default";
     }
-    var existing = null;
+    identityKey = getWorkbookIdentityKey(workbook);
+    windowHandle = getWorkbookWindowHandle(workbook);
+    previousWindowIdentity = windowHandle ? _workbookIdentityByWindow[windowHandle] : "";
+    if (previousWindowIdentity && identityKey && previousWindowIdentity !== identityKey) {
+      existing = _workbookSessionByWindow[windowHandle] || "";
+      if (_workbookSessionByIdentity[previousWindowIdentity] === existing) {
+        delete _workbookSessionByIdentity[previousWindowIdentity];
+      }
+    }
+    if (identityKey && _workbookSessionByIdentity[identityKey]) {
+      existing = _workbookSessionByIdentity[identityKey];
+    } else if (windowHandle && _workbookSessionByWindow[windowHandle]) {
+      existing = _workbookSessionByWindow[windowHandle];
+    }
+    if (existing) {
+      if (identityKey) {
+        _workbookSessionByIdentity[identityKey] = existing;
+      }
+      if (windowHandle) {
+        _workbookSessionByWindow[windowHandle] = existing;
+        _workbookIdentityByWindow[windowHandle] = identityKey || previousWindowIdentity || "";
+      }
+      _workbookIdentityBySession[existing] = identityKey || previousWindowIdentity || ("window:" + windowHandle);
+      return existing;
+    }
+    stableSessionId = makeStableDocumentSessionId(
+      identityKey || (windowHandle ? "window:" + windowHandle : "")
+    );
+    ownerIdentity = stableSessionId ? _workbookIdentityBySession[stableSessionId] : "";
+    while (stableSessionId && ownerIdentity && ownerIdentity !== identityKey) {
+      _workbookSessionGeneration += 1;
+      stableSessionId = makeStableDocumentSessionId(
+        (identityKey || "window:" + windowHandle) +
+        "|window:" + (windowHandle || "none") +
+        "|generation:" + _workbookSessionGeneration
+      );
+      ownerIdentity = _workbookIdentityBySession[stableSessionId];
+    }
+    if (stableSessionId) {
+      if (identityKey) {
+        _workbookSessionByIdentity[identityKey] = stableSessionId;
+      }
+      if (windowHandle) {
+        _workbookSessionByWindow[windowHandle] = stableSessionId;
+        _workbookIdentityByWindow[windowHandle] = identityKey || "";
+      }
+      _workbookIdentityBySession[stableSessionId] = identityKey || ("window:" + windowHandle);
+      return stableSessionId;
+    }
     try {
       existing = workbook.__ai_wps_doc_session__;
     } catch (e) {}

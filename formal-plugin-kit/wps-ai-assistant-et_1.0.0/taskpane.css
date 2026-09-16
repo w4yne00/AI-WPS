@@ -1696,16 +1696,6 @@ button.danger-action:not(:disabled) {
   white-space: nowrap;
 }
 
-#smart-fill-write-summary {
-  align-self: center;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  box-shadow: none;
-  justify-content: flex-start;
-  color: var(--muted);
-}
-
 @media (max-width: 420px) {
   .formula-mode-segment {
     width: 100%;
@@ -1747,12 +1737,6 @@ body[data-task-mode="excelSmartFill"] #btn-run-primary {
 }
 
 body[data-task-mode="excelSmartFill"] .secondary-action {
-  min-height: 36px;
-}
-
-body[data-task-mode="excelSmartFill"] #btn-edit-smart-fill,
-body[data-task-mode="excelSmartFill"] #btn-new-smart-fill {
-  width: 100%;
   min-height: 36px;
 }
 

@@ -14,7 +14,7 @@ def _load_audit():
     return module
 
 
-def test_preview_audit_rejects_plugin_without_smart_fill_write_contract(tmp_path):
+def test_preview_audit_rejects_plugin_without_smart_fill_output_only_contract(tmp_path):
     module = _load_audit()
     plugin = tmp_path / "packages/wps-ai-assistant-et_1.0.0"
     plugin.mkdir(parents=True)
@@ -30,6 +30,10 @@ def test_preview_audit_rejects_plugin_without_smart_fill_write_contract(tmp_path
         "function render() { return 'preview'; }",
         encoding="utf-8",
     )
+    (plugin / "taskpane-helpers.js").write_text(
+        "function extractExcelSmartFillSourcePayload() {}",
+        encoding="utf-8",
+    )
     prompt_dir = tmp_path / "packages/adapter-start-kit/adapter_service/system_prompts"
     prompt_dir.mkdir(parents=True)
     (prompt_dir / "excel-smart-fill.md").write_text(
@@ -39,7 +43,7 @@ def test_preview_audit_rejects_plugin_without_smart_fill_write_contract(tmp_path
 
     with pytest.raises(module.DeliveryFailure) as error_info:
         module.audit_smart_fill_write_contract(tmp_path)
-    assert "SMART_FILL_WRITE" in str(error_info.value)
+    assert "SMART_FILL_OUTPUT_ONLY_MISSING" in str(error_info.value)
 
 
 def test_preview_audit_rejects_undo_promise_in_excel_plugin(tmp_path):
@@ -51,15 +55,18 @@ def test_preview_audit_rejects_undo_promise_in_excel_plugin(tmp_path):
         encoding="utf-8",
     )
     (plugin / "taskpane.html").write_text(
-        "<button>生成预览</button><button>写入内容</button><button>返回修改</button><button>开始新的填写</button><button>撤销</button>",
+        '<button>生成预览</button><button id="btn-copy-result">复制结果</button><button>撤销</button>',
         encoding="utf-8",
     )
     (plugin / "taskpane.js").write_text(
-        "consumeExcelSmartFillPreview(); buildExcelSmartFillReadonlyPreview();",
+        "function buildExcelSmartFillCopyText() {}\n"
+        "function renderExcelSmartFillResult() { setResult(markdown, buildExcelSmartFillCopyText()); }\n"
+        "function renderSmartFillCaptureState() {\n    refreshExcelSmartFillSourceSelection();\n}\n"
+        "请人工核对后复制到对应单元格",
         encoding="utf-8",
     )
     (plugin / "taskpane-helpers.js").write_text(
-        "function foo() {}",
+        "function extractExcelSmartFillSourcePayload() {}",
         encoding="utf-8",
     )
     prompt_dir = tmp_path / "packages/adapter-start-kit/adapter_service/system_prompts"
@@ -74,7 +81,7 @@ def test_preview_audit_rejects_undo_promise_in_excel_plugin(tmp_path):
     assert "SMART_FILL_UNDO" in str(error_info.value)
 
 
-def test_preview_audit_rejects_plugin_without_compensation_contract(tmp_path):
+def test_preview_audit_rejects_exposed_smart_fill_writeback(tmp_path):
     module = _load_audit()
     plugin = tmp_path / "packages/wps-ai-assistant-et_1.0.0"
     plugin.mkdir(parents=True)
@@ -83,17 +90,19 @@ def test_preview_audit_rejects_plugin_without_compensation_contract(tmp_path):
         encoding="utf-8",
     )
     (plugin / "taskpane.html").write_text(
-        "<button>生成预览</button><button>写入内容</button><button>返回修改</button><button>开始新的填写</button>",
+        '<button>生成预览</button><button id="btn-copy-result">复制结果</button><button id="btn-write-smart-fill">写入内容</button>',
         encoding="utf-8",
     )
     (plugin / "taskpane.js").write_text(
-        "buildExcelSmartFillReadonlyPreview(); finalizeExcelSmartFillWriteSuccess(); "
-        "mapExcelSmartFillPreviewToTarget(); /write-commits; "
-        "writeExcelSmartFillCells(); COMPENSATION_FAILED; COMPENSATION_SUCCEEDED; 内部故障处理;",
+        "function buildExcelSmartFillCopyText() {}\n"
+        "function renderExcelSmartFillResult() { setResult(markdown, buildExcelSmartFillCopyText()); }\n"
+        "function renderSmartFillCaptureState() {\n    refreshExcelSmartFillSourceSelection();\n}\n"
+        "请人工核对后复制到对应单元格\n"
+        'byId("btn-write-smart-fill").addEventListener("click", writeExcelSmartFillResult);',
         encoding="utf-8",
     )
     (plugin / "taskpane-helpers.js").write_text(
-        "function foo() {}",
+        "function extractExcelSmartFillSourcePayload() {}",
         encoding="utf-8",
     )
     prompt_dir = tmp_path / "packages/adapter-start-kit/adapter_service/system_prompts"
@@ -105,10 +114,10 @@ def test_preview_audit_rejects_plugin_without_compensation_contract(tmp_path):
 
     with pytest.raises(module.DeliveryFailure) as error_info:
         module.audit_smart_fill_write_contract(tmp_path)
-    assert "SMART_FILL_COMPENSATION_CONTRACT_MISSING" in str(error_info.value)
+    assert "SMART_FILL_WRITEBACK_EXPOSED" in str(error_info.value)
 
 
-def test_source_tree_excel_plugin_satisfies_single_cell_write_contract():
+def test_source_tree_excel_plugin_satisfies_output_only_contract():
     module = _load_audit()
     module.audit_smart_fill_write_contract(
         ROOT,

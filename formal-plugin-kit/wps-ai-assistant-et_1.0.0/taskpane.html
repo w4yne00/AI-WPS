@@ -71,17 +71,13 @@
             </label>
             <details class="context-help task-context-help">
               <summary aria-label="查看智能填写说明">!</summary>
-              <div class="context-help-popover" role="note">选择包含表头的数据范围后点击生成预览。本步骤不选择写入位置。</div>
+              <div class="context-help-popover" role="note">选择包含表头的数据范围后点击生成预览。结果只在预览中显示，不会自动写入工作簿。</div>
             </details>
             <p id="smart-fill-validation-line" class="field-hint" aria-live="polite"></p>
           </div>
 
           <div class="button-cluster action-bar">
             <button id="btn-run-primary" type="button">生成分析报告</button>
-            <button id="btn-write-smart-fill" class="secondary-action" type="button" hidden disabled>写入内容</button>
-            <button id="btn-edit-smart-fill" class="secondary-action" type="button" hidden>返回修改</button>
-            <button id="btn-new-smart-fill" class="secondary-action" type="button" hidden>开始新的填写</button>
-            <span id="smart-fill-write-summary" class="field-hint" aria-live="polite" tabindex="-1" hidden>尚无可写入的智能填写预览。</span>
             <button id="btn-cancel-excel-analysis-job" class="secondary-action" type="button" hidden>取消排队任务</button>
             <button id="btn-cancel-excel-formula-job" class="secondary-action" type="button" hidden>取消排队任务</button>
             <button id="btn-cancel-excel-smart-fill-job" class="secondary-action" type="button" hidden>取消任务</button>

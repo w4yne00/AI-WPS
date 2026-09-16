@@ -52,8 +52,9 @@ FORBIDDEN_ACCEPTANCE_PHRASES = (
     "不创建历史文件",
 )
 REQUIRED_SMART_FILL_HISTORY_CONTRACT = (
-    "写回动作不新增或修改历史",
-    "生成成功结果已只读归档",
+    "复制结果",
+    "不修改任何单元格",
+    "不得再次写回",
 )
 
 REQUIRED_OPS_MARKERS = (

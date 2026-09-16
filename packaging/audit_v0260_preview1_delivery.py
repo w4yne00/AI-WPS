@@ -317,25 +317,36 @@ def audit_smart_fill_write_contract(root, plugin_root=None, prompt_path=None):
         raise DeliveryFailure("V0260_SMART_FILL_WRITE_MISSING") from exc
     if 'id="btnAiExcelSmartFill"' not in ribbon or "智能填写" not in ribbon:
         raise DeliveryFailure("V0260_SMART_FILL_RIBBON_MISSING")
-    if "写入内容" not in html or "生成预览" not in html:
-        raise DeliveryFailure("V0260_SMART_FILL_WRITE_MISSING")
-    if "返回修改" not in html or "开始新的填写" not in html:
-        raise DeliveryFailure("V0260_SMART_FILL_LIFECYCLE_MISSING")
+    if "生成预览" not in html or 'id="btn-copy-result"' not in html:
+        raise DeliveryFailure("V0260_SMART_FILL_OUTPUT_ONLY_MISSING")
+    if any(
+        marker in html
+        for marker in (
+            'id="btn-write-smart-fill"',
+            'id="btn-edit-smart-fill"',
+            'id="btn-new-smart-fill"',
+            'id="smart-fill-write-summary"',
+            "写入内容",
+        )
+    ):
+        raise DeliveryFailure("V0260_SMART_FILL_WRITEBACK_EXPOSED")
     if "撤销" in html or "OnUndo" in js or "OnUndo" in helpers_js:
         raise DeliveryFailure("V0260_SMART_FILL_UNDO_PROMISE")
     if "excel.smart_fill.v2" not in prompt_text:
         raise DeliveryFailure("V0260_SMART_FILL_SCHEMA_MISSING")
     if (
-        "buildExcelSmartFillReadonlyPreview" not in js
-        or "finalizeExcelSmartFillWriteSuccess" not in js
-        or "mapExcelSmartFillPreviewToTarget" not in js
-        or "/write-commits" not in js
-        or "writeExcelSmartFillCells" not in js
-        or "COMPENSATION_FAILED" not in js
-        or "COMPENSATION_SUCCEEDED" not in js
-        or "内部故障处理" not in js
+        "buildExcelSmartFillCopyText" not in js
+        or "renderExcelSmartFillResult" not in js
+        or "请人工核对后复制到对应单元格" not in js
+        or "setResult(markdown, buildExcelSmartFillCopyText" not in js
+        or "function renderSmartFillCaptureState() {\n    refreshExcelSmartFillSourceSelection();" not in js
     ):
-        raise DeliveryFailure("V0260_SMART_FILL_WRITE_MISSING")
+        raise DeliveryFailure("V0260_SMART_FILL_OUTPUT_ONLY_MISSING")
+    if (
+        'byId("btn-write-smart-fill").addEventListener' in js
+        or 'addEventListener("click", writeExcelSmartFillResult)' in js
+    ):
+        raise DeliveryFailure("V0260_SMART_FILL_WRITEBACK_EXPOSED")
     if any(
         marker in html or marker in js or marker in helpers_js
         for marker in (
@@ -353,15 +364,8 @@ def audit_smart_fill_write_contract(root, plugin_root=None, prompt_path=None):
         raise DeliveryFailure("V0260_SMART_FILL_LEGACY_FLOW_PRESENT")
     if (
         "extractExcelSmartFillSourcePayload" not in helpers_js
-        or "mapExcelSmartFillPreviewToTarget" not in helpers_js
-        or "inspectExcelSmartFillTargetSelection" not in helpers_js
-        or "writeExcelSmartFillCells" not in helpers_js
-        or "sameSmartFillSnapshotState" not in helpers_js
-        or "smartFillWriteValueMatches" not in helpers_js
-        or "COMPENSATION_FAILED" not in helpers_js
-        or "COMPENSATION_SUCCEEDED" not in helpers_js
     ):
-        raise DeliveryFailure("V0260_SMART_FILL_COMPENSATION_CONTRACT_MISSING")
+        raise DeliveryFailure("V0260_SMART_FILL_SOURCE_CONTRACT_MISSING")
 
 
 def audit_experience_contract(root: Path, packages_root=None) -> None:

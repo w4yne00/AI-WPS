@@ -294,41 +294,13 @@ function testRestoreWithoutFrozenSourceDisablesWrite() {
 }
 
 function testLifecycleControlsMatchNarrowWindowContract() {
-  assert.ok(html.includes("返回修改"));
-  assert.ok(html.includes("开始新的填写"));
-  assert.ok(html.includes("id=\"btn-edit-smart-fill\""));
-  assert.ok(html.includes("id=\"btn-new-smart-fill\""));
-  assert.ok(/id=\"smart-fill-write-summary\"[^>]*tabindex=\"-1\"/.test(html));
-  assert.ok(!html.includes("撤销"));
-
-  const sharedTail = css.indexOf("/* Shared restrained settings and interaction treatment. */");
-  const editRule = css.indexOf("#btn-edit-smart-fill");
-  const newRule = css.indexOf("#btn-new-smart-fill");
-  assert.ok(sharedTail > 0);
-  assert.ok(editRule >= 0 && editRule < sharedTail);
-  assert.ok(newRule >= 0 && newRule < sharedTail);
-  assert.match(css.slice(0, sharedTail), /#btn-edit-smart-fill[\s\S]*min-height:\s*36px/);
-  assert.match(css.slice(0, sharedTail), /#btn-new-smart-fill[\s\S]*min-height:\s*36px/);
-
-  const preview = helpers.createExcelSmartFillPreview(sampleResult(), sampleFingerprint());
-  let controls = helpers.resolveExcelSmartFillLifecycleControls(preview, { busy: false });
-  assert.strictEqual(controls.returnToEditHidden, false);
-  assert.strictEqual(controls.startNewHidden, true);
-  assert.strictEqual(controls.writeHidden, false);
-  assert.strictEqual(controls.generateHidden, true);
-
-  helpers.returnToExcelSmartFillEdit(preview);
-  controls = helpers.resolveExcelSmartFillLifecycleControls(preview, { busy: false });
-  assert.strictEqual(controls.generateHidden, false);
-  assert.strictEqual(controls.returnToEditHidden, true);
-
-  helpers.finalizeExcelSmartFillWriteSuccess(preview, { writtenCount: 2, skippedCount: 0 });
-  controls = helpers.resolveExcelSmartFillLifecycleControls(preview, { busy: false });
-  assert.strictEqual(controls.writeHidden, true);
-  assert.strictEqual(controls.generateHidden, true);
-  assert.strictEqual(controls.returnToEditHidden, true);
-  assert.strictEqual(controls.startNewHidden, false);
-  assert.strictEqual(controls.startNewDisabled, false);
+  assert.ok(html.includes("生成预览"));
+  assert.ok(html.includes("结果只在预览中显示，不会自动写入工作簿"));
+  assert.ok(!html.includes("id=\"btn-write-smart-fill\""));
+  assert.ok(!html.includes("id=\"btn-edit-smart-fill\""));
+  assert.ok(!html.includes("id=\"btn-new-smart-fill\""));
+  assert.ok(!html.includes("id=\"smart-fill-write-summary\""));
+  assert.ok(html.includes("id=\"btn-copy-result\""));
 }
 
 function testSameAddressOnAnotherSheetInvalidatesPreview() {
@@ -495,11 +467,8 @@ function loadTaskpane(fetchImpl, selection) {
   return exported;
 }
 
-function testSmartFillSummaryIsHiddenOutsideSmartFillMode() {
-  const exported = loadTaskpane();
-  exported.state.currentMode = "excelFormulaAssistant";
-  exported.applySmartFillLifecycleControls();
-  assert.strictEqual(exported.smartFillSummaryHidden(), true);
+function testSmartFillWriteSummaryIsAbsentInOutputOnlyMode() {
+  assert.ok(!html.includes('id="smart-fill-write-summary"'));
 }
 
 function testGeneratePreflightFailureIsVisibleInResultPreview() {
@@ -708,7 +677,7 @@ testRebindClearsTransientWriteConflict();
 testSuccessfulTargetBindClearsTargetError();
 testReturnToEditRebindsLiveTargetWhenUnchanged();
 testGeneratePreflightFailureIsVisibleInResultPreview();
-testSmartFillSummaryIsHiddenOutsideSmartFillMode();
+testSmartFillWriteSummaryIsAbsentInOutputOnlyMode();
 
 (async function main() {
   await testWriteReservesBeforeHostWrite();
