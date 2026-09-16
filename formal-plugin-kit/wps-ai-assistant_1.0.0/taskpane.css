@@ -1689,6 +1689,11 @@ body[data-task-mode="smartWrite"] #result-output {
   gap: 10px;
 }
 
+.writing-policy-summary-title {
+  display: grid;
+  gap: 6px;
+}
+
 .writing-policy-summary-metrics {
   display: flex;
   flex-wrap: wrap;
@@ -2439,6 +2444,18 @@ body[data-task-mode="smartWrite"] #result-output {
   margin-bottom: 12px;
 }
 
+.direct-services-empty-state {
+  display: flex;
+  min-height: 112px;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 16px;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+}
+
 .direct-service-editor-view {
   width: 100%;
   min-width: 0;
@@ -2842,6 +2859,10 @@ select:focus-visible,
   gap: 8px;
 }
 
+.task-selection-heading {
+  margin-bottom: 8px;
+}
+
 .section-heading-with-help {
   position: static;
   flex: 1 1 auto;
@@ -2867,7 +2888,7 @@ select:focus-visible,
   padding-right: 40px;
 }
 
-.direct-services-title-actions {
+.settings-title-actions {
   display: flex;
   min-width: 0;
   align-items: center;
@@ -2875,14 +2896,15 @@ select:focus-visible,
   gap: 10px;
 }
 
-.direct-services-title-actions h4 {
+.settings-title-actions h3,
+.settings-title-actions h4 {
   margin: 0;
   font-size: var(--font-size-section);
   font-weight: 650;
   line-height: 1.25;
 }
 
-.direct-services-title-actions #btn-new-direct-service {
+.settings-create-action {
   min-height: 32px;
   padding: 5px 12px;
 }

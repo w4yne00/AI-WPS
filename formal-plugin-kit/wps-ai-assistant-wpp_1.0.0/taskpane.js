@@ -2298,9 +2298,6 @@
     }
     byId("btn-new-workflow-profile").disabled = state.workflowProfileMutationBusy ||
       Boolean(state.profiles.loadError);
-    byId("workflow-profile-count").textContent = state.profiles.loadError
-      ? "读取失败"
-      : (state.profiles.profiles.length + " 个工作流配置");
     if (state.profiles.loadError) {
       html.push('<div class="workflow-load-error"><p class="workflow-profile-error">无法读取工作流配置：' +
         escaped(state.profiles.loadError) + '</p><button type="button" class="ghost-action" ' +
@@ -3101,7 +3098,7 @@
       btnNew.disabled = (state.directServices || []).length >= 5;
     }
     if (!state.directServices || state.directServices.length === 0) {
-      list.innerHTML = '<p class="field-hint">尚未建立直连模型配置。</p>';
+      list.innerHTML = '<p class="direct-services-empty-state">尚未建立直连模型配置。</p>';
       return;
     }
     state.directServices.forEach(function (svc) {
@@ -3774,7 +3771,6 @@
   function renderTaskModelSelectionSection() {
     var section = byId("ppt-task-direct-service-section");
     var title = byId("ppt-task-direct-service-title");
-    var hint = byId("ppt-task-direct-service-hint");
     var select = byId("ppt-task-direct-service-select");
     var paramsDiv = byId("ppt-task-direct-params");
     var modelSelect = byId("ppt-task-model-select");
@@ -3798,10 +3794,6 @@
     if (title) {
       title.textContent = "接入选择";
     }
-    if (hint) {
-      hint.textContent = "使用工作流平台或绑定直连模型配置，独立调整任务参数。";
-    }
-
     var directServices = state.directServices || [];
     var currentSelection = (state.taskModelSelections && state.taskModelSelections[currentTask]) || null;
     var profileData = (typeof getWorkflowProfileData === "function")

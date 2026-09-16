@@ -3775,6 +3775,7 @@
       return;
     }
     if (state.workflowProfileMutationBusy) {
+      setStatus("模型配置正在更新，请稍后重试。");
       return;
     }
     var modelReadiness = typeof validateActiveDirectTaskSelection === "function"
@@ -3784,6 +3785,8 @@
       setStatus(modelReadiness.error || "当前模型不可用，请先刷新目录或重新验证模型。");
       return;
     }
+
+    setStatus("正在校验智能分析选区...");
 
     setTimeout(function () {
       if (!isCurrentVisible()) { return; }
@@ -4298,6 +4301,7 @@
       return;
     }
     if (state.workflowProfileMutationBusy) {
+      setStatus("模型配置正在更新，请稍后重试。");
       return;
     }
     var modelReadiness = typeof validateActiveDirectTaskSelection === "function"
@@ -4313,6 +4317,8 @@
       setPlainResult("请说明需要计算的内容，再生成推荐公式。");
       return;
     }
+
+    setStatus("正在校验公式上下文...");
 
     setTimeout(function () {
       if (!isCurrentVisible()) { return; }
@@ -4862,6 +4868,7 @@
       return;
     }
     if (state.workflowProfileMutationBusy) {
+      setStatus("模型配置正在更新，请稍后重试。");
       return;
     }
     var modelReadiness = typeof validateActiveDirectTaskSelection === "function"
@@ -5597,11 +5604,9 @@
     var manager = byId("workflow-profile-manager");
     var data = getWorkflowProfileData(state.workflowTaskType);
     var rows = [];
-    var summary = byId("workflow-manager-summary");
     if (!manager) {
       return;
     }
-    summary.textContent = "当前：" + getActiveWorkflowProfileName(data) + "，共 " + data.profileCount + " 个配置";
     if (data.loadError) {
       rows.push('<div class="workflow-empty-state"><p>无法读取工作流配置：' + escaped(data.loadError) +
         '</p><button type="button" class="ghost-action" data-workflow-action="retry">重新读取</button></div>');
@@ -6357,7 +6362,7 @@
       btnNew.disabled = (state.directServices || []).length >= 5;
     }
     if (!state.directServices || state.directServices.length === 0) {
-      list.innerHTML = '<p class="field-hint">尚未建立直连模型配置。</p>';
+      list.innerHTML = '<p class="direct-services-empty-state">尚未建立直连模型配置。</p>';
       return;
     }
     state.directServices.forEach(function (svc) {
@@ -6888,7 +6893,6 @@
     var section = byId("excel-task-direct-service-section");
     var select = byId("excel-task-direct-service-select");
     var titleNode = byId("excel-task-direct-service-title");
-    var hintNode = byId("excel-task-direct-service-hint");
     var paramsDiv = byId("excel-task-direct-params");
     var modelSelect = byId("excel-task-model-select");
     var tempInput = byId("excel-task-temperature");
@@ -6917,10 +6921,6 @@
     if (titleNode) {
       titleNode.textContent = "接入选择";
     }
-    if (hintNode) {
-      hintNode.textContent = "使用工作流平台或绑定直连模型配置，独立调整任务参数。";
-    }
-
     var directServices = state.directServices || [];
     var currentSelection = (state.taskModelSelections && state.taskModelSelections[taskType]) || null;
     var profileData = typeof getWorkflowProfileData === "function" ? getWorkflowProfileData(taskType) : { activeProfileId: "" };

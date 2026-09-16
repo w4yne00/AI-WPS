@@ -163,6 +163,48 @@ def rewrite_versions(root: Path) -> None:
             path.write_text(updated, encoding="utf-8")
 
 
+def rewrite_plugin_cache_identity(root: Path, source_commit: str) -> None:
+    cache_identity = "{0}-{1}".format(VERSION, source_commit[:12])
+    replacements = (
+        ("?v={0}".format(VERSION), "?v={0}".format(cache_identity)),
+        ("&build={0}".format(VERSION), "&build={0}".format(cache_identity)),
+        ('src="./main.js"', 'src="./main.js?v={0}"'.format(cache_identity)),
+        (
+            "src='taskpane-helpers.js'",
+            "src='taskpane-helpers.js?v={0}'".format(cache_identity),
+        ),
+        (
+            "src='ribbon.js'",
+            "src='ribbon.js?v={0}'".format(cache_identity),
+        ),
+        (
+            "src='taskpane.js'",
+            "src='taskpane.js?v={0}'".format(cache_identity),
+        ),
+        (
+            'FRONTEND_BUILD_VERSION = "{0}"'.format(VERSION),
+            'FRONTEND_BUILD_VERSION = "{0}"'.format(cache_identity),
+        ),
+    )
+    for plugin in sorted((root / "packages").glob("wps-ai-assistant*")):
+        for filename in (
+            "index.html",
+            "main.js",
+            "ribbon.js",
+            "taskpane.html",
+            "taskpane.js",
+        ):
+            path = plugin / filename
+            if not path.is_file():
+                continue
+            content = path.read_text(encoding="utf-8")
+            updated = content
+            for old, new in replacements:
+                updated = updated.replace(old, new)
+            if updated != content:
+                path.write_text(updated, encoding="utf-8")
+
+
 def rewrite_current_delivery_references(root: Path) -> None:
     replacements = (
         ("installer/install_phase1.sh", "installer/install_ai_wps.sh"),
@@ -751,6 +793,7 @@ def prepare(
     baseline = baseline_metadata(baseline_archive, baseline_version)
     archive_name = candidate_archive_name(date_tag, source_commit)
     rewrite_versions(root)
+    rewrite_plugin_cache_identity(root, source_commit)
     rewrite_current_delivery_references(root)
     remove_legacy_delivery_files(root)
     neutralize_installer(root)

@@ -683,6 +683,97 @@ def audit_status(root: Path, manifest: Dict) -> None:
         raise DeliveryFailure("V0260_STATUS_NOT_CANDIDATE")
 
 
+def has_versioned_asset_reference(
+    content: str,
+    filename: str,
+    cache_identity: str,
+) -> bool:
+    pattern = (
+        r"(?:src|href)=[\"'](?:\./)?"
+        + re.escape(filename)
+        + r"\?v="
+        + re.escape(cache_identity)
+        + r"[\"']"
+    )
+    return re.search(pattern, content) is not None
+
+
+def audit_plugin_cache_identity(root: Path, manifest: Dict) -> None:
+    source_commit = str(manifest.get("candidateEvidence", {}).get("sourceCommit", ""))
+    if re.fullmatch(r"[0-9a-f]{7,40}", source_commit) is None:
+        raise DeliveryFailure("V0260_PLUGIN_CACHE_IDENTITY_INVALID source_commit")
+    cache_identity = "{0}-{1}".format(VERSION, source_commit[:12])
+    plugin_names = (
+        "wps-ai-assistant_1.0.0",
+        "wps-ai-assistant-et_1.0.0",
+        "wps-ai-assistant-wpp_1.0.0",
+    )
+    for plugin_name in plugin_names:
+        plugin = root / "packages" / plugin_name
+        try:
+            taskpane_html = (plugin / "taskpane.html").read_text(encoding="utf-8")
+            taskpane_js = (plugin / "taskpane.js").read_text(encoding="utf-8")
+            ribbon_js = (plugin / "ribbon.js").read_text(encoding="utf-8")
+            index_html = (plugin / "index.html").read_text(encoding="utf-8")
+        except OSError as exc:
+            raise DeliveryFailure(
+                "V0260_PLUGIN_CACHE_IDENTITY_INVALID {0}".format(plugin_name)
+            ) from exc
+        if any(
+            not has_versioned_asset_reference(
+                taskpane_html,
+                filename,
+                cache_identity,
+            )
+            for filename in (
+                "taskpane.css",
+                "taskpane.js",
+                "taskpane-helpers.js",
+            )
+        ):
+            raise DeliveryFailure(
+                "V0260_PLUGIN_CACHE_IDENTITY_INVALID {0} taskpane".format(plugin_name)
+            )
+        if 'FRONTEND_BUILD_VERSION = "{0}"'.format(cache_identity) not in taskpane_js:
+            raise DeliveryFailure(
+                "V0260_PLUGIN_CACHE_IDENTITY_INVALID {0} frontend".format(plugin_name)
+            )
+        if '&build={0}"'.format(cache_identity) not in ribbon_js:
+            raise DeliveryFailure(
+                "V0260_PLUGIN_CACHE_IDENTITY_INVALID {0} ribbon".format(plugin_name)
+            )
+        if plugin_name == "wps-ai-assistant_1.0.0":
+            try:
+                main_js = (plugin / "main.js").read_text(encoding="utf-8")
+            except OSError as exc:
+                raise DeliveryFailure(
+                    "V0260_PLUGIN_CACHE_IDENTITY_INVALID {0} main".format(plugin_name)
+                ) from exc
+            if not has_versioned_asset_reference(
+                index_html,
+                "main.js",
+                cache_identity,
+            ) or any(
+                not has_versioned_asset_reference(main_js, filename, cache_identity)
+                for filename in (
+                    "taskpane-helpers.js",
+                    "ribbon.js",
+                    "taskpane.js",
+                )
+            ):
+                raise DeliveryFailure(
+                    "V0260_PLUGIN_CACHE_IDENTITY_INVALID {0} bootstrap".format(plugin_name)
+                )
+        elif not has_versioned_asset_reference(
+            index_html,
+            "ribbon.js",
+            cache_identity,
+        ):
+            raise DeliveryFailure(
+                "V0260_PLUGIN_CACHE_IDENTITY_INVALID {0} bootstrap".format(plugin_name)
+            )
+
+
 def audit_hashes(root: Path) -> None:
     path = root / "release-file-hashes.json"
     if not path.is_file():
@@ -729,6 +820,7 @@ def audit(root: Path, archive: Optional[Path], checksum_file: Optional[Path], ex
     audit_lifecycle(root)
     audit_current_identity_references(root)
     audit_status(root, manifest)
+    audit_plugin_cache_identity(root, manifest)
     audit_hashes(root)
     audit_plugin_javascript(root)
     if archive is not None or checksum_file is not None:

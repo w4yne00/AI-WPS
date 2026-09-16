@@ -246,6 +246,14 @@ test("Helper: renderExcelFormulaHistoryList renders formula cards with read-only
   assert.ok(!html.includes("写入"), "formula history must NOT have writeback capability");
 });
 
+test("HTML Markup: Excel generation feedback is a visible live region", () => {
+  assert.match(
+    taskpaneHtml,
+    /id="status-line" class="inline-status task-submit-feedback" role="status" aria-live="polite"><\/div>/
+  );
+  assert.doesNotMatch(taskpaneHtml, /id="status-line" class="sr-only"/);
+});
+
 test("Behavioral: Analysis validation failure preserves active result", (t, done) => {
   const ctx = createBaseTestContext();
   ctx.state.analysisResult = {
@@ -314,6 +322,73 @@ test("Behavioral: Analysis slot busy blocks duplicate submission", () => {
   vm.runInContext("runExcelAnalysisAction();", sandbox);
 
   assert.ok(ctx.state.statusMessage.includes("已存在进行中的智能分析任务"), "must block duplicate submission");
+});
+
+test("Behavioral: Analysis and Formula acknowledge a valid click before deferred workbook extraction", () => {
+  [
+    {
+      functionName: "runExcelAnalysisAction",
+      state: { currentMode: "excelAnalysis" },
+      inputId: "excel-analysis-requirement",
+      expected: "正在校验智能分析选区"
+    },
+    {
+      functionName: "runExcelFormulaAction",
+      state: { currentMode: "excelFormulaAssistant", formulaMode: "generate" },
+      inputId: "excel-formula-requirement",
+      expected: "正在校验公式上下文"
+    }
+  ].forEach(({ functionName, state, inputId, expected }) => {
+    const deferred = [];
+    const ctx = createBaseTestContext({
+      state,
+      context: {
+        setTimeout: (callback) => {
+          deferred.push(callback);
+          return deferred.length;
+        }
+      }
+    });
+    ctx.byId(inputId).value = "分析并生成结果";
+    const sandbox = vm.createContext(ctx);
+    vm.runInContext(functionSource(functionName), sandbox);
+
+    vm.runInContext(`${functionName}();`, sandbox);
+
+    assert.ok(String(ctx.state.statusMessage || "").includes(expected), `${functionName} must acknowledge the click immediately`);
+    assert.strictEqual(deferred.length, 1, `${functionName} must still defer WPS extraction`);
+    assert.strictEqual(ctx.requests.length, 0, `${functionName} must not submit before extraction runs`);
+  });
+});
+
+test("Behavioral: Excel generation actions explain a configuration mutation gate", () => {
+  [
+    { functionName: "runExcelAnalysisAction", mode: "excelAnalysis" },
+    { functionName: "runExcelFormulaAction", mode: "excelFormulaAssistant" },
+    { functionName: "runExcelSmartFillAction", mode: "excelSmartFill" }
+  ].forEach(({ functionName, mode }) => {
+    const ctx = createBaseTestContext({
+      state: {
+        currentMode: mode,
+        workflowProfileMutationBusy: true,
+        formulaMode: "generate"
+      },
+      context: {
+        buildExcelSmartFillClientJobId: () => "fill_job_test_001"
+      }
+    });
+    ctx.byId("excel-formula-requirement").value = "生成合计公式";
+    const sandbox = vm.createContext(ctx);
+    vm.runInContext(functionSource(functionName), sandbox);
+
+    vm.runInContext(`${functionName}();`, sandbox);
+
+    assert.ok(
+      String(ctx.state.statusMessage || "").includes("模型配置正在更新"),
+      `${functionName} must not return without visible feedback`
+    );
+    assert.strictEqual(ctx.requests.length, 0);
+  });
 });
 
 test("Behavioral: Formula validation failure preserves active result", (t, done) => {

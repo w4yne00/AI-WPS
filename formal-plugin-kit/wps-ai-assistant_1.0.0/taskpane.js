@@ -3352,7 +3352,6 @@
     var editorView = byId("workflow-editor-view");
     var editorContent = byId("workflow-editor-content");
     var managerTitle = byId("workflow-manager-title");
-    var managerSummary = byId("workflow-manager-summary");
     var newProfileButton = byId("btn-new-workflow-profile");
     var taskType = getSettingsWorkflowTaskType();
     var definition = TASK_API_KEY_DEFS.filter(function (item) {
@@ -3438,10 +3437,6 @@
     }
     if (managerTitle) {
       managerTitle.textContent = "工作流配置";
-    }
-    if (managerSummary) {
-      managerSummary.textContent = "当前配置：" +
-        (helpers.getActiveWorkflowProfileName ? helpers.getActiveWorkflowProfileName(data) : "尚未配置");
     }
     if (newProfileButton) {
       newProfileButton.disabled = Boolean(createDisabledAttribute.trim());
@@ -4104,7 +4099,7 @@
       btnNew.disabled = (state.directServices || []).length >= 5;
     }
     if (!state.directServices || state.directServices.length === 0) {
-      list.innerHTML = '<p class="field-hint">尚未建立直连模型配置。</p>';
+      list.innerHTML = '<p class="direct-services-empty-state">尚未建立直连模型配置。</p>';
       return;
     }
     state.directServices.forEach(function (svc) {
@@ -4690,7 +4685,6 @@
   function renderTaskModelSelectionSection() {
     var section = byId("word-task-direct-service-section");
     var title = byId("word-task-direct-service-title");
-    var hint = byId("word-task-direct-service-hint");
     var select = byId("word-task-direct-service-select");
     var paramsDiv = byId("word-task-direct-params");
     var modelSelect = byId("word-task-model-select");
@@ -4714,10 +4708,6 @@
     if (title) {
       title.textContent = "接入选择";
     }
-    if (hint) {
-      hint.textContent = "使用工作流平台或绑定直连模型配置，独立调整任务参数。";
-    }
-
     var directServices = state.directServices || [];
     var currentSelection = (state.taskModelSelections && state.taskModelSelections[currentTask]) || null;
     var activeProfileId = getWorkflowProfileData(currentTask).activeProfileId;

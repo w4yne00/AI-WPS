@@ -36,7 +36,7 @@ assert.ok(html.includes('id="workflow-task-tabs"'));
 assert.ok(html.includes('id="workflow-settings-home"'));
 assert.ok(html.includes('id="workflow-profile-manager"'));
 assert.ok(html.includes('id="workflow-manager-title"'));
-assert.ok(html.includes('id="workflow-manager-summary"'));
+assert.ok(!html.includes('id="workflow-manager-summary"'));
 assert.ok(html.includes('id="btn-new-workflow-profile"'));
 assert.ok(html.includes('id="workflow-editor-view"'));
 assert.ok(html.includes('id="workflow-editor-content"'));
@@ -62,7 +62,7 @@ assert.ok(managerSource.includes('var settingsHome = byId("workflow-settings-hom
 assert.ok(managerSource.includes('var editorView = byId("workflow-editor-view")'));
 assert.ok(managerSource.includes('var editorContent = byId("workflow-editor-content")'));
 assert.ok(managerSource.includes('var managerTitle = byId("workflow-manager-title")'));
-assert.ok(managerSource.includes('var managerSummary = byId("workflow-manager-summary")'));
+assert.ok(!managerSource.includes('byId("workflow-manager-summary")'));
 assert.ok(!managerSource.includes("TASK_API_KEY_DEFS.forEach"));
 assert.ok(html.includes('data-workflow-action="create-open"'));
 assert.ok(functionSource("bindEvents").includes('byId("btn-new-workflow-profile").addEventListener'));

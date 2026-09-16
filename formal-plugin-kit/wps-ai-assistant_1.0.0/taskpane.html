@@ -417,10 +417,6 @@
                 <section id="word-task-direct-service-section" class="task-model-selection-card">
                   <div class="task-selection-heading">
                     <h4 id="word-task-direct-service-title">接入选择</h4>
-                    <details class="context-help settings-card-help">
-                      <summary aria-label="查看接入选择说明">!</summary>
-                      <div id="word-task-direct-service-hint" class="context-help-popover" role="note">使用工作流平台或绑定直连模型配置，独立调整任务参数。</div>
-                    </details>
                   </div>
                   <label class="field" for="word-task-direct-service-select">
                     <span class="sr-only">接入选择</span>
@@ -468,9 +464,9 @@
 
             <section id="direct-services-card" class="settings-card direct-services-card">
               <div class="direct-services-heading">
-                <div class="direct-services-title-actions">
+                <div class="settings-title-actions">
                   <h4>直连模型配置</h4>
-                  <button id="btn-new-direct-service" type="button">新建</button>
+                  <button id="btn-new-direct-service" class="settings-create-action" type="button">新建</button>
                 </div>
                 <details class="context-help settings-card-help">
                   <summary aria-label="查看直连模型配置说明">!</summary>
@@ -539,11 +535,10 @@
             <section id="workflow-configuration-card" class="settings-card workflow-configuration-card">
               <div id="workflow-settings-home" class="workflow-settings-home">
                 <div class="workflow-manager-head">
-                  <div>
+                  <div class="settings-title-actions">
                     <h3 id="workflow-manager-title">工作流配置</h3>
-                    <p id="workflow-manager-summary">正在读取工作流配置...</p>
+                    <button id="btn-new-workflow-profile" class="settings-create-action" type="button" data-workflow-action="create-open">新建</button>
                   </div>
-                  <button id="btn-new-workflow-profile" type="button" data-workflow-action="create-open">新建</button>
                 </div>
                 <div id="workflow-profile-manager" class="workflow-profile-manager"></div>
               </div>
@@ -554,7 +549,7 @@
 
             <section id="writing-policies-summary-card" class="settings-card writing-policy-summary-card">
               <div class="settings-card-head">
-                <div>
+                <div class="writing-policy-summary-title">
                   <h4>写作规范库</h4>
                   <span id="writing-policy-summary-status" class="inline-status">正在读取...</span>
                 </div>

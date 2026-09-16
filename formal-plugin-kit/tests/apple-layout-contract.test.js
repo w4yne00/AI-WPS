@@ -34,7 +34,7 @@ test("direct model guidance is hidden behind an accessible exclamation control",
   Object.keys(HOSTS).forEach((host) => {
     const html = source(host, "taskpane.html");
     assert.match(html, /<h4>直连模型配置<\/h4>/);
-    assert.match(html, /class="direct-services-title-actions"/);
+    assert.match(html, /class="settings-title-actions"/);
     assert.match(html, /class="context-help settings-card-help"/);
     assert.match(html, /aria-label="查看直连模型配置说明"/);
     assert.match(html, />!<\/summary>/);
@@ -43,7 +43,7 @@ test("direct model guidance is hidden behind an accessible exclamation control",
   });
 });
 
-test("task access cards use a generic label and move guidance into help", () => {
+test("task access cards use a generic label without a visual help affordance", () => {
   Object.keys(HOSTS).forEach((host) => {
     const html = source(host, "taskpane.html");
     const js = source(host, "taskpane.js");
@@ -51,10 +51,39 @@ test("task access cards use a generic label and move guidance into help", () => 
     assert.match(html, />-- 使用工作流或模型配置 --<\/option>/);
     assert.match(js, /-- 使用工作流或模型配置 --/);
     assert.doesNotMatch(js, /-- 使用工作流平台配置 --/);
-    assert.match(html, /aria-label="查看接入选择说明"/);
+    assert.doesNotMatch(html, /aria-label="查看接入选择说明"/);
     assert.doesNotMatch(html, />接入模式<\/span>/);
     assert.doesNotMatch(js, /title(?:Node)?\.textContent = "(?:智能编写|智能仿写|文档审查|格式审查|智能分析|公式助手|智能填写|智能总结|结构审查)接入选择"/);
   });
+});
+
+test("settings cards share compact create actions and omit redundant summaries", () => {
+  Object.keys(HOSTS).forEach((host) => {
+    const html = source(host, "taskpane.html");
+    const js = source(host, "taskpane.js");
+    assert.match(html, /class="settings-title-actions"[\s\S]*?id="btn-new-direct-service" class="settings-create-action"/);
+    assert.match(html, /class="settings-title-actions"[\s\S]*?id="btn-new-workflow-profile" class="settings-create-action"/);
+    assert.doesNotMatch(html, /id="workflow-manager-summary"|id="workflow-profile-count"/);
+    assert.doesNotMatch(js, /byId\("workflow-manager-summary"\)|byId\("workflow-profile-count"\)/);
+    assert.match(js, /class="direct-services-empty-state"/);
+  });
+});
+
+test("settings styles separate headings from their dependent status and controls", () => {
+  Object.keys(HOSTS).forEach((host) => {
+    const css = source(host, "taskpane.css");
+    assert.match(css, /\.task-selection-heading\s*\{[\s\S]*?margin-bottom:\s*8px/);
+    assert.match(css, /\.settings-create-action\s*\{[\s\S]*?min-height:\s*32px[\s\S]*?padding:\s*5px 12px/);
+    assert.match(css, /\.direct-services-empty-state\s*\{[\s\S]*?align-items:\s*center[\s\S]*?justify-content:\s*center[\s\S]*?text-align:\s*center/);
+  });
+  const wordCss = source("word", "taskpane.css");
+  assert.match(wordCss, /\.writing-policy-summary-title\s*\{[\s\S]*?gap:\s*6px/);
+  const excelCss = source("excel", "taskpane.css");
+  assert.match(
+    excelCss,
+    /@media \(max-width:\s*420px\)[\s\S]*?\.workflow-manager-head \.settings-create-action\s*\{[\s\S]*?width:\s*auto/,
+    "Excel compact create action must not stretch across the narrow settings card"
+  );
 });
 
 test("workflow-only configuration uses workflow terminology", () => {

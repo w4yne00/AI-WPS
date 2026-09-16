@@ -217,6 +217,39 @@ def test_prepare_creates_neutral_preview_identity_from_phase1_delivery_tree(tmp_
     ).read_text(encoding="utf-8")
 
 
+def test_prepare_uses_source_commit_in_plugin_cache_identity(tmp_path):
+    delivery = _prepare_delivery(
+        tmp_path,
+        source_commit="3e64066d5794b3348d60535f35a9ade238b3a891",
+    )
+    expected_cache_identity = "0.26.0-preview.1-3e64066d5794"
+
+    for plugin_name in (
+        "wps-ai-assistant_1.0.0",
+        "wps-ai-assistant-et_1.0.0",
+        "wps-ai-assistant-wpp_1.0.0",
+    ):
+        plugin = delivery / "packages" / plugin_name
+        taskpane_html = (plugin / "taskpane.html").read_text(encoding="utf-8")
+        taskpane_js = (plugin / "taskpane.js").read_text(encoding="utf-8")
+        ribbon_js = (plugin / "ribbon.js").read_text(encoding="utf-8")
+        index_html = (plugin / "index.html").read_text(encoding="utf-8")
+
+        assert "taskpane.js?v={0}".format(expected_cache_identity) in taskpane_html
+        assert "taskpane-helpers.js?v={0}".format(expected_cache_identity) in taskpane_html
+        assert "taskpane.css?v={0}".format(expected_cache_identity) in taskpane_html
+        assert 'FRONTEND_BUILD_VERSION = "{0}"'.format(expected_cache_identity) in taskpane_js
+        assert "&build={0}".format(expected_cache_identity) in ribbon_js
+        if plugin_name == "wps-ai-assistant_1.0.0":
+            main_js = (plugin / "main.js").read_text(encoding="utf-8")
+            assert "main.js?v={0}".format(expected_cache_identity) in index_html
+            assert "ribbon.js?v={0}".format(expected_cache_identity) in main_js
+            assert "taskpane.js?v={0}".format(expected_cache_identity) in main_js
+            assert "taskpane-helpers.js?v={0}".format(expected_cache_identity) in main_js
+        else:
+            assert "ribbon.js?v={0}".format(expected_cache_identity) in index_html
+
+
 def test_preview_installer_only_reports_legacy_phase1_and_preserves_its_data(tmp_path):
     delivery = _prepare_delivery(tmp_path)
     target_home = tmp_path / "target-home"
@@ -603,6 +636,91 @@ def test_preview_audit_accepts_neutral_tree_and_rejects_phase1_release_identity(
     )
     assert rejected.returncode != 0
     assert "V0260_VERSION_RULE_INVALID" in rejected.stdout
+
+
+def test_preview_audit_rejects_plugin_cache_identity_without_source_commit(tmp_path):
+    delivery = _prepare_delivery(tmp_path, source_commit="e94c561")
+    plugin_html = delivery / "packages/wps-ai-assistant-et_1.0.0/taskpane.html"
+    content = plugin_html.read_text(encoding="utf-8")
+    plugin_html.write_text(
+        content.replace("0.26.0-preview.1-e94c561", "0.26.0-preview.1"),
+        encoding="utf-8",
+    )
+
+    generic_audit = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "packaging/audit_phase1_delivery.py"),
+            str(delivery),
+            "--write-hashes",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert generic_audit.returncode == 0, generic_audit.stdout + generic_audit.stderr
+
+    rejected = subprocess.run(
+        [
+            sys.executable,
+            str(delivery / "scripts/audit_v0260_preview1_delivery.py"),
+            str(delivery),
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert rejected.returncode != 0
+    assert "V0260_PLUGIN_CACHE_IDENTITY_INVALID" in rejected.stdout
+
+
+def test_preview_audit_rejects_plugin_css_cache_identity_without_source_commit(
+    tmp_path,
+):
+    source_commit = "3e64066d5794b3348d60535f35a9ade238b3a891"
+    delivery = _prepare_delivery(tmp_path, source_commit=source_commit)
+    cache_identity = "0.26.0-preview.1-3e64066d5794"
+    plugin_html = delivery / "packages/wps-ai-assistant-et_1.0.0/taskpane.html"
+    content = plugin_html.read_text(encoding="utf-8")
+    assert "taskpane.js?v={0}".format(cache_identity) in content
+    assert "taskpane-helpers.js?v={0}".format(cache_identity) in content
+    plugin_html.write_text(
+        content.replace(
+            "taskpane.css?v={0}".format(cache_identity),
+            "taskpane.css?v=0.26.0-preview.1",
+        ),
+        encoding="utf-8",
+    )
+
+    generic_audit = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "packaging/audit_phase1_delivery.py"),
+            str(delivery),
+            "--write-hashes",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert generic_audit.returncode == 0, generic_audit.stdout + generic_audit.stderr
+
+    rejected = subprocess.run(
+        [
+            sys.executable,
+            str(delivery / "scripts/audit_v0260_preview1_delivery.py"),
+            str(delivery),
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert rejected.returncode != 0
+    assert "V0260_PLUGIN_CACHE_IDENTITY_INVALID" in rejected.stdout
 
 
 def test_preview_audit_rejects_phase1_lifecycle_identity(tmp_path):

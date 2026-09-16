@@ -89,7 +89,7 @@
             <button id="btn-resubmit-interrupted-formula-job" class="secondary-action" type="button" hidden>重新提交公式需求</button>
             <button id="btn-resubmit-interrupted-smart-fill-job" class="secondary-action" type="button" hidden>重新提交智能填写</button>
           </div>
-          <div id="status-line" class="sr-only">等待操作。</div>
+          <div id="status-line" class="inline-status task-submit-feedback" role="status" aria-live="polite"></div>
         </section>
 
         <section id="excel-result-panel" class="panel result-panel glass-card">
@@ -188,10 +188,6 @@
                 <section id="excel-task-direct-service-section" class="task-model-selection-card">
                   <div class="task-selection-heading">
                     <h4 id="excel-task-direct-service-title">接入选择</h4>
-                    <details class="context-help settings-card-help">
-                      <summary aria-label="查看接入选择说明">!</summary>
-                      <div id="excel-task-direct-service-hint" class="context-help-popover" role="note">使用工作流平台或绑定直连模型配置，独立调整任务参数。</div>
-                    </details>
                   </div>
                   <label class="field" for="excel-task-direct-service-select">
                     <span class="sr-only">接入选择</span>
@@ -224,9 +220,9 @@
 
             <section id="direct-services-card" class="settings-card direct-services-card">
               <div class="direct-services-heading">
-                <div class="direct-services-title-actions">
+                <div class="settings-title-actions">
                   <h4>直连模型配置</h4>
-                  <button id="btn-new-direct-service" type="button">新建</button>
+                  <button id="btn-new-direct-service" class="settings-create-action" type="button">新建</button>
                 </div>
                 <details class="context-help settings-card-help">
                   <summary aria-label="查看直连模型配置说明">!</summary>
@@ -295,11 +291,10 @@
             <section id="workflow-configuration-card" class="settings-card workflow-configuration-card">
               <section id="workflow-settings-home">
                 <div class="workflow-manager-head">
-                  <div>
+                  <div class="settings-title-actions">
                     <h3 id="workflow-manager-title">工作流配置</h3>
-                    <p id="workflow-manager-summary">正在读取工作流配置...</p>
+                    <button id="btn-new-workflow-profile" class="settings-create-action" type="button">新建</button>
                   </div>
-                  <button id="btn-new-workflow-profile" type="button">新建</button>
                 </div>
                 <div id="workflow-profile-manager" class="workflow-profile-manager"></div>
               </section>
