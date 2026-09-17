@@ -2,6 +2,10 @@
 
 ## 当前功能实现：Issue #202 建立毫秒级性能诊断（2026-09-17）
 
+- **PR #214 审查修复（2026-09-18）**：指定 `traceId` 的 Provider 诊断查询改为精确命中，未知或已淘汰任务返回空数据，不再回退到全局最近记录；三宿主高级诊断携带当前任务 `traceId`，近期终态任务同时显示任务编号和任务类型。
+- **耗时语义修复**：毫秒阶段取整余量归入最后实际执行阶段，轮询状态与终态诊断均满足阶段合计等于总耗时；九类模型任务完整透传执行控制。直连与工作流在非法 JSON、HTTP 错误体、超时、连接失败和响应中断时仅保留已实际观测的阶段，未到达阶段明确为 `null`；超过 4 KiB 或读取中断的错误体不再冒充完整响应。
+- **多次调用累计与前端任务隔离**：同一任务的兼容重试、格式降级和智能填写纠正调用累计 `providerAttempts` 及 Provider 阶段耗时，协调器与 trace 诊断不再只保留最后一次。Word 点击、Adapter 接受和首渲染指标按 `jobId/traceId` 关联；首渲染在 DOM 更新后的 `requestAnimationFrame` 记录，帧前切换任务不会回写当前诊断。FastAPI 内外层 503/411/413 均统一记录 `durationMs`。
+- **审查修复验证**：本地相关后端 `180/180`、正式插件专项 `3/3`；本地后端 `1403 passed / 54 skipped / 1 deselected`，被排除的组装浏览器门禁单独通过，因此共 `1404` 项通过；麒麟 V10/Python 3.8 为 `1403 passed / 55 skipped`。正式插件 `231/231`（含本地真实 Chrome 320px/420px）、Python 3.8 兼容扫描 77 文件及 `git diff --check` 均通过；独立最终复审为 `Ready to merge: Yes`。
 - **毫秒级阶段与耗时暴露**：遵循 ADR-0132 与 Issue #202 验收标准，`LongTaskCoordinator` 在保留现有秒级 `elapsedSeconds`、`phaseElapsedSeconds` 兼容字段的同时，新增毫秒级单调耗时指标 `elapsedMs`、`phaseElapsedMs`、`phaseDurationsMs`（阶段细分耗时字典）和 `queueWaitMs`（排队等待时长）；终态诊断输出与 `/jobs/{id}` 轮询响应完全对齐。
 - **直连模型调用耗时分解**：`ProviderClient` 记录阻塞模型调用的完整网络阶段耗时，包括响应头到达 `providerHeadersMs`、完整响应体接收完成 `providerCompleteMs`、JSON 响应解析 `parseMs`；首个可见内容延迟 `providerFirstVisibleMs` 严格记录为 `null`（绝不伪造非流式首包时间）。指标同时记录至长任务协调器与调试记录中。
 - **按 traceId 隔离的脱敏诊断**：直连模型调试信息新增支持按 `traceId` 隔离索引（最多保留 50 条），`/provider/debug-last?traceId=...` 端点支持按任务 trace 查询上游调用诊断，消除单槽位竞态；继续严守零用户正文、零提示词、零增量内容、零 API Key、零本地绝对路径的脱敏规范。

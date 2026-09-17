@@ -23,6 +23,7 @@ function taskDiagnostics() {
     rejectedCount: 6,
     timedOutCount: 7,
     recentTerminalJobs: [{
+      jobId: "job-unique-42",
       taskType: "ppt.slide_assistant",
       status: "failed",
       elapsedSeconds: 42,
@@ -47,6 +48,13 @@ function diagnosticResults() {
         taskType: "ppt.slide_assistant",
         traceId: "trace-safe",
         url: "https://model.example/v1/chat-messages",
+        performance: {
+          providerAttempts: 2,
+          providerHeadersMs: 220,
+          providerFirstVisibleMs: null,
+          providerCompleteMs: 1650,
+          parseMs: 30
+        },
         request: {
           bodyKeys: ["inputs", "query"],
           inputsKeys: ["query"],
@@ -85,6 +93,8 @@ function assertSanitized(text) {
     "超时数：7",
     "42",
     "42350",
+    "job-unique-42",
+    "模型调用次数：2",
     "PROVIDER_TIMEOUT"
   ].forEach((token) => assert.ok(text.includes(token), `missing ${token}`));
   [
@@ -135,4 +145,51 @@ const renderPpt = vm.runInNewContext(
 );
 assertSanitized(renderPpt(diagnosticResults()));
 
-console.log("long task diagnostics tests passed");
+async function assertDiagnosticsQueryUsesCurrentTrace(filePath) {
+  const hostSource = fs.readFileSync(filePath, "utf8");
+  const requestedPaths = [];
+  const refresh = vm.runInNewContext(
+    `(${functionSource(hostSource, "refreshDiagnostics")})`,
+    {
+      state: { traceId: "trace / current" },
+      encodeURIComponent,
+      setDiagnosticsResult() {},
+      readAdapterJson(requestPath) {
+        requestedPaths.push(requestPath);
+        return Promise.resolve({ data: {} });
+      },
+      request(requestPath) {
+        requestedPaths.push(requestPath);
+        return Promise.resolve({ data: {} });
+      },
+      renderProviderDiagnostics() {
+        return "diagnostics";
+      },
+      setSettingsStatus() {},
+      byId() {
+        return { textContent: "" };
+      },
+      describeSettingsError(error) {
+        return error.message;
+      },
+      SETTINGS_REFRESH_REQUEST_TIMEOUT_MS: 8000
+    }
+  );
+
+  await refresh();
+  assert.strictEqual(
+    requestedPaths[0],
+    "/provider/debug-last?traceId=trace%20%2F%20current"
+  );
+}
+
+Promise.all([
+  assertDiagnosticsQueryUsesCurrentTrace(path.join(wordRoot, "taskpane.js")),
+  assertDiagnosticsQueryUsesCurrentTrace(path.join(etRoot, "taskpane.js")),
+  assertDiagnosticsQueryUsesCurrentTrace(path.join(pptRoot, "taskpane.js"))
+]).then(() => {
+  console.log("long task diagnostics tests passed");
+}).catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

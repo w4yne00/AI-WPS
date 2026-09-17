@@ -7322,13 +7322,36 @@
           ? ("，排队 " + job.queueWaitMs + " ms")
           : "";
         lines.push(
-          "- 最近任务 " + (job.taskType || job.jobId || "未记录") +
+          "- 最近任务 " + (job.jobId || "未记录") +
+          (job.taskType ? "（" + job.taskType + "）" : "") +
           "：" + (job.status || "未记录") +
           "，耗时 " + elapsedDesc +
           queueDesc +
           (job.errorCode ? "，错误码 " + job.errorCode : "")
         );
       });
+    }
+
+    if (debug.performance) {
+      lines.push("");
+      lines.push("## 模型服务耗时");
+      if (typeof debug.performance.providerAttempts === "number") {
+        lines.push("- 模型调用次数：" + debug.performance.providerAttempts);
+      }
+      if (typeof debug.performance.providerHeadersMs === "number") {
+        lines.push("- 响应头耗时：" + debug.performance.providerHeadersMs + " ms");
+      }
+      if (debug.performance.providerFirstVisibleMs !== null && typeof debug.performance.providerFirstVisibleMs === "number") {
+        lines.push("- 首内容耗时：" + debug.performance.providerFirstVisibleMs + " ms");
+      } else {
+        lines.push("- 首内容耗时：阻塞调用无流式首包（null）");
+      }
+      if (typeof debug.performance.providerCompleteMs === "number") {
+        lines.push("- 完整响应耗时：" + debug.performance.providerCompleteMs + " ms");
+      }
+      if (typeof debug.performance.parseMs === "number") {
+        lines.push("- 解析耗时：" + debug.performance.parseMs + " ms");
+      }
     }
 
     if (debug.request) {
@@ -7377,8 +7400,12 @@
 
   function refreshDiagnostics() {
     setDiagnosticsResult("正在刷新最近一次任务诊断...");
+    var debugPath = "/provider/debug-last";
+    if (state.traceId) {
+      debugPath += "?traceId=" + encodeURIComponent(state.traceId);
+    }
     return Promise.all([
-      readAdapterJson("/provider/debug-last"),
+      readAdapterJson(debugPath),
       readAdapterJson("/provider/status"),
       readAdapterJson("/provider/route-diagnostics"),
       readAdapterJson("/provider/task-api-keys")

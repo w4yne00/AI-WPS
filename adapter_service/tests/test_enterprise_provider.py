@@ -1,5 +1,6 @@
 import unittest
 import json
+from http.client import IncompleteRead
 from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -70,6 +71,25 @@ class FakeProviderResponse:
 class RawProviderResponse(FakeProviderResponse):
     def read(self):
         return bytes(self.body)
+
+
+class FailingReadResponse(FakeProviderResponse):
+    def read(self):
+        raise IncompleteRead(b'{"answer": "partial')
+
+
+class RecordingControl:
+    def __init__(self):
+        self.metrics = {}
+
+    def __call__(self, _phase):
+        return None
+
+    def record_metric(self, name, value):
+        self.metrics[name] = value
+
+    def cancel_requested(self):
+        return False
 
 
 def make_http_error(status, body):
@@ -403,6 +423,77 @@ class EnterpriseProviderTests(unittest.TestCase):
                 client.post_task("word.smart_write", "trace-timeout", {}, "完整提示词")
             self.assertEqual(urlopen.call_count, 1)
 
+    @patch("app.services.provider_client.time.monotonic", side_effect=[1.0, 2.0, 5.0])
+    @patch("app.services.provider_client.urllib_request.urlopen")
+    def test_workflow_http_error_measures_complete_body_read(
+        self, urlopen, _monotonic
+    ) -> None:
+        urlopen.side_effect = make_http_error(500, {"code": "provider_error"})
+        control = RecordingControl()
+        client = self._configured_provider_client()
+
+        with self.assertRaises(ProviderUnavailableError):
+            client.post_task(
+                "word.smart_write",
+                "trace-workflow-http-performance",
+                {},
+                "完整提示词",
+                progress_callback=control,
+            )
+
+        self.assertEqual(control.metrics["providerHeadersMs"], 1000)
+        self.assertEqual(control.metrics["providerCompleteMs"], 4000)
+        self.assertIsNone(control.metrics["parseMs"])
+
+    @patch("app.services.provider_client.urllib_request.urlopen")
+    def test_workflow_network_error_records_unavailable_stages_as_null(
+        self, urlopen
+    ) -> None:
+        urlopen.side_effect = URLError("connection reset")
+        control = RecordingControl()
+        client = self._configured_provider_client()
+
+        with self.assertRaises(ProviderUnavailableError):
+            client.post_task(
+                "word.smart_write",
+                "trace-workflow-network-performance",
+                {},
+                "完整提示词",
+                progress_callback=control,
+            )
+
+        self.assertEqual(
+            control.metrics,
+            {
+                "providerHeadersMs": None,
+                "providerFirstVisibleMs": None,
+                "providerCompleteMs": None,
+                "parseMs": None,
+            },
+        )
+
+    @patch("app.services.provider_client.time.monotonic", side_effect=[1.0, 2.0])
+    @patch("app.services.provider_client.urllib_request.urlopen")
+    def test_workflow_midstream_disconnect_preserves_header_timing(
+        self, urlopen, _monotonic
+    ) -> None:
+        urlopen.return_value = FailingReadResponse({})
+        control = RecordingControl()
+        client = self._configured_provider_client()
+
+        with self.assertRaises(IncompleteRead):
+            client.post_task(
+                "word.smart_write",
+                "trace-workflow-midstream-performance",
+                {},
+                "完整提示词",
+                progress_callback=control,
+            )
+
+        self.assertEqual(control.metrics["providerHeadersMs"], 1000)
+        self.assertIsNone(control.metrics["providerCompleteMs"])
+        self.assertIsNone(control.metrics["parseMs"])
+
     @patch("app.services.provider_client.urllib_request.urlopen")
     def test_post_task_records_sanitized_compatibility_fallback_diagnostics(
         self,
@@ -551,6 +642,44 @@ class EnterpriseProviderTests(unittest.TestCase):
         self.assertFalse(reader.is_alive())
         self.assertEqual(reader_results[0]["traceId"], "trace-new")
         self.assertEqual(reader_results[0]["taskType"], "word.smart_write")
+
+    def test_provider_debug_trace_lookup_does_not_fall_back_to_latest(self) -> None:
+        reset_provider_debug()
+        record_provider_debug(
+            {
+                "traceId": "trace-current",
+                "taskType": "word.smart_write",
+                "stage": "response",
+            }
+        )
+
+        self.assertEqual(
+            get_last_provider_debug(trace_id="trace-current")["traceId"],
+            "trace-current",
+        )
+        self.assertEqual(
+            get_last_provider_debug(trace_id="trace-missing"),
+            {},
+        )
+
+    def test_provider_debug_evicted_trace_does_not_fall_back_to_latest(self) -> None:
+        reset_provider_debug()
+        for index in range(provider_client._MAX_TRACE_DEBUG_ITEMS + 1):
+            record_provider_debug(
+                {
+                    "traceId": "trace-{0}".format(index),
+                    "taskType": "word.smart_write",
+                    "stage": "response",
+                }
+            )
+
+        self.assertEqual(get_last_provider_debug(trace_id="trace-0"), {})
+        self.assertEqual(
+            get_last_provider_debug(
+                trace_id="trace-{0}".format(provider_client._MAX_TRACE_DEBUG_ITEMS)
+            )["traceId"],
+            "trace-{0}".format(provider_client._MAX_TRACE_DEBUG_ITEMS),
+        )
 
     def test_provider_debug_merge_requires_matching_trace_and_preserves_stage(self) -> None:
         reset_provider_debug()
@@ -761,9 +890,13 @@ class EnterpriseProviderTests(unittest.TestCase):
         class RecordingBody:
             def __init__(self):
                 self.read_sizes = []
+                self.returned = False
 
             def read(self, size=-1):
                 self.read_sizes.append(size)
+                if self.returned:
+                    return b""
+                self.returned = True
                 return b'{"code":"invalid_param","message":"bad request"}'
 
             def close(self):
@@ -780,8 +913,57 @@ class EnterpriseProviderTests(unittest.TestCase):
 
         body_preview = provider_client._read_http_error_body(http_error)
 
-        self.assertEqual(response_body.read_sizes, [4096])
+        self.assertEqual(response_body.read_sizes, [4096, 4096])
         self.assertIn("invalid_param", body_preview)
+
+    def test_read_http_error_body_marks_bytes_beyond_preview_incomplete(self) -> None:
+        class ChunkedBody:
+            def __init__(self):
+                self.chunks = [b"A" * 4096, b"B" * 100, b""]
+                self.read_sizes = []
+
+            def read(self, size=-1):
+                self.read_sizes.append(size)
+                return self.chunks.pop(0)
+
+            def close(self):
+                return None
+
+        response_body = ChunkedBody()
+        http_error = HTTPError(
+            "https://aibot.example/v1/chat-messages",
+            500,
+            "Server Error",
+            {},
+            response_body,
+        )
+
+        raw, complete = provider_client._read_http_error_raw_result(http_error)
+
+        self.assertFalse(complete)
+        self.assertEqual(len(raw), 4096)
+        self.assertEqual(response_body.read_sizes, [4096, 4096])
+
+    def test_read_http_error_body_unexpected_read_error_is_incomplete(self) -> None:
+        class BrokenBody:
+            def read(self, _size=-1):
+                raise OSError("certificate path /private/secret.pem")
+
+            def close(self):
+                return None
+
+        http_error = HTTPError(
+            "https://aibot.example/v1/chat-messages",
+            500,
+            "Server Error",
+            {},
+            BrokenBody(),
+        )
+
+        raw, complete = provider_client._read_http_error_raw_result(http_error)
+
+        self.assertEqual(raw, "")
+        self.assertFalse(complete)
 
     def test_truncated_non_json_error_body_never_echoes_escaped_query_fragment(
         self,
@@ -979,6 +1161,9 @@ class EnterpriseProviderTests(unittest.TestCase):
             def post_task(
                 self, task_type, trace_id, input_data, query, timeout_seconds=None, **kwargs
             ):
+                callback = kwargs.get("progress_callback")
+                if callback is not None:
+                    callback.record_metric("providerHeadersMs", 321)
                 self.calls.append(
                     {
                         "taskType": task_type,
@@ -1008,13 +1193,19 @@ class EnterpriseProviderTests(unittest.TestCase):
             }
         )
         provider = CapturingProviderClient()
+        control = RecordingControl()
 
-        result = provider.excel_analysis(request, trace_id="trace-excel-analysis")
+        result = provider.excel_analysis(
+            request,
+            trace_id="trace-excel-analysis",
+            progress_callback=control,
+        )
 
         self.assertEqual(provider.calls[0]["taskType"], "excel.analysis")
         self.assertIn("生成简要分析", provider.calls[0]["query"])
         self.assertEqual(provider.calls[0]["timeoutSeconds"], 1800)
         self.assertEqual(result["plainText"], "汇报段落")
+        self.assertEqual(control.metrics["providerHeadersMs"], 321)
 
     def test_ppt_slide_assistant_request_accepts_camel_case_payload(self):
         request = PptSlideAssistantRequest.parse_obj(

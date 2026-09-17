@@ -40,6 +40,18 @@ FULL_DOCUMENT_REVIEW_REQUEST_MAX_BYTES = 2 * 1024 * 1024
 SMART_FILL_REQUEST_MAX_BYTES = 2 * 1024 * 1024
 
 
+def _log_http_duration(trace_id, method, path, status, started_at):
+    duration_ms = max(0, int((time.monotonic() - started_at) * 1000))
+    logger.info(
+        "traceId=%s method=%s path=%s status=%s durationMs=%s",
+        trace_id,
+        method,
+        path,
+        status,
+        duration_ms,
+    )
+
+
 class FullDocumentReviewBodyLimitMiddleware:
     def __init__(self, app, max_bytes: int) -> None:
         self.app = app
@@ -49,9 +61,10 @@ class FullDocumentReviewBodyLimitMiddleware:
         if not self._is_full_review_mutation(scope):
             await self.app(scope, receive, send)
             return
+        started_at = time.monotonic()
         declared = WritingPolicyImportBodyLimitMiddleware._content_length(scope)
         if declared > self.max_bytes:
-            await self._reject(scope, send, declared)
+            await self._reject(scope, send, declared, started_at)
             return
         buffered_body = bytearray()
         disconnected = False
@@ -65,7 +78,7 @@ class FullDocumentReviewBodyLimitMiddleware:
             chunk = message.get("body", b"")
             received = len(buffered_body) + len(chunk)
             if received > self.max_bytes:
-                await self._reject(scope, send, received)
+                await self._reject(scope, send, received, started_at)
                 return
             buffered_body.extend(chunk)
             if not message.get("more_body", False):
@@ -97,7 +110,7 @@ class FullDocumentReviewBodyLimitMiddleware:
             and str(scope.get("path", "")).startswith("/word/document-review/full/")
         )
 
-    async def _reject(self, scope, send, received: int) -> None:
+    async def _reject(self, scope, send, received: int, started_at: float) -> None:
         trace_id = WritingPolicyImportBodyLimitMiddleware._trace_id(scope)
         message = "全篇审查请求超过 2 MB 限制。"
         response = JSONResponse(
@@ -119,6 +132,13 @@ class FullDocumentReviewBodyLimitMiddleware:
             "traceId=%s method=%s path=%s status=413 receivedBytes=%s",
             trace_id, scope.get("method", ""), scope.get("path", ""), received,
         )
+        _log_http_duration(
+            trace_id,
+            scope.get("method", ""),
+            scope.get("path", ""),
+            413,
+            started_at,
+        )
         await response(scope, self._empty_receive, send)
 
     @staticmethod
@@ -138,7 +158,7 @@ class SmartFillBodyLimitMiddleware(FullDocumentReviewBodyLimitMiddleware):
             )
         )
 
-    async def _reject(self, scope, send, received: int) -> None:
+    async def _reject(self, scope, send, received: int, started_at: float) -> None:
         trace_id = WritingPolicyImportBodyLimitMiddleware._trace_id(scope)
         message = "智能填写请求超过 2 MiB 限制。"
         response = JSONResponse(
@@ -160,6 +180,13 @@ class SmartFillBodyLimitMiddleware(FullDocumentReviewBodyLimitMiddleware):
             "traceId=%s method=%s path=%s status=413 receivedBytes=%s",
             trace_id, scope.get("method", ""), scope.get("path", ""), received,
         )
+        _log_http_duration(
+            trace_id,
+            scope.get("method", ""),
+            scope.get("path", ""),
+            413,
+            started_at,
+        )
         await response(scope, self._empty_receive, send)
 
 
@@ -172,6 +199,7 @@ class WritingPolicyImportBodyLimitMiddleware:
         if not self._is_preview_request(scope):
             await self.app(scope, receive, send)
             return
+        started_at = time.monotonic()
 
         buffered_body = bytearray()
         content_length = self._content_length(scope)
@@ -200,6 +228,7 @@ class WritingPolicyImportBodyLimitMiddleware:
                     send,
                     self._trace_id(scope),
                     next_received_bytes,
+                    started_at,
                 )
                 return
 
@@ -214,6 +243,7 @@ class WritingPolicyImportBodyLimitMiddleware:
                         send,
                         self._trace_id(scope),
                         content_length,
+                        started_at,
                     )
                     return
                 break
@@ -277,6 +307,7 @@ class WritingPolicyImportBodyLimitMiddleware:
         send,
         trace_id: str,
         content_length: int,
+        started_at: float,
     ) -> None:
         scope.setdefault("state", {})["writing_policy_body_limit_rejected"] = True
         message = "写作规范导入预览请求超过 7 MB 限制。"
@@ -286,6 +317,13 @@ class WritingPolicyImportBodyLimitMiddleware:
             scope.get("method", ""),
             scope.get("path", ""),
             content_length,
+        )
+        _log_http_duration(
+            trace_id,
+            scope.get("method", ""),
+            scope.get("path", ""),
+            413,
+            started_at,
         )
         response = JSONResponse(
             status_code=413,
@@ -308,6 +346,20 @@ class WritingPolicyImportBodyLimitMiddleware:
 async def log_requests(request: Request, call_next):
     trace_id = request.headers.get("X-Trace-Id", new_trace_id("http"))
     request.state.request_trace_id = trace_id
+    t_start = time.monotonic()
+
+    def finish_response(response):
+        response.headers["X-Trace-Id"] = trace_id
+        if not getattr(request.state, "writing_policy_body_limit_rejected", False):
+            _log_http_duration(
+                trace_id,
+                request.method,
+                request.url.path,
+                response.status_code,
+                t_start,
+            )
+        return response
+
     operation_block = get_operation_block(request.method, request.url.path)
     if operation_block is not None:
         response = JSONResponse(
@@ -321,8 +373,7 @@ async def log_requests(request: Request, call_next):
                 "errors": [operation_block],
             },
         )
-        response.headers["X-Trace-Id"] = trace_id
-        return response
+        return finish_response(response)
     if (
         request.url.path.startswith("/word/document-review/full/")
         and request.method in {"POST", "PUT", "DELETE"}
@@ -349,8 +400,7 @@ async def log_requests(request: Request, call_next):
                     ],
                 },
             )
-            response.headers["X-Trace-Id"] = trace_id
-            return response
+            return finish_response(response)
     if request.url.path == "/ppt/document-files":
         try:
             content_length = int(request.headers.get("Content-Length", ""))
@@ -369,8 +419,7 @@ async def log_requests(request: Request, call_next):
                     "errors": [{"code": "CONTENT_LENGTH_REQUIRED", "message": message}],
                 },
             )
-            response.headers["X-Trace-Id"] = trace_id
-            return response
+            return finish_response(response)
         if content_length > PPT_DOCUMENT_UPLOAD_REQUEST_MAX_BYTES:
             message = "上传请求超过 15 MB 限制，请重新选择文件。"
             logger.warning(
@@ -391,9 +440,7 @@ async def log_requests(request: Request, call_next):
                     "errors": [{"code": "PPT_DOCUMENT_TOO_LARGE", "message": message}],
                 },
             )
-            response.headers["X-Trace-Id"] = trace_id
-            return response
-    t_start = time.monotonic()
+            return finish_response(response)
     try:
         response = await call_next(request)
     except Exception:
@@ -410,19 +457,7 @@ async def log_requests(request: Request, call_next):
             )
         raise
 
-    duration_ms = max(0, int((time.monotonic() - t_start) * 1000))
-    response.headers["X-Trace-Id"] = trace_id
-    if getattr(request.state, "writing_policy_body_limit_rejected", False):
-        return response
-    logger.info(
-        "traceId=%s method=%s path=%s status=%s durationMs=%s",
-        trace_id,
-        request.method,
-        request.url.path,
-        response.status_code,
-        duration_ms,
-    )
-    return response
+    return finish_response(response)
 
 
 app.add_middleware(

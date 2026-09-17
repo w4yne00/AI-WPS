@@ -60,6 +60,26 @@ def _positive_int_from_env(name: str, default: int) -> int:
     return value if value > 0 else default
 
 
+def _phase_durations_ms(
+    durations: Dict[str, float],
+    elapsed_ms: int,
+    remainder_phase: Optional[str] = None,
+) -> Dict[str, int]:
+    converted = {
+        phase: int(max(duration, 0.0) * 1000)
+        for phase, duration in durations.items()
+    }
+    remainder_ms = elapsed_ms - sum(converted.values())
+    if remainder_ms > 0 and converted:
+        target_phase = (
+            remainder_phase
+            if remainder_phase in converted
+            else next(reversed(converted))
+        )
+        converted[target_phase] += remainder_ms
+    return converted
+
+
 class LongTaskCoordinator:
     """Bounded in-memory coordinator for blocking long-running task runners."""
 
@@ -214,6 +234,7 @@ class LongTaskCoordinator:
                 "_updatedMonotonic": now_mono,
                 "_phaseStartedMonotonic": now_mono,
                 "_phaseDurations": {},
+                "_lastTimedPhase": phase,
                 "_terminalAtMonotonic": None,
                 "_runner": runner,
                 "_snapshot": deepcopy(snapshot),
@@ -605,6 +626,33 @@ class LongTaskCoordinator:
                             current["_metrics"] = {}
                         current["_metrics"][name] = milliseconds
 
+            def record_provider_attempt(ctrl_self, attempt_metrics: Dict) -> None:
+                with self._lock:
+                    current = self._jobs.get(job_key)
+                    if current is None:
+                        return
+                    metrics = current.setdefault("_metrics", {})
+                    metrics["providerAttempts"] = int(
+                        metrics.get("providerAttempts", 0)
+                    ) + 1
+                    for name in (
+                        "providerHeadersMs",
+                        "providerFirstVisibleMs",
+                        "providerCompleteMs",
+                        "parseMs",
+                    ):
+                        value = attempt_metrics.get(name)
+                        if isinstance(value, int) and not isinstance(value, bool):
+                            previous = metrics.get(name)
+                            metrics[name] = (
+                                previous + value
+                                if isinstance(previous, int)
+                                and not isinstance(previous, bool)
+                                else value
+                            )
+                        elif name not in metrics:
+                            metrics[name] = None
+
             def cancel_requested(ctrl_self) -> bool:
                 with self._lock:
                     current = self._jobs.get(job_key)
@@ -853,6 +901,7 @@ class LongTaskCoordinator:
                 now_mono - phase_started,
                 0.0,
             )
+            job["_lastTimedPhase"] = current_phase
         job["phase"] = phase
         job["_phaseStartedMonotonic"] = now_mono
         job["_updatedMonotonic"] = now_mono
@@ -930,10 +979,16 @@ class LongTaskCoordinator:
         effective_phase = "failed" if is_invalidated else job["phase"]
         elapsed_ms = int(max(elapsed_until - job["_createdMonotonic"], 0.0) * 1000)
         phase_elapsed_ms = int(max(phase_elapsed, 0.0) * 1000)
-        phase_durations_ms = {
-            phase: int(max(duration, 0.0) * 1000)
-            for phase, duration in durations.items()
-        }
+        remainder_phase = (
+            job.get("phase")
+            if terminal_at is None
+            else job.get("_lastTimedPhase")
+        )
+        phase_durations_ms = _phase_durations_ms(
+            durations,
+            elapsed_ms,
+            remainder_phase=remainder_phase,
+        )
         queue_wait_ms = phase_durations_ms.get("queued", 0)
         metrics = deepcopy(job.get("_metrics", {}))
         public_job = {
@@ -997,11 +1052,12 @@ class LongTaskCoordinator:
             phase: int(max(duration, 0.0))
             for phase, duration in job.get("_phaseDurations", {}).items()
         }
-        durations_ms = {
-            phase: int(max(duration, 0.0) * 1000)
-            for phase, duration in job.get("_phaseDurations", {}).items()
-        }
         elapsed_ms = int(max(elapsed_until - job["_createdMonotonic"], 0.0) * 1000)
+        durations_ms = _phase_durations_ms(
+            job.get("_phaseDurations", {}),
+            elapsed_ms,
+            remainder_phase=job.get("_lastTimedPhase"),
+        )
         queue_wait_ms = durations_ms.get("queued", 0)
         return {
             "jobId": job["jobId"],

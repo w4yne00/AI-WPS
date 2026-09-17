@@ -686,6 +686,76 @@ class LongTaskCoordinatorTests(unittest.TestCase):
             completed_second["elapsedMs"] // 1000,
         )
 
+    def test_submillisecond_phases_conserve_terminal_elapsed_ms(self):
+        fake_mono = FakeClock(100.0)
+        coordinator = LongTaskCoordinator(
+            max_running=1,
+            max_queued=1,
+            monotonic_clock=fake_mono,
+        )
+
+        def runner(_snapshot, control):
+            fake_mono.advance(0.0009)
+            control("provider_processing")
+            fake_mono.advance(0.0009)
+            return {"ok": True}
+
+        coordinator.submit(
+            job_id="submillisecond-job",
+            trace_id="trace-submillisecond",
+            task_type="word.smart_write",
+            runner=runner,
+            snapshot={},
+            failure_code="SUBMILLISECOND_FAILED",
+            failure_message="submillisecond failed",
+        )
+
+        completed = coordinator.wait("submillisecond-job")
+        self.assertGreater(completed["elapsedMs"], 0)
+        self.assertEqual(
+            sum(completed["phaseDurationsMs"].values()),
+            completed["elapsedMs"],
+        )
+
+        recent = coordinator.diagnostics()["recentTerminalJobs"][0]
+        self.assertEqual(
+            sum(recent["phaseDurationsMs"].values()),
+            recent["elapsedMs"],
+        )
+
+    def test_rounding_remainder_follows_last_executed_phase(self):
+        fake_mono = FakeClock(100.0)
+        coordinator = LongTaskCoordinator(
+            max_running=1,
+            max_queued=1,
+            monotonic_clock=fake_mono,
+        )
+
+        def runner(_snapshot, control):
+            fake_mono.advance(0.0004)
+            control("provider_processing")
+            fake_mono.advance(0.0004)
+            control("retrying")
+            fake_mono.advance(0.0004)
+            control("provider_processing")
+            fake_mono.advance(0.0004)
+            return {"ok": True}
+
+        coordinator.submit(
+            job_id="phase-revisit-job",
+            trace_id="trace-phase-revisit",
+            task_type="word.smart_write",
+            runner=runner,
+            snapshot={},
+            failure_code="PHASE_REVISIT_FAILED",
+            failure_message="phase revisit failed",
+        )
+
+        completed = coordinator.wait("phase-revisit-job")
+        self.assertEqual(completed["elapsedMs"], 1)
+        self.assertEqual(completed["phaseDurationsMs"]["provider_processing"], 1)
+        self.assertEqual(completed["phaseDurationsMs"]["retrying"], 0)
+
     def test_execution_control_records_metrics_and_cancel_state(self):
         fake_mono = FakeClock(200.0)
         coordinator = LongTaskCoordinator(

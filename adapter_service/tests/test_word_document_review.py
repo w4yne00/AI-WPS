@@ -81,6 +81,7 @@ class RecordingDocumentReviewProvider:
         document_type: str,
         review_prompt: str,
         writing_policy_block: str,
+        progress_callback=None,
     ) -> dict:
         self.calls.append(
             {
@@ -116,6 +117,7 @@ class PolicyAwareDocumentReviewProvider(RecordingDocumentReviewProvider):
         document_type: str,
         review_prompt: str,
         writing_policy_block: str,
+        progress_callback=None,
     ) -> dict:
         result = super().document_review(
             text,
@@ -147,6 +149,7 @@ class TimeoutDocumentReviewProvider:
         document_type: str,
         review_prompt: str,
         writing_policy_block: str,
+        progress_callback=None,
     ) -> dict:
         record_provider_debug(
             {
@@ -173,6 +176,7 @@ class BlockingDocumentReviewProvider:
         document_type: str,
         review_prompt: str,
         writing_policy_block: str,
+        progress_callback=None,
     ) -> dict:
         self.call_count += 1
         self.started.set()
@@ -212,6 +216,7 @@ class SnapshotDocumentReviewProvider:
         review_prompt: str,
         writing_policy_block: str,
         task_auth=None,
+        progress_callback=None,
     ) -> dict:
         self.calls.append(
             {
