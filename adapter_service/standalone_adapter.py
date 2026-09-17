@@ -1515,6 +1515,16 @@ class Handler(BaseHTTPRequestHandler):
     def _read_writing_policy_json_body(self):
         return self._read_writing_policy_body(preview=False)
 
+    def handle_one_request(self):
+        self._req_start_time = time.monotonic()
+        super().handle_one_request()
+
+    def log_request(self, code="-", size="-"):
+        duration_ms = 0
+        if hasattr(self, "_req_start_time"):
+            duration_ms = max(0, int((time.monotonic() - self._req_start_time) * 1000))
+        self.log_message('"%s" %s %s durationMs=%s', self.requestline, str(code), str(size), duration_ms)
+
     def log_message(self, fmt, *args):
         sys.stdout.write(fmt % args + "\n")
         sys.stdout.flush()
@@ -1863,7 +1873,16 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/provider/debug-last":
-            self._write(200, envelope("standalone-provider-debug-last", "provider.debug_last", get_last_provider_debug()))
+            query_params = parse_qs(parsed.query, keep_blank_values=True)
+            requested_trace_id = query_params.get("traceId", [None])[0]
+            self._write(
+                200,
+                envelope(
+                    requested_trace_id or "standalone-provider-debug-last",
+                    "provider.debug_last",
+                    get_last_provider_debug(trace_id=requested_trace_id),
+                ),
+            )
             return
 
         writing_job_routes = (

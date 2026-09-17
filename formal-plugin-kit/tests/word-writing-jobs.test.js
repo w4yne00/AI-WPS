@@ -14,7 +14,11 @@ const source = fs.readFileSync(path.join(root, "taskpane.js"), "utf8");
   "pollWritingJob",
   "cancelQueuedWritingJob",
   "clientJobId",
-  "?resume=1"
+  "?resume=1",
+  "clickToFeedbackMs",
+  "clickToAdapterAcceptedMs",
+  "completionToFirstRenderMs",
+  "lastTaskPerformance"
 ].forEach((marker) => assert.ok(source.includes(marker), `missing ${marker}`));
 
 assert.ok(!source.includes('request("/word/smart-write", state.latestDocumentPayload)'));

@@ -969,6 +969,67 @@ class DirectModelProviderTests(unittest.TestCase):
             get_last_provider_debug()["taskType"], "word.document_review.full"
         )
 
+    def test_blocking_direct_call_records_performance_metrics_with_null_first_visible(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            client = self._client(root)
+            auth = client.resolve_task_auth("word.smart_write")
+
+            recorded_metrics = {}
+
+            class MockControl:
+                def __call__(self, phase):
+                    pass
+
+                def record_metric(self, name, value):
+                    recorded_metrics[name] = value
+
+                def cancel_requested(self):
+                    return False
+
+            control = MockControl()
+            fake_response_body = {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "这是改写后的正文内容。",
+                        },
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"total_tokens": 50},
+            }
+
+            with patch(
+                "urllib.request.urlopen",
+                return_value=FakeResponse(fake_response_body),
+            ):
+                result = client.smart_write(
+                    "原始测试文本",
+                    "rewrite",
+                    "trace-perf-test",
+                    task_auth=auth,
+                    progress_callback=control,
+                )
+
+            self.assertEqual(result["rewrittenText"], "这是改写后的正文内容。")
+            self.assertIn("providerHeadersMs", recorded_metrics)
+            self.assertIn("providerCompleteMs", recorded_metrics)
+            self.assertIn("parseMs", recorded_metrics)
+            self.assertIn("providerFirstVisibleMs", recorded_metrics)
+            self.assertIsNone(recorded_metrics["providerFirstVisibleMs"])
+            self.assertIsInstance(recorded_metrics["providerHeadersMs"], int)
+            self.assertIsInstance(recorded_metrics["providerCompleteMs"], int)
+            self.assertIsInstance(recorded_metrics["parseMs"], int)
+
+            debug = get_last_provider_debug()
+            perf = debug.get("performance", {})
+            self.assertEqual(perf.get("providerHeadersMs"), recorded_metrics["providerHeadersMs"])
+            self.assertEqual(perf.get("providerCompleteMs"), recorded_metrics["providerCompleteMs"])
+            self.assertIsNone(perf.get("providerFirstVisibleMs"))
+            self.assertNotIn("原始测试文本", json.dumps(debug, ensure_ascii=False))
+
 
 if __name__ == "__main__":
     unittest.main()

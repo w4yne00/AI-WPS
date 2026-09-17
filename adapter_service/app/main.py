@@ -1,3 +1,5 @@
+import time
+
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -391,29 +393,34 @@ async def log_requests(request: Request, call_next):
             )
             response.headers["X-Trace-Id"] = trace_id
             return response
+    t_start = time.monotonic()
     try:
         response = await call_next(request)
     except Exception:
+        duration_ms = max(0, int((time.monotonic() - t_start) * 1000))
         if not getattr(
             request.state, "writing_policy_body_limit_rejected", False
         ):
             logger.exception(
-                "traceId=%s method=%s path=%s status=500",
+                "traceId=%s method=%s path=%s status=500 durationMs=%s",
                 trace_id,
                 request.method,
                 request.url.path,
+                duration_ms,
             )
         raise
 
+    duration_ms = max(0, int((time.monotonic() - t_start) * 1000))
     response.headers["X-Trace-Id"] = trace_id
     if getattr(request.state, "writing_policy_body_limit_rejected", False):
         return response
     logger.info(
-        "traceId=%s method=%s path=%s status=%s",
+        "traceId=%s method=%s path=%s status=%s durationMs=%s",
         trace_id,
         request.method,
         request.url.path,
         response.status_code,
+        duration_ms,
     )
     return response
 

@@ -4190,10 +4190,17 @@
       lines.push("- 拒绝数：" + (longTasks.rejectedCount || 0));
       lines.push("- 超时数：" + (longTasks.timedOutCount || 0));
       (longTasks.recentTerminalJobs || []).forEach(function (job) {
+        var elapsedDesc = (typeof job.elapsedMs === "number")
+          ? (job.elapsedMs + " ms（" + (job.elapsedSeconds || 0) + " 秒）")
+          : ((job.elapsedSeconds || 0) + " 秒");
+        var queueDesc = (typeof job.queueWaitMs === "number")
+          ? ("，排队 " + job.queueWaitMs + " ms")
+          : "";
         lines.push(
-          "- 最近任务 " + (job.taskType || "未记录") +
+          "- 最近任务 " + (job.taskType || job.jobId || "未记录") +
           "：" + (job.status || "未记录") +
-          "，耗时 " + (job.elapsedSeconds || 0) + " 秒" +
+          "，耗时 " + elapsedDesc +
+          queueDesc +
           (job.errorCode ? "，错误码 " + job.errorCode : "")
         );
       });

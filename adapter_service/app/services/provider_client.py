@@ -55,7 +55,9 @@ logger = get_logger(__name__)
 LOCAL_KEY_PATH = Path(__file__).resolve().parents[3] / "run" / "provider_api_key"
 ROUTE_KEY_DIR = Path(__file__).resolve().parents[3] / "run" / "provider_api_keys"
 _LAST_PROVIDER_DEBUG: Dict = {}
+_TRACE_PROVIDER_DEBUG: Dict[str, Dict] = {}
 _LAST_PROVIDER_DEBUG_LOCK = threading.Lock()
+_MAX_TRACE_DEBUG_ITEMS = 50
 DOCUMENT_REVIEW_TIMEOUT_SECONDS = 1800
 EXCEL_ANALYSIS_TIMEOUT_SECONDS = DOCUMENT_REVIEW_TIMEOUT_SECONDS
 EXCEL_FORMULA_ASSISTANT_TIMEOUT_SECONDS = EXCEL_ANALYSIS_TIMEOUT_SECONDS
@@ -894,6 +896,7 @@ def _missing_final_content_error(finish_reason: str) -> AdapterError:
 def reset_provider_debug() -> None:
     with _LAST_PROVIDER_DEBUG_LOCK:
         _LAST_PROVIDER_DEBUG.clear()
+        _TRACE_PROVIDER_DEBUG.clear()
 
 
 def _project_smart_fill_debug(event: Dict) -> Dict:
@@ -908,6 +911,17 @@ def _project_smart_fill_debug(event: Dict) -> Dict:
         debug["attemptCount"] = event["attemptCount"]
     if "compatibilityFallback" in event:
         debug["compatibilityFallback"] = event["compatibilityFallback"]
+
+    perf = event.get("performance")
+    if isinstance(perf, dict):
+        safe_perf = {}
+        for key in ("providerHeadersMs", "providerFirstVisibleMs", "providerCompleteMs", "parseMs"):
+            if key in perf:
+                val = perf[key]
+                if val is None or (isinstance(val, int) and not isinstance(val, bool) and val >= 0):
+                    safe_perf[key] = val
+        if safe_perf:
+            debug["performance"] = safe_perf
 
     request_info = event.get("request", {})
     if isinstance(request_info, dict):
@@ -987,15 +1001,30 @@ def _project_smart_fill_debug(event: Dict) -> Dict:
 def record_provider_debug(event: Dict) -> None:
     if event.get("taskType") == "excel.smart_fill":
         debug = _project_smart_fill_debug(event)
+        trace_id = str(debug.get("traceId", "")).strip()
         with _LAST_PROVIDER_DEBUG_LOCK:
             _LAST_PROVIDER_DEBUG.clear()
             _LAST_PROVIDER_DEBUG.update(debug)
+            if trace_id:
+                _TRACE_PROVIDER_DEBUG[trace_id] = deepcopy(debug)
+                while len(_TRACE_PROVIDER_DEBUG) > _MAX_TRACE_DEBUG_ITEMS:
+                    _TRACE_PROVIDER_DEBUG.pop(next(iter(_TRACE_PROVIDER_DEBUG)), None)
         return
     debug = {
         "traceId": event.get("traceId", ""),
         "taskType": event.get("taskType", ""),
         "url": event.get("url", ""),
     }
+    perf = event.get("performance")
+    if isinstance(perf, dict):
+        safe_perf = {}
+        for key in ("providerHeadersMs", "providerFirstVisibleMs", "providerCompleteMs", "parseMs"):
+            if key in perf:
+                val = perf[key]
+                if val is None or (isinstance(val, int) and not isinstance(val, bool) and val >= 0):
+                    safe_perf[key] = val
+        if safe_perf:
+            debug["performance"] = safe_perf
     request_info = event.get("request", {})
     if isinstance(request_info, dict):
         body = request_info.get("body", {})
@@ -1062,6 +1091,11 @@ def record_provider_debug(event: Dict) -> None:
     with _LAST_PROVIDER_DEBUG_LOCK:
         _LAST_PROVIDER_DEBUG.clear()
         _LAST_PROVIDER_DEBUG.update(debug)
+        trace_id = str(debug.get("traceId", "")).strip()
+        if trace_id:
+            _TRACE_PROVIDER_DEBUG[trace_id] = deepcopy(debug)
+            while len(_TRACE_PROVIDER_DEBUG) > _MAX_TRACE_DEBUG_ITEMS:
+                _TRACE_PROVIDER_DEBUG.pop(next(iter(_TRACE_PROVIDER_DEBUG)), None)
 
 
 def merge_provider_debug(trace_id: str, patch: Dict) -> None:
@@ -1097,13 +1131,16 @@ def merge_provider_debug(trace_id: str, patch: Dict) -> None:
         sanitized["writingPolicyItemIds"] = safe_ids
 
     with _LAST_PROVIDER_DEBUG_LOCK:
-        if _LAST_PROVIDER_DEBUG.get("traceId") != trace_id:
-            return
-        _LAST_PROVIDER_DEBUG.update(sanitized)
+        if _LAST_PROVIDER_DEBUG.get("traceId") == trace_id:
+            _LAST_PROVIDER_DEBUG.update(sanitized)
+        if trace_id in _TRACE_PROVIDER_DEBUG:
+            _TRACE_PROVIDER_DEBUG[trace_id].update(sanitized)
 
 
-def get_last_provider_debug() -> Dict:
+def get_last_provider_debug(trace_id: Optional[str] = None) -> Dict:
     with _LAST_PROVIDER_DEBUG_LOCK:
+        if trace_id and trace_id in _TRACE_PROVIDER_DEBUG:
+            return deepcopy(_TRACE_PROVIDER_DEBUG[trace_id])
         return deepcopy(_LAST_PROVIDER_DEBUG)
 
 
@@ -2909,6 +2946,7 @@ class ProviderClient:
         input_token_limit: Optional[int] = None,
         image_files: Optional[List[Dict]] = None,
         allow_response_format_fallback: bool = False,
+        progress_callback=None,
     ) -> Dict:
         if prompt_asset is None:
             try:
@@ -3006,9 +3044,12 @@ class ProviderClient:
                 "X-Trace-Id": trace_id,
             },
         )
+        t_start = time.monotonic()
         try:
             with urllib_request.urlopen(req, timeout=timeout) as response:
+                t_headers = time.monotonic()
                 raw_body = response.read().decode("utf-8")
+                t_complete = time.monotonic()
                 try:
                     body = json.loads(raw_body)
                 except json.JSONDecodeError as exc:
@@ -3017,6 +3058,16 @@ class ProviderClient:
                         "模型后台返回了无法解析的结果。",
                         status_code=502,
                     ) from exc
+                t_parse = time.monotonic()
+                perf_metrics = {
+                    "providerHeadersMs": max(0, int((t_headers - t_start) * 1000)),
+                    "providerFirstVisibleMs": None,
+                    "providerCompleteMs": max(0, int((t_complete - t_start) * 1000)),
+                    "parseMs": max(0, int((t_parse - t_complete) * 1000)),
+                }
+                if progress_callback is not None and hasattr(progress_callback, "record_metric") and callable(getattr(progress_callback, "record_metric")):
+                    for k, v in perf_metrics.items():
+                        progress_callback.record_metric(k, v)
                 choices = body.get("choices") if isinstance(body, dict) else None
                 choice = (
                     choices[0]
@@ -3040,6 +3091,7 @@ class ProviderClient:
                             "url": url,
                             **debug_metadata,
                             "validation": safe_validation,
+                            "performance": perf_metrics,
                             "response": {
                                 "status": getattr(response, "status", 200),
                                 "body": {"answer": "", **response_diagnostics},
@@ -3063,6 +3115,7 @@ class ProviderClient:
                         "url": url,
                         **debug_metadata,
                         "validation": safe_validation,
+                        "performance": perf_metrics,
                         "response": {
                             "status": getattr(response, "status", 200),
                             "body": normalized,
@@ -3071,6 +3124,16 @@ class ProviderClient:
                 )
                 return normalized
         except error.HTTPError as exc:
+            t_err = time.monotonic()
+            perf_metrics = {
+                "providerHeadersMs": max(0, int((t_err - t_start) * 1000)),
+                "providerFirstVisibleMs": None,
+                "providerCompleteMs": max(0, int((t_err - t_start) * 1000)),
+                "parseMs": 0,
+            }
+            if progress_callback is not None and hasattr(progress_callback, "record_metric") and callable(getattr(progress_callback, "record_metric")):
+                for k, v in perf_metrics.items():
+                    progress_callback.record_metric(k, v)
             status = int(exc.code)
             raw_error_body = _read_http_error_raw(exc)
             body_preview = _sanitize_provider_error_body(
@@ -3085,6 +3148,7 @@ class ProviderClient:
                     "url": url,
                     **debug_metadata,
                     "validation": safe_validation,
+                    "performance": perf_metrics,
                     "error": {
                         "type": "HTTPError",
                         "status": status,
@@ -3110,6 +3174,7 @@ class ProviderClient:
                     input_token_limit=input_token_limit,
                     image_files=image_files,
                     allow_response_format_fallback=False,
+                    progress_callback=progress_callback,
                 )
             if status in (401, 403):
                 raise ProviderAuthError("模型后台认证失败，请检查当前配置的 API Key。") from exc
@@ -3155,6 +3220,7 @@ class ProviderClient:
         image_files: Optional[List[Dict]] = None,
         response_format: Optional[Dict] = None,
         allow_response_format_fallback: bool = False,
+        progress_callback=None,
     ) -> Dict:
         resolved_task_auth = task_auth if task_auth is not None else self.resolve_task_auth(task_type)
         timeout = timeout_seconds or self.settings.timeout_seconds
@@ -3175,6 +3241,7 @@ class ProviderClient:
                 image_files=image_files,
                 response_format=response_format,
                 allow_response_format_fallback=allow_response_format_fallback,
+                progress_callback=progress_callback,
             )
         provider_base_url = str(
             resolved_task_auth.get("providerBaseUrl") or self.settings.provider_base_url.rstrip("/")
@@ -3275,12 +3342,25 @@ class ProviderClient:
                     "X-Trace-Id": trace_id,
                 },
             )
+            t_start = time.monotonic()
             try:
                 with urllib_request.urlopen(req, timeout=timeout) as response:
+                    t_headers = time.monotonic()
                     raw_body = response.read().decode("utf-8")
+                    t_complete = time.monotonic()
                     try:
                         body = json.loads(raw_body)
                     except json.JSONDecodeError as exc:
+                        t_parse = time.monotonic()
+                        perf_metrics = {
+                            "providerHeadersMs": max(0, int((t_headers - t_start) * 1000)),
+                            "providerFirstVisibleMs": None,
+                            "providerCompleteMs": max(0, int((t_complete - t_start) * 1000)),
+                            "parseMs": max(0, int((t_parse - t_complete) * 1000)),
+                        }
+                        if progress_callback is not None and hasattr(progress_callback, "record_metric") and callable(getattr(progress_callback, "record_metric")):
+                            for k, v in perf_metrics.items():
+                                progress_callback.record_metric(k, v)
                         record_provider_debug(
                             {
                                 "traceId": trace_id,
@@ -3293,6 +3373,7 @@ class ProviderClient:
                                     if compatibility_error
                                     else {}
                                 ),
+                                "performance": perf_metrics,
                                 "request": {"body": route_payload},
                                 "error": {
                                     "type": "JSONDecodeError",
@@ -3309,6 +3390,16 @@ class ProviderClient:
                         raise ProviderUnavailableError(
                             "Enterprise AI returned a non-JSON response."
                         ) from exc
+                    t_parse = time.monotonic()
+                    perf_metrics = {
+                        "providerHeadersMs": max(0, int((t_headers - t_start) * 1000)),
+                        "providerFirstVisibleMs": None,
+                        "providerCompleteMs": max(0, int((t_complete - t_start) * 1000)),
+                        "parseMs": max(0, int((t_parse - t_complete) * 1000)),
+                    }
+                    if progress_callback is not None and hasattr(progress_callback, "record_metric") and callable(getattr(progress_callback, "record_metric")):
+                        for k, v in perf_metrics.items():
+                            progress_callback.record_metric(k, v)
                     _PROVIDER_INPUT_MODE_CACHE[cache_key] = input_mode
                     resolved_task_auth["providerInputMode"] = input_mode
                     record_provider_debug(
@@ -3323,6 +3414,7 @@ class ProviderClient:
                                 if compatibility_error
                                 else {}
                             ),
+                            "performance": perf_metrics,
                             "request": {"body": route_payload},
                             "response": {
                                 "status": getattr(response, "status", 200),
@@ -3332,6 +3424,16 @@ class ProviderClient:
                     )
                     return body
             except error.HTTPError as exc:
+                t_err = time.monotonic()
+                perf_metrics = {
+                    "providerHeadersMs": max(0, int((t_err - t_start) * 1000)),
+                    "providerFirstVisibleMs": None,
+                    "providerCompleteMs": max(0, int((t_err - t_start) * 1000)),
+                    "parseMs": 0,
+                }
+                if progress_callback is not None and hasattr(progress_callback, "record_metric") and callable(getattr(progress_callback, "record_metric")):
+                    for k, v in perf_metrics.items():
+                        progress_callback.record_metric(k, v)
                 error_body = _read_http_error_body(
                     exc,
                     query=query,
@@ -3357,6 +3459,7 @@ class ProviderClient:
                             if compatibility_error
                             else {}
                         ),
+                        "performance": perf_metrics,
                         "request": {"body": route_payload},
                         "error": error_info,
                     }
@@ -4838,6 +4941,7 @@ class ProviderClient:
                 self.settings.timeout_seconds, INTERACTIVE_WRITING_TIMEOUT_SECONDS
             ),
             task_auth=resolved_task_auth,
+            progress_callback=progress_callback,
         )
 
         if progress_callback:
@@ -4903,6 +5007,7 @@ class ProviderClient:
                 self.settings.timeout_seconds, INTERACTIVE_WRITING_TIMEOUT_SECONDS
             ),
             task_auth=resolved_task_auth,
+            progress_callback=progress_callback,
         )
         if progress_callback:
             progress_callback("parsing")

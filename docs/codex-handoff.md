@@ -1,5 +1,22 @@
 # Codex Handoff - AI-WPS
 
+## 当前功能实现：Issue #202 建立毫秒级性能诊断（2026-09-17）
+
+- **毫秒级阶段与耗时暴露**：遵循 ADR-0132 与 Issue #202 验收标准，`LongTaskCoordinator` 在保留现有秒级 `elapsedSeconds`、`phaseElapsedSeconds` 兼容字段的同时，新增毫秒级单调耗时指标 `elapsedMs`、`phaseElapsedMs`、`phaseDurationsMs`（阶段细分耗时字典）和 `queueWaitMs`（排队等待时长）；终态诊断输出与 `/jobs/{id}` 轮询响应完全对齐。
+- **直连模型调用耗时分解**：`ProviderClient` 记录阻塞模型调用的完整网络阶段耗时，包括响应头到达 `providerHeadersMs`、完整响应体接收完成 `providerCompleteMs`、JSON 响应解析 `parseMs`；首个可见内容延迟 `providerFirstVisibleMs` 严格记录为 `null`（绝不伪造非流式首包时间）。指标同时记录至长任务协调器与调试记录中。
+- **按 traceId 隔离的脱敏诊断**：直连模型调试信息新增支持按 `traceId` 隔离索引（最多保留 50 条），`/provider/debug-last?traceId=...` 端点支持按任务 trace 查询上游调用诊断，消除单槽位竞态；继续严守零用户正文、零提示词、零增量内容、零 API Key、零本地绝对路径的脱敏规范。
+- **FastAPI 与 Standalone 行为一致**：Standalone Adapter 的 HTTP 访问日志与 FastAPI 中间件统一记录请求耗时 `durationMs`；公开端点及响应结构保持绝对等价。
+- **前端任务窗格性能度量**：Word 任务窗格在 `state.lastTaskPerformance` 记录用户操作全链路毫秒级耗时：点击到本地视觉反馈 `clickToFeedbackMs`、点击到 Adapter 接受请求 `clickToAdapterAcceptedMs`、完成到首渲染 `completionToFirstRenderMs`；高级诊断面板以脱敏方式展示上述端到端指标，并在 Word、Excel、PPT 三大宿主统一规范终态耗时显示格式。
+- **验证**：全量后端测试（1386 passed, 54 skipped）、正式插件套件（231 passed）、Python 3.8 兼容性检查（172 文件）、`git diff --check` 全部通过。
+
+## 当前设计：交互文本流式与任务窗性能优化（2026-09-17，待实施）
+
+- 已基于远端 `main` 提交 `50aa6abe4b12` 完成只读性能审计，并与用户确认设计树；当前只新增领域术语、ADR 和实施计划，尚未修改业务代码。
+- 决策：保留后台任务及轮询恢复，以毫秒级观测和 WPS COM/JSAPI 分片为 P0；首期只为模型直连的 Word 智能编写、智能仿写提供带序号长轮询增量预览和真实上游响应取消。
+- 增量正文仅作内存只读预览，可查看、复制，不进入历史、不写回；工作流平台和结构化任务首期不展示残缺输出。
+- 架构决策见 `docs/adr/0132-preserve-background-jobs-while-streaming-interactive-text.md`，可执行任务见 `docs/superpowers/plans/2026-09-17-ai-wps-interactive-streaming-performance-plan.md`。
+- 首个候选版以 `AI_WPS_ENABLE_DIRECT_STREAMING=1` 显式启用；麒麟 V10、WPS 12.1.2 真机指标通过前不得改为默认开启。
+
 ## 当前修复：Excel 点击反馈与智能填写只读预览（2026-09-17）
 
 - Excel 工作簿会话不再依赖代理对象上的随机属性：已保存路径、未保存窗口句柄及保存/另存为别名共同维护同一打开期身份；同一工作簿的新代理、多窗口和首次保存保持任务归属，重新打开旧路径仍与另存后的工作簿隔离。

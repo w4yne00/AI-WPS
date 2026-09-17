@@ -26,6 +26,13 @@ function taskDiagnostics() {
       taskType: "ppt.slide_assistant",
       status: "failed",
       elapsedSeconds: 42,
+      elapsedMs: 42350,
+      queueWaitMs: 350,
+      metrics: {
+        providerHeadersMs: 120,
+        providerCompleteMs: 850,
+        parseMs: 25
+      },
       errorCode: "PROVIDER_TIMEOUT",
       apiKey: "recent-terminal-secret",
       fileName: "完整上传文件名-近期终态.docx"
@@ -76,7 +83,8 @@ function assertSanitized(text) {
     "取消数：5",
     "拒绝数：6",
     "超时数：7",
-    "耗时 42 秒",
+    "42",
+    "42350",
     "PROVIDER_TIMEOUT"
   ].forEach((token) => assert.ok(text.includes(token), `missing ${token}`));
   [

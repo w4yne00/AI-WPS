@@ -83,6 +83,17 @@ class HealthApiTests(unittest.TestCase):
         self.assertIn("taskRouteConfiguredCount", data)
         self.assertIn("providerAuthSource", data)
 
+    def test_http_request_logs_duration_ms(self) -> None:
+        client = TestClient(app)
+        with patch("app.main.logger.info") as mock_info:
+            response = client.get("/health")
+            self.assertEqual(response.status_code, 200)
+            logged_formats = [call.args[0] for call in mock_info.call_args_list if call.args]
+            self.assertTrue(
+                any("durationMs=%s" in fmt or "durationMs=" in fmt for fmt in logged_formats),
+                "HTTP request log format must include durationMs=%s",
+            )
+
     def test_live_health_does_not_read_business_subsystems(self) -> None:
         client = TestClient(app)
 
