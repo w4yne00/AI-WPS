@@ -16,10 +16,10 @@ Product page: [English](https://w4yne00.github.io/AI-WPS/en.html) · [中文](ht
 | Version rule number | `AI-WPS-WORD-EXCEL-PPT-0.26.0-preview.1` |
 | Phase | `P1` platform foundation + Word + Excel + PPT |
 | Runtime target | Kylin V10 ARM, Python 3.8, WPS native JS add-in |
-| Delivery status | Issue #153 automated candidate `20260909-487830e` is recorded as `candidate`; Issue #154 target-machine acceptance remains `manual-pending` |
+| Delivery status | Automated candidate `20260917-e3b896c` is recorded as `candidate`; Issue #154 target-machine acceptance remains `manual-pending` |
 | Baseline | `v0.25.3-alpha` target-machine acceptance is `target-accepted` under Issue #59 |
 
-`v0.26.0-preview.1` aggregates source-first Excel Smart Fill, automatic/manual/suspected TOC handling and location-grouped format issues in Word, plus compact model-configuration entries for all nine tasks. The current automated candidate is [`ai-wps-delivery-20260909-487830e-v0260-preview1.tar.gz`](./dist-preview-delivery-kit/ai-wps-delivery-20260909-487830e-v0260-preview1.tar.gz), built from source commit `487830eb618b0c6d93bafdbff7a23ca6e6e04d7e` with SHA-256 `7d798d43cdfea0dda124ecf5e6fe3081149d866812f379db1f380ccd1b0a5e2d`. It still requires Issue #154 target-machine acceptance and does not claim real WPS or model acceptance. The accepted `v0.25.3-alpha` baseline remains recorded under Issue #59.
+`v0.26.0-preview.1` aggregates stable Excel task feedback, output-only Smart Fill previews, automatic/manual/suspected TOC handling and location-grouped format issues in Word, plus compact model-configuration entries for all nine tasks. The current automated candidate is [`ai-wps-delivery-20260917-e3b896c-v0260-preview1.tar.gz`](./dist-preview-delivery-kit/ai-wps-delivery-20260917-e3b896c-v0260-preview1.tar.gz), built from source commit `e3b896cb681e49403315c99a718f173f048de5a0` with SHA-256 `bb456786181070fb01ea042b52607b8fd3b9217bf081d99af0679603d50daf6d`. It still requires Issue #154 target-machine acceptance and does not claim real WPS or model acceptance. The accepted `v0.25.3-alpha` baseline remains recorded under Issue #59.
 
 Version rule: `AI-WPS-P{phase}-{scope}-{major.minor.patch}-{yyyymmdd}`. Major is a compatibility boundary, minor is user-visible capability, patch covers fixes, UI, packaging, and docs.
 
@@ -27,7 +27,7 @@ Version rule: `AI-WPS-P{phase}-{scope}-{major.minor.patch}-{yyyymmdd}`. Major is
 
 | Version | Summary |
 | --- | --- |
-| `v0.26.0-preview.1` | Source-first Smart Fill; automatic/manual/suspected TOC handling; location-grouped format issues; compact model entries for nine tasks |
+| `v0.26.0-preview.1` | Stable Excel task feedback; output-only Smart Fill preview/copy; automatic/manual/suspected TOC handling; location-grouped format issues; compact model entries for nine tasks |
 | `v0.25.3-alpha` | Result preview; format-issue cards; caption-association conclusions; slide page roles |
 | `v0.25.2-alpha` | Image-semantics supplement default-on with visual-off degrade; PPT Chinese template title recognition |
 | `v0.25.1-alpha` | Format-review v2 JS/Python hash contract; allowlist assembly; Python 3.8 lifecycle gate |
@@ -37,7 +37,7 @@ Frozen kits: `v0.25.2-alpha` candidate `20260825-850871c` (SHA-256 `c5d663d12491
 
 ## Features
 
-Word, Excel, and PPT ship as separate add-ins so Ribbon buttons never cross-display. Model output is previewed before any write-back. Review and analysis tasks are read-only by default.
+Word, Excel, and PPT ship as separate add-ins so Ribbon buttons never cross-display. Model output is previewed before any supported write-back. Review, analysis, formula, Smart Fill, and PPT tasks are read-only.
 
 | Host | Entry | Notes |
 | --- | --- | --- |
@@ -48,7 +48,7 @@ Word, Excel, and PPT ship as separate add-ins so Ribbon buttons never cross-disp
 | Word | Writing policy | Four preset packs plus a local organization library |
 | Excel | 智能分析 | Selected or used range; structured report and briefing paragraph; no cell writes |
 | Excel | 公式助手 | Explicit selection (max 30×20); generate or explain; copy only |
-| Excel | 智能填写 | One header-bearing rectangular source (max 500 data rows), source-first address-free preview, then a guarded same-sheet single-column write target; no undo |
+| Excel | 智能填写 | One header-bearing rectangular source (max 500 data rows); Markdown preview and tab-separated copy only; users paste results manually |
 | PPT | 智能总结 | Current slide, or one `.md` / `.docx` (≤10 MB) for a full-deck outline; preview and copy only |
 | PPT | 结构审查 | Up to 60 slides; 幻灯片页角色 list; read-only |
 
@@ -145,7 +145,7 @@ export ENTERPRISE_AI_API_KEY="your-api-key"
 | [Format Review](./docs/operations/dify-format-review-workflow.md) | Word format review |
 | [智能分析](./docs/operations/dify-excel-analysis-workflow.md) | Excel analysis |
 | [公式助手](./docs/operations/dify-excel-formula-assistant-workflow.md) | Excel formula assistant |
-| [Excel Smart Fill contract](./docs/operations/model-excel-smart-fill-contract.md) | Smart Fill input/output, limits, and write-back boundary |
+| [Excel Smart Fill contract](./docs/operations/model-excel-smart-fill-contract.md) | Smart Fill input/output, limits, preview, and copy boundary |
 | [Excel Smart Fill workflow](./docs/operations/workflow-platform-excel-smart-fill.md) | Workflow-platform configuration and validation |
 | [智能总结](./docs/operations/dify-ppt-slide-assistant-workflow.md) | PPT current-slide / document summary |
 | [结构审查](./docs/operations/dify-ppt-structure-review-workflow.md) | PPT structure review |
@@ -228,6 +228,6 @@ Target-machine regression uses Python 3.8 on Kylin V10 ARM64 ([test host](./docs
 
 ## Roadmap
 
-Phase 1 covers the three-host task pane, structured extraction, adapter health and config, nine tasks, guarded preview-then-write-back for Word and Excel Smart Fill, runtime probe, and offline install. The current neutral Preview package remains target-machine `manual-pending`.
+Phase 1 covers the three-host task pane, structured extraction, adapter health and config, nine tasks, guarded Word write-back, output-only Excel Smart Fill preview/copy, runtime probe, and offline install. The current neutral Preview package remains target-machine `manual-pending`.
 
 Later work on the same adapter can add multi-sheet Excel flows, multi-file compare, governed PPT generation, and richer template / audit / policy governance.

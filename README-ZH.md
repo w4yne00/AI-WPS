@@ -16,10 +16,10 @@
 | 版本规则号 | `AI-WPS-WORD-EXCEL-PPT-0.26.0-preview.1` |
 | 当前阶段 | `P1` 平台底座 + Word + Excel + PPT |
 | 运行目标 | 麒麟 V10 ARM、Python 3.8、WPS 原生 JS 插件 |
-| 交付状态 | Issue #153 自动化候选 `20260909-487830e` 已登记为 `candidate`；Issue #154 目标机验收保持 `manual-pending` |
+| 交付状态 | 自动化候选 `20260917-e3b896c` 已登记为 `candidate`；Issue #154 目标机验收保持 `manual-pending` |
 | 基线状态 | `v0.25.3-alpha` 已依据 Issue #59 完成目标机验收，状态为 `target-accepted` |
 
-`v0.26.0-preview.1` 汇总来源先行的 Excel“智能填写”、Word 自动/手工/疑似目录处理与格式位置问题组，以及九类任务的紧凑模型配置入口。当前自动化候选为 [`ai-wps-delivery-20260909-487830e-v0260-preview1.tar.gz`](./dist-preview-delivery-kit/ai-wps-delivery-20260909-487830e-v0260-preview1.tar.gz)，源码提交为 `487830eb618b0c6d93bafdbff7a23ca6e6e04d7e`，SHA-256 为 `7d798d43cdfea0dda124ecf5e6fe3081149d866812f379db1f380ccd1b0a5e2d`。该候选仍须 Issue #154 目标机验收，不宣称已通过真实 WPS 或模型验收。`v0.25.3-alpha` 的 `target-accepted` 基线仍按 Issue #59 保留记录。
+`v0.26.0-preview.1` 汇总稳定的 Excel 任务反馈、只读智能填写预览与复制、Word 自动/手工/疑似目录处理与格式位置问题组，以及九类任务的紧凑模型配置入口。当前自动化候选为 [`ai-wps-delivery-20260917-e3b896c-v0260-preview1.tar.gz`](./dist-preview-delivery-kit/ai-wps-delivery-20260917-e3b896c-v0260-preview1.tar.gz)，源码提交为 `e3b896cb681e49403315c99a718f173f048de5a0`，SHA-256 为 `bb456786181070fb01ea042b52607b8fd3b9217bf081d99af0679603d50daf6d`。该候选仍须 Issue #154 目标机验收，不宣称已通过真实 WPS 或模型验收。`v0.25.3-alpha` 的 `target-accepted` 基线仍按 Issue #59 保留记录。
 
 版本规则：`AI-WPS-P{阶段}-{范围}-{主版本.次版本.修订号}-{yyyymmdd}`。主版本改兼容边界，次版本加用户可见能力，修订号覆盖缺陷、界面、打包和文档。
 
@@ -27,7 +27,7 @@
 
 | 版本 | 用户可见变化 |
 | --- | --- |
-| `v0.26.0-preview.1` | 来源先行智能填写；自动/手工/疑似目录；格式位置问题组；九任务紧凑模型入口 |
+| `v0.26.0-preview.1` | Excel 点击反馈稳定；智能填写只预览和复制；自动/手工/疑似目录；格式位置问题组；九任务紧凑模型入口 |
 | `v0.25.3-alpha` | 结果预览、格式问题卡片、题注关联结论、幻灯片页角色 |
 | `v0.25.2-alpha` | 图像语义补充默认开启，视觉关闭降级；PPT 中文模板标题识别 |
 | `v0.25.1-alpha` | 格式审查 v2 跨运行时哈希契约、白名单组装、Python 3.8 生命周期门禁 |
@@ -37,7 +37,7 @@
 
 ## 能做什么
 
-Word、Excel、PPT 使用独立插件，Ribbon 互不串门。模型结果先预览，用户确认后才写回；审查类和分析类任务默认只读。
+Word、Excel、PPT 使用独立插件，Ribbon 互不串门。支持写回的任务会先预览；审查、分析、公式、智能填写和 PPT 任务均保持只读。
 
 | 宿主 | 入口 | 说明 |
 | --- | --- | --- |
@@ -48,7 +48,7 @@ Word、Excel、PPT 使用独立插件，Ribbon 互不串门。模型结果先预
 | Word | 写作规范 | 四个预置包 + 本机组织规范库；编写 / 仿写 / 审查可选用 |
 | Excel | 智能分析 | 选区或已用范围；结构化报告和汇报段落，不写回单元格 |
 | Excel | 公式助手 | 明确选区（最多 30×20）；生成或解释排错，只复制 |
-| Excel | 智能填写 | 含表头的连续矩形来源（最多 500 行）+ 必填填写意图；来源先行预览；写入目标在预览后绑定 |
+| Excel | 智能填写 | 含表头的连续矩形来源（最多 500 行）+ 必填填写意图；Markdown 预览和制表符复制，用户自行粘贴 |
 | PPT | 智能总结 | 当前页，或上传单个 `.md` / `.docx`（≤10 MB）生成整套页建议；只预览和复制 |
 | PPT | 结构审查 | 最多 60 页；幻灯片页角色清单；只读 |
 
@@ -145,7 +145,7 @@ export ENTERPRISE_AI_API_KEY="your-api-key"
 | [格式审查](./docs/operations/dify-format-review-workflow.md) | Word 格式审查 |
 | [智能分析](./docs/operations/dify-excel-analysis-workflow.md) | Excel 分析 |
 | [公式助手](./docs/operations/dify-excel-formula-assistant-workflow.md) | Excel 公式 |
-| [Excel“智能填写”契约](./docs/operations/model-excel-smart-fill-contract.md) | 智能填写输入输出、限制和写回边界 |
+| [Excel“智能填写”契约](./docs/operations/model-excel-smart-fill-contract.md) | 智能填写输入输出、限制、预览和复制边界 |
 | [Excel“智能填写”工作流](./docs/operations/workflow-platform-excel-smart-fill.md) | 工作流平台配置和验证 |
 | [智能总结](./docs/operations/dify-ppt-slide-assistant-workflow.md) | PPT 当前页 / 文档总结 |
 | [结构审查](./docs/operations/dify-ppt-structure-review-workflow.md) | PPT 结构审查 |
@@ -220,6 +220,6 @@ npm test
 
 ## 路线图
 
-Phase 1 已覆盖：三宿主任务窗格、结构化抽取、Adapter 健康与配置、九类任务、Word 与 Excel“智能填写”的受保护预览后写回、运行时探测和离线安装。当前中性 Preview 包的目标机状态仍为 `manual-pending`。
+Phase 1 已覆盖：三宿主任务窗格、结构化抽取、Adapter 健康与配置、九类任务、受保护的 Word 写回、Excel“智能填写”只读预览与复制、运行时探测和离线安装。当前中性 Preview 包的目标机状态仍为 `manual-pending`。
 
 后续可以在同一 Adapter 上扩展 Excel 多表流程、多文件比对、受控 PPT 生成，以及更完整的模板、审计和规范库治理。
