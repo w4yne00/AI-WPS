@@ -142,6 +142,8 @@ class WordDocumentReviewer:
             }
             if task_auth is not None:
                 provider_kwargs["task_auth"] = task_auth
+            if progress_callback is not None:
+                provider_kwargs["progress_callback"] = progress_callback
             provider_result = self.provider_client.document_review(
                 source_text, trace_id, **provider_kwargs
             )

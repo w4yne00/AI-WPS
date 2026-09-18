@@ -5,13 +5,18 @@ from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 
 from app.core.config import AppSettings
-from app.core.errors import AdapterError
+from app.core.errors import AdapterError, ProviderUnavailableError
 from app.services.model_configurations import ACCESS_DIRECT_MODEL, ModelConfigurationStore
 from app.services.model_configurations import ACCESS_WORKFLOW_PLATFORM
-from app.services.provider_client import ProviderClient, get_last_provider_debug
+from app.services.long_task_coordinator import LongTaskCoordinator
+from app.services.provider_client import (
+    ProviderClient,
+    get_last_provider_debug,
+    reset_provider_debug,
+)
 from app.services.system_prompts import SystemPromptStore
 
 
@@ -29,6 +34,30 @@ class FakeResponse:
 
     def read(self):
         return json.dumps(self.body, ensure_ascii=False).encode("utf-8")
+
+
+class RawResponse(FakeResponse):
+    def read(self):
+        return bytes(self.body)
+
+
+class FailingReadResponse(FakeResponse):
+    def read(self):
+        raise IncompleteRead(b'{"choices": [')
+
+
+class RecordingControl:
+    def __init__(self):
+        self.metrics = {}
+
+    def __call__(self, _phase):
+        return None
+
+    def record_metric(self, name, value):
+        self.metrics[name] = value
+
+    def cancel_requested(self):
+        return False
 
 
 class DirectModelProviderTests(unittest.TestCase):
@@ -870,6 +899,228 @@ class DirectModelProviderTests(unittest.TestCase):
         self.assertEqual(raised.exception.status_code, 502)
 
     @patch("app.services.provider_client.urllib_request.urlopen")
+    def test_direct_invalid_json_records_completed_network_timings(
+        self, urlopen
+    ) -> None:
+        urlopen.return_value = RawResponse(b"not-json")
+        control = RecordingControl()
+        reset_provider_debug()
+
+        with TemporaryDirectory() as tmp:
+            client = self._client(Path(tmp))
+            with self.assertRaises(AdapterError) as raised:
+                client.post_task(
+                    "word.smart_write",
+                    "trace-invalid-json-performance",
+                    {},
+                    "改写",
+                    progress_callback=control,
+                )
+
+        self.assertEqual(raised.exception.code, "MODEL_RESULT_INVALID")
+        self.assertIsInstance(control.metrics["providerHeadersMs"], int)
+        self.assertIsInstance(control.metrics["providerCompleteMs"], int)
+        self.assertIsInstance(control.metrics["parseMs"], int)
+        self.assertIsNone(control.metrics["providerFirstVisibleMs"])
+        self.assertEqual(
+            get_last_provider_debug("trace-invalid-json-performance")["performance"],
+            {**control.metrics, "providerAttempts": 1},
+        )
+
+    @patch("app.services.provider_client.time.monotonic", side_effect=[1.0, 2.0, 5.0])
+    @patch("app.services.provider_client.urllib_request.urlopen")
+    def test_direct_http_error_measures_complete_body_read(
+        self, urlopen, _monotonic
+    ) -> None:
+        urlopen.side_effect = HTTPError(
+            "https://model.example/v1/chat/completions",
+            500,
+            "Server Error",
+            {},
+            BytesIO(b'{"code":"server_error"}'),
+        )
+        control = RecordingControl()
+
+        with TemporaryDirectory() as tmp:
+            client = self._client(Path(tmp))
+            with self.assertRaises(ProviderUnavailableError):
+                client.post_task(
+                    "word.smart_write",
+                    "trace-http-error-performance",
+                    {},
+                    "改写",
+                    progress_callback=control,
+                )
+
+        self.assertEqual(control.metrics["providerHeadersMs"], 1000)
+        self.assertEqual(control.metrics["providerCompleteMs"], 4000)
+        self.assertIsNone(control.metrics["parseMs"])
+
+    @patch("app.services.provider_client.time.monotonic", side_effect=[1.0, 2.0, 5.0])
+    @patch("app.services.provider_client.urllib_request.urlopen")
+    def test_direct_http_error_interrupted_body_is_not_marked_complete(
+        self, urlopen, _monotonic
+    ) -> None:
+        class InterruptedBody:
+            def read(self, _size=-1):
+                raise IncompleteRead(b'{"code":"partial')
+
+            def close(self):
+                return None
+
+        urlopen.side_effect = HTTPError(
+            "https://model.example/v1/chat/completions",
+            500,
+            "Server Error",
+            {},
+            InterruptedBody(),
+        )
+        control = RecordingControl()
+
+        with TemporaryDirectory() as tmp:
+            client = self._client(Path(tmp))
+            with self.assertRaises(ProviderUnavailableError):
+                client.post_task(
+                    "word.smart_write",
+                    "trace-http-error-interrupted",
+                    {},
+                    "改写",
+                    progress_callback=control,
+                )
+
+        self.assertEqual(control.metrics["providerHeadersMs"], 1000)
+        self.assertIsNone(control.metrics["providerCompleteMs"])
+        self.assertIsNone(control.metrics["parseMs"])
+
+    @patch(
+        "app.services.provider_client.time.monotonic",
+        side_effect=[0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+    )
+    @patch("app.services.provider_client.urllib_request.urlopen")
+    def test_direct_fallback_accumulates_provider_attempt_metrics(
+        self, urlopen, _monotonic
+    ) -> None:
+        unsupported = HTTPError(
+            "https://model.example/v1/chat/completions",
+            400,
+            "Bad Request",
+            {},
+            BytesIO(b'{"error":{"message":"response_format is not supported"}}'),
+        )
+        urlopen.side_effect = [
+            unsupported,
+            FakeResponse(
+                {
+                    "choices": [
+                        {
+                            "message": {"content": "降级后的模型结果。"},
+                            "finish_reason": "stop",
+                        }
+                    ]
+                }
+            ),
+        ]
+
+        with TemporaryDirectory() as tmp:
+            client = self._client(Path(tmp))
+            auth = client.resolve_task_auth("word.smart_write")
+            coordinator = LongTaskCoordinator(max_running=1, max_queued=1)
+
+            def runner(_snapshot, control):
+                return client.post_task(
+                    "word.smart_write",
+                    "trace-direct-fallback-performance",
+                    {},
+                    "改写",
+                    task_auth=auth,
+                    response_format={"type": "json_object"},
+                    allow_response_format_fallback=True,
+                    progress_callback=control,
+                )
+
+            coordinator.submit(
+                job_id="direct-fallback-performance-job",
+                trace_id="trace-direct-fallback-performance",
+                task_type="word.smart_write",
+                runner=runner,
+                snapshot={},
+                failure_code="DIRECT_FALLBACK_FAILED",
+                failure_message="direct fallback failed",
+            )
+            completed = coordinator.wait("direct-fallback-performance-job")
+
+        self.assertEqual(completed["status"], "completed")
+        self.assertEqual(completed["metrics"]["providerAttempts"], 2)
+        self.assertEqual(completed["metrics"]["providerHeadersMs"], 2000)
+        self.assertEqual(completed["metrics"]["providerCompleteMs"], 4000)
+        self.assertEqual(completed["metrics"]["parseMs"], 1000)
+        debug_metrics = get_last_provider_debug(
+            "trace-direct-fallback-performance"
+        )["performance"]
+        self.assertEqual(debug_metrics["providerAttempts"], 2)
+        self.assertEqual(debug_metrics["providerCompleteMs"], 4000)
+
+    @patch("app.services.provider_client.time.monotonic", side_effect=[1.0, 4.0])
+    @patch("app.services.provider_client.urllib_request.urlopen")
+    def test_direct_network_error_records_unavailable_stages_as_null(
+        self, urlopen, _monotonic
+    ) -> None:
+        urlopen.side_effect = URLError(
+            "certificate file /private/secret/client-certificate.pem"
+        )
+        control = RecordingControl()
+
+        with TemporaryDirectory() as tmp:
+            client = self._client(Path(tmp))
+            with self.assertRaises(ProviderUnavailableError):
+                client.post_task(
+                    "word.smart_write",
+                    "trace-network-error-performance",
+                    {},
+                    "改写",
+                    progress_callback=control,
+                )
+
+        self.assertEqual(
+            control.metrics,
+            {
+                "providerHeadersMs": None,
+                "providerFirstVisibleMs": None,
+                "providerCompleteMs": None,
+                "parseMs": None,
+            },
+        )
+        debug_text = json.dumps(
+            get_last_provider_debug("trace-network-error-performance"),
+            ensure_ascii=False,
+        )
+        self.assertNotIn("/private/secret/client-certificate.pem", debug_text)
+
+    @patch("app.services.provider_client.time.monotonic", side_effect=[1.0, 2.0, 4.0])
+    @patch("app.services.provider_client.urllib_request.urlopen")
+    def test_direct_midstream_disconnect_preserves_header_timing(
+        self, urlopen, _monotonic
+    ) -> None:
+        urlopen.return_value = FailingReadResponse({})
+        control = RecordingControl()
+
+        with TemporaryDirectory() as tmp:
+            client = self._client(Path(tmp))
+            with self.assertRaises(AdapterError) as raised:
+                client.post_task(
+                    "word.smart_write",
+                    "trace-midstream-performance",
+                    {},
+                    "改写",
+                    progress_callback=control,
+                )
+
+        self.assertEqual(raised.exception.code, "PROVIDER_MID_STREAM_DISCONNECT")
+        self.assertEqual(control.metrics["providerHeadersMs"], 1000)
+        self.assertIsNone(control.metrics["providerCompleteMs"])
+        self.assertIsNone(control.metrics["parseMs"])
+
+    @patch("app.services.provider_client.urllib_request.urlopen")
     def test_direct_request_rejects_over_budget_before_network(self, urlopen) -> None:
         with TemporaryDirectory() as tmp:
             client = self._client(Path(tmp), context_window=1000)
@@ -968,6 +1219,67 @@ class DirectModelProviderTests(unittest.TestCase):
         self.assertEqual(
             get_last_provider_debug()["taskType"], "word.document_review.full"
         )
+
+    def test_blocking_direct_call_records_performance_metrics_with_null_first_visible(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            client = self._client(root)
+            auth = client.resolve_task_auth("word.smart_write")
+
+            recorded_metrics = {}
+
+            class MockControl:
+                def __call__(self, phase):
+                    pass
+
+                def record_metric(self, name, value):
+                    recorded_metrics[name] = value
+
+                def cancel_requested(self):
+                    return False
+
+            control = MockControl()
+            fake_response_body = {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "这是改写后的正文内容。",
+                        },
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"total_tokens": 50},
+            }
+
+            with patch(
+                "urllib.request.urlopen",
+                return_value=FakeResponse(fake_response_body),
+            ):
+                result = client.smart_write(
+                    "原始测试文本",
+                    "rewrite",
+                    "trace-perf-test",
+                    task_auth=auth,
+                    progress_callback=control,
+                )
+
+            self.assertEqual(result["rewrittenText"], "这是改写后的正文内容。")
+            self.assertIn("providerHeadersMs", recorded_metrics)
+            self.assertIn("providerCompleteMs", recorded_metrics)
+            self.assertIn("parseMs", recorded_metrics)
+            self.assertIn("providerFirstVisibleMs", recorded_metrics)
+            self.assertIsNone(recorded_metrics["providerFirstVisibleMs"])
+            self.assertIsInstance(recorded_metrics["providerHeadersMs"], int)
+            self.assertIsInstance(recorded_metrics["providerCompleteMs"], int)
+            self.assertIsInstance(recorded_metrics["parseMs"], int)
+
+            debug = get_last_provider_debug()
+            perf = debug.get("performance", {})
+            self.assertEqual(perf.get("providerHeadersMs"), recorded_metrics["providerHeadersMs"])
+            self.assertEqual(perf.get("providerCompleteMs"), recorded_metrics["providerCompleteMs"])
+            self.assertIsNone(perf.get("providerFirstVisibleMs"))
+            self.assertNotIn("原始测试文本", json.dumps(debug, ensure_ascii=False))
 
 
 if __name__ == "__main__":

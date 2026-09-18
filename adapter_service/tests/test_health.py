@@ -1,3 +1,4 @@
+import asyncio
 import importlib.util
 import json
 import tempfile
@@ -14,7 +15,7 @@ HAS_API_DEPS = importlib.util.find_spec("fastapi") is not None and importlib.uti
 
 if HAS_API_DEPS:
     from fastapi.testclient import TestClient
-    from app.main import app
+    from app.main import FullDocumentReviewBodyLimitMiddleware, app
 
 
 class HealthValidationTests(unittest.TestCase):
@@ -82,6 +83,88 @@ class HealthApiTests(unittest.TestCase):
         self.assertIn("providerBaseUrlConfigured", data)
         self.assertIn("taskRouteConfiguredCount", data)
         self.assertIn("providerAuthSource", data)
+
+    def test_http_request_logs_duration_ms(self) -> None:
+        client = TestClient(app)
+        with patch("app.main.logger.info") as mock_info:
+            response = client.get("/health")
+            self.assertEqual(response.status_code, 200)
+            logged_formats = [call.args[0] for call in mock_info.call_args_list if call.args]
+            self.assertTrue(
+                any("durationMs=%s" in fmt or "durationMs=" in fmt for fmt in logged_formats),
+                "HTTP request log format must include durationMs=%s",
+            )
+
+    def test_http_request_logs_duration_ms_for_early_rejection(self) -> None:
+        client = TestClient(app)
+        with patch("app.main.logger.info") as mock_info:
+            response = client.post(
+                "/ppt/document-files",
+                content=b"",
+                headers={"Content-Length": "0"},
+            )
+
+        self.assertEqual(response.status_code, 411)
+        matching_calls = [
+            call
+            for call in mock_info.call_args_list
+            if call.args and "durationMs=%s" in call.args[0]
+        ]
+        self.assertEqual(len(matching_calls), 1)
+        self.assertEqual(matching_calls[0].args[4], 411)
+
+    def test_outer_body_limit_declared_rejection_logs_duration_ms(self) -> None:
+        client = TestClient(app)
+        with patch("app.main.logger.info") as mock_info:
+            response = client.post(
+                "/word/document-review/full/jobs",
+                content=b"{}",
+                headers={"Content-Length": str(2 * 1024 * 1024 + 1)},
+            )
+
+        self.assertEqual(response.status_code, 413)
+        matching_calls = [
+            call
+            for call in mock_info.call_args_list
+            if call.args and "durationMs=%s" in call.args[0]
+        ]
+        self.assertEqual(len(matching_calls), 1)
+        self.assertEqual(matching_calls[0].args[4], 413)
+
+    def test_outer_body_limit_streaming_rejection_logs_duration_ms(self) -> None:
+        async def inner_app(_scope, _receive, _send):
+            raise AssertionError("oversized body must not reach inner app")
+
+        middleware = FullDocumentReviewBodyLimitMiddleware(inner_app, max_bytes=4)
+        messages = [
+            {"type": "http.request", "body": b"abc", "more_body": True},
+            {"type": "http.request", "body": b"def", "more_body": False},
+        ]
+        sent = []
+
+        async def receive():
+            return messages.pop(0)
+
+        async def send(message):
+            sent.append(message)
+
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/word/document-review/full/jobs",
+            "headers": [(b"x-trace-id", b"trace-stream-limit")],
+        }
+        with patch("app.main.logger.info") as mock_info:
+            asyncio.run(middleware(scope, receive, send))
+
+        self.assertEqual(sent[0]["status"], 413)
+        matching_calls = [
+            call
+            for call in mock_info.call_args_list
+            if call.args and "durationMs=%s" in call.args[0]
+        ]
+        self.assertEqual(len(matching_calls), 1)
+        self.assertEqual(matching_calls[0].args[4], 413)
 
     def test_live_health_does_not_read_business_subsystems(self) -> None:
         client = TestClient(app)

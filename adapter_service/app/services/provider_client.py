@@ -55,7 +55,10 @@ logger = get_logger(__name__)
 LOCAL_KEY_PATH = Path(__file__).resolve().parents[3] / "run" / "provider_api_key"
 ROUTE_KEY_DIR = Path(__file__).resolve().parents[3] / "run" / "provider_api_keys"
 _LAST_PROVIDER_DEBUG: Dict = {}
+_TRACE_PROVIDER_DEBUG: Dict[str, Dict] = {}
+_TRACE_PROVIDER_PERFORMANCE: Dict[str, Dict] = {}
 _LAST_PROVIDER_DEBUG_LOCK = threading.Lock()
+_MAX_TRACE_DEBUG_ITEMS = 50
 DOCUMENT_REVIEW_TIMEOUT_SECONDS = 1800
 EXCEL_ANALYSIS_TIMEOUT_SECONDS = DOCUMENT_REVIEW_TIMEOUT_SECONDS
 EXCEL_FORMULA_ASSISTANT_TIMEOUT_SECONDS = EXCEL_ANALYSIS_TIMEOUT_SECONDS
@@ -702,11 +705,18 @@ def _sanitize_provider_error_body(
     return str(sanitized)[:limit]
 
 
-def _read_http_error_raw(exc: error.HTTPError) -> str:
+def _read_http_error_raw_result(exc: error.HTTPError) -> Tuple[str, bool]:
     try:
-        return exc.read(4096).decode("utf-8", errors="replace")
+        preview = exc.read(4096)
+        has_more = bool(exc.read(4096))
+        return preview.decode("utf-8", errors="replace"), not has_more
     except Exception:
-        return ""
+        return "", False
+
+
+def _read_http_error_raw(exc: error.HTTPError) -> str:
+    raw, _complete = _read_http_error_raw_result(exc)
+    return raw
 
 
 def _read_http_error_body(
@@ -894,6 +904,36 @@ def _missing_final_content_error(finish_reason: str) -> AdapterError:
 def reset_provider_debug() -> None:
     with _LAST_PROVIDER_DEBUG_LOCK:
         _LAST_PROVIDER_DEBUG.clear()
+        _TRACE_PROVIDER_DEBUG.clear()
+        _TRACE_PROVIDER_PERFORMANCE.clear()
+
+
+def _merge_trace_provider_performance_locked(trace_id: str, debug: Dict) -> None:
+    if not trace_id:
+        return
+    attempt = debug.get("performance")
+    if isinstance(attempt, dict):
+        total = _TRACE_PROVIDER_PERFORMANCE.setdefault(trace_id, {})
+        total["providerAttempts"] = int(total.get("providerAttempts", 0)) + 1
+        for name in (
+            "providerHeadersMs",
+            "providerFirstVisibleMs",
+            "providerCompleteMs",
+            "parseMs",
+        ):
+            value = attempt.get(name)
+            if isinstance(value, int) and not isinstance(value, bool):
+                previous = total.get(name)
+                total[name] = (
+                    previous + value
+                    if isinstance(previous, int) and not isinstance(previous, bool)
+                    else value
+                )
+            elif name not in total:
+                total[name] = None
+    total = _TRACE_PROVIDER_PERFORMANCE.get(trace_id)
+    if total:
+        debug["performance"] = deepcopy(total)
 
 
 def _project_smart_fill_debug(event: Dict) -> Dict:
@@ -908,6 +948,17 @@ def _project_smart_fill_debug(event: Dict) -> Dict:
         debug["attemptCount"] = event["attemptCount"]
     if "compatibilityFallback" in event:
         debug["compatibilityFallback"] = event["compatibilityFallback"]
+
+    perf = event.get("performance")
+    if isinstance(perf, dict):
+        safe_perf = {}
+        for key in ("providerHeadersMs", "providerFirstVisibleMs", "providerCompleteMs", "parseMs"):
+            if key in perf:
+                val = perf[key]
+                if val is None or (isinstance(val, int) and not isinstance(val, bool) and val >= 0):
+                    safe_perf[key] = val
+        if safe_perf:
+            debug["performance"] = safe_perf
 
     request_info = event.get("request", {})
     if isinstance(request_info, dict):
@@ -987,15 +1038,33 @@ def _project_smart_fill_debug(event: Dict) -> Dict:
 def record_provider_debug(event: Dict) -> None:
     if event.get("taskType") == "excel.smart_fill":
         debug = _project_smart_fill_debug(event)
+        trace_id = str(debug.get("traceId", "")).strip()
         with _LAST_PROVIDER_DEBUG_LOCK:
+            _merge_trace_provider_performance_locked(trace_id, debug)
             _LAST_PROVIDER_DEBUG.clear()
             _LAST_PROVIDER_DEBUG.update(debug)
+            if trace_id:
+                _TRACE_PROVIDER_DEBUG[trace_id] = deepcopy(debug)
+                while len(_TRACE_PROVIDER_DEBUG) > _MAX_TRACE_DEBUG_ITEMS:
+                    expired_trace_id = next(iter(_TRACE_PROVIDER_DEBUG))
+                    _TRACE_PROVIDER_DEBUG.pop(expired_trace_id, None)
+                    _TRACE_PROVIDER_PERFORMANCE.pop(expired_trace_id, None)
         return
     debug = {
         "traceId": event.get("traceId", ""),
         "taskType": event.get("taskType", ""),
         "url": event.get("url", ""),
     }
+    perf = event.get("performance")
+    if isinstance(perf, dict):
+        safe_perf = {}
+        for key in ("providerHeadersMs", "providerFirstVisibleMs", "providerCompleteMs", "parseMs"):
+            if key in perf:
+                val = perf[key]
+                if val is None or (isinstance(val, int) and not isinstance(val, bool) and val >= 0):
+                    safe_perf[key] = val
+        if safe_perf:
+            debug["performance"] = safe_perf
     request_info = event.get("request", {})
     if isinstance(request_info, dict):
         body = request_info.get("body", {})
@@ -1060,8 +1129,16 @@ def record_provider_debug(event: Dict) -> None:
         if field in event:
             debug[field] = event[field]
     with _LAST_PROVIDER_DEBUG_LOCK:
+        trace_id = str(debug.get("traceId", "")).strip()
+        _merge_trace_provider_performance_locked(trace_id, debug)
         _LAST_PROVIDER_DEBUG.clear()
         _LAST_PROVIDER_DEBUG.update(debug)
+        if trace_id:
+            _TRACE_PROVIDER_DEBUG[trace_id] = deepcopy(debug)
+            while len(_TRACE_PROVIDER_DEBUG) > _MAX_TRACE_DEBUG_ITEMS:
+                expired_trace_id = next(iter(_TRACE_PROVIDER_DEBUG))
+                _TRACE_PROVIDER_DEBUG.pop(expired_trace_id, None)
+                _TRACE_PROVIDER_PERFORMANCE.pop(expired_trace_id, None)
 
 
 def merge_provider_debug(trace_id: str, patch: Dict) -> None:
@@ -1097,14 +1174,55 @@ def merge_provider_debug(trace_id: str, patch: Dict) -> None:
         sanitized["writingPolicyItemIds"] = safe_ids
 
     with _LAST_PROVIDER_DEBUG_LOCK:
-        if _LAST_PROVIDER_DEBUG.get("traceId") != trace_id:
-            return
-        _LAST_PROVIDER_DEBUG.update(sanitized)
+        if _LAST_PROVIDER_DEBUG.get("traceId") == trace_id:
+            _LAST_PROVIDER_DEBUG.update(sanitized)
+        if trace_id in _TRACE_PROVIDER_DEBUG:
+            _TRACE_PROVIDER_DEBUG[trace_id].update(sanitized)
 
 
-def get_last_provider_debug() -> Dict:
+def get_last_provider_debug(trace_id: Optional[str] = None) -> Dict:
     with _LAST_PROVIDER_DEBUG_LOCK:
+        if trace_id:
+            return deepcopy(_TRACE_PROVIDER_DEBUG.get(trace_id, {}))
         return deepcopy(_LAST_PROVIDER_DEBUG)
+
+
+def _provider_performance_metrics(
+    started_at: float,
+    headers_at: Optional[float] = None,
+    completed_at: Optional[float] = None,
+    parsed_at: Optional[float] = None,
+    parse_ms: Optional[int] = None,
+) -> Dict:
+    return {
+        "providerHeadersMs": (
+            max(0, int((headers_at - started_at) * 1000))
+            if headers_at is not None
+            else None
+        ),
+        "providerFirstVisibleMs": None,
+        "providerCompleteMs": (
+            max(0, int((completed_at - started_at) * 1000))
+            if completed_at is not None
+            else None
+        ),
+        "parseMs": (
+            max(0, int((parsed_at - completed_at) * 1000))
+            if parsed_at is not None and completed_at is not None
+            else parse_ms
+        ),
+    }
+
+
+def _publish_provider_performance(progress_callback, metrics: Dict) -> None:
+    attempt_recorder = getattr(progress_callback, "record_provider_attempt", None)
+    if callable(attempt_recorder):
+        attempt_recorder(metrics)
+        return
+    recorder = getattr(progress_callback, "record_metric", None)
+    if callable(recorder):
+        for key, value in metrics.items():
+            recorder(key, value)
 
 
 def _extract_json_payload(answer: str):
@@ -2862,7 +2980,7 @@ class ProviderClient:
                     "url": url,
                     **debug_metadata,
                     "validation": safe_context,
-                    "error": {"type": "URLError", "message": str(reason)},
+                    "error": {"type": "URLError", "message": "provider network error"},
                 }
             )
             if isinstance(reason, (TimeoutError, socket.timeout)) or "timed out" in str(reason).lower():
@@ -2909,6 +3027,7 @@ class ProviderClient:
         input_token_limit: Optional[int] = None,
         image_files: Optional[List[Dict]] = None,
         allow_response_format_fallback: bool = False,
+        progress_callback=None,
     ) -> Dict:
         if prompt_asset is None:
             try:
@@ -3006,17 +3125,51 @@ class ProviderClient:
                 "X-Trace-Id": trace_id,
             },
         )
+        t_start = time.monotonic()
+        t_headers = None
         try:
             with urllib_request.urlopen(req, timeout=timeout) as response:
+                t_headers = time.monotonic()
                 raw_body = response.read().decode("utf-8")
+                t_complete = time.monotonic()
                 try:
                     body = json.loads(raw_body)
                 except json.JSONDecodeError as exc:
+                    t_parse = time.monotonic()
+                    perf_metrics = _provider_performance_metrics(
+                        t_start,
+                        headers_at=t_headers,
+                        completed_at=t_complete,
+                        parsed_at=t_parse,
+                    )
+                    _publish_provider_performance(progress_callback, perf_metrics)
+                    record_provider_debug(
+                        {
+                            "traceId": trace_id,
+                            "taskType": task_type,
+                            "url": url,
+                            **debug_metadata,
+                            "validation": safe_validation,
+                            "performance": perf_metrics,
+                            "error": {
+                                "type": "JSONDecodeError",
+                                "message": "direct model returned non-JSON response",
+                            },
+                        }
+                    )
                     raise AdapterError(
                         "MODEL_RESULT_INVALID",
                         "模型后台返回了无法解析的结果。",
                         status_code=502,
                     ) from exc
+                t_parse = time.monotonic()
+                perf_metrics = _provider_performance_metrics(
+                    t_start,
+                    headers_at=t_headers,
+                    completed_at=t_complete,
+                    parsed_at=t_parse,
+                )
+                _publish_provider_performance(progress_callback, perf_metrics)
                 choices = body.get("choices") if isinstance(body, dict) else None
                 choice = (
                     choices[0]
@@ -3040,6 +3193,7 @@ class ProviderClient:
                             "url": url,
                             **debug_metadata,
                             "validation": safe_validation,
+                            "performance": perf_metrics,
                             "response": {
                                 "status": getattr(response, "status", 200),
                                 "body": {"answer": "", **response_diagnostics},
@@ -3063,6 +3217,7 @@ class ProviderClient:
                         "url": url,
                         **debug_metadata,
                         "validation": safe_validation,
+                        "performance": perf_metrics,
                         "response": {
                             "status": getattr(response, "status", 200),
                             "body": normalized,
@@ -3071,8 +3226,16 @@ class ProviderClient:
                 )
                 return normalized
         except error.HTTPError as exc:
+            t_headers = time.monotonic()
             status = int(exc.code)
-            raw_error_body = _read_http_error_raw(exc)
+            raw_error_body, error_body_complete = _read_http_error_raw_result(exc)
+            t_complete = time.monotonic() if error_body_complete else None
+            perf_metrics = _provider_performance_metrics(
+                t_start,
+                headers_at=t_headers,
+                completed_at=t_complete,
+            )
+            _publish_provider_performance(progress_callback, perf_metrics)
             body_preview = _sanitize_provider_error_body(
                 raw_error_body,
                 query=query,
@@ -3085,6 +3248,7 @@ class ProviderClient:
                     "url": url,
                     **debug_metadata,
                     "validation": safe_validation,
+                    "performance": perf_metrics,
                     "error": {
                         "type": "HTTPError",
                         "status": status,
@@ -3110,6 +3274,7 @@ class ProviderClient:
                     input_token_limit=input_token_limit,
                     image_files=image_files,
                     allow_response_format_fallback=False,
+                    progress_callback=progress_callback,
                 )
             if status in (401, 403):
                 raise ProviderAuthError("模型后台认证失败，请检查当前配置的 API Key。") from exc
@@ -3128,6 +3293,22 @@ class ProviderClient:
             ) from exc
         except error.URLError as exc:
             reason = getattr(exc, "reason", "")
+            perf_metrics = _provider_performance_metrics(
+                t_start,
+                headers_at=t_headers,
+            )
+            _publish_provider_performance(progress_callback, perf_metrics)
+            record_provider_debug(
+                {
+                    "traceId": trace_id,
+                    "taskType": task_type,
+                    "url": url,
+                    **debug_metadata,
+                    "validation": safe_validation,
+                    "performance": perf_metrics,
+                    "error": {"type": "URLError", "message": "provider network error"},
+                }
+            )
             if isinstance(reason, (TimeoutError, socket.timeout)) or "timed out" in str(reason).lower():
                 raise ProviderTimeoutError("模型处理超过当前任务等待时限。") from exc
             raise ProviderUnavailableError("无法访问模型后台，请检查服务地址和网络。") from exc
@@ -3138,8 +3319,43 @@ class ProviderClient:
             ConnectionAbortedError,
             BrokenPipeError,
         ) as exc:
+            perf_metrics = _provider_performance_metrics(
+                t_start,
+                headers_at=t_headers,
+            )
+            _publish_provider_performance(progress_callback, perf_metrics)
+            record_provider_debug(
+                {
+                    "traceId": trace_id,
+                    "taskType": task_type,
+                    "url": url,
+                    **debug_metadata,
+                    "validation": safe_validation,
+                    "performance": perf_metrics,
+                    "error": {
+                        "type": type(exc).__name__,
+                        "message": "direct model response interrupted",
+                    },
+                }
+            )
             raise ProviderMidStreamDisconnectError("模型后台在返回结果过程中断开连接。") from exc
         except (TimeoutError, socket.timeout) as exc:
+            perf_metrics = _provider_performance_metrics(
+                t_start,
+                headers_at=t_headers,
+            )
+            _publish_provider_performance(progress_callback, perf_metrics)
+            record_provider_debug(
+                {
+                    "traceId": trace_id,
+                    "taskType": task_type,
+                    "url": url,
+                    **debug_metadata,
+                    "validation": safe_validation,
+                    "performance": perf_metrics,
+                    "error": {"type": "TimeoutError", "message": "provider timeout"},
+                }
+            )
             raise ProviderTimeoutError("模型处理超过当前任务等待时限。") from exc
 
     def post_task(
@@ -3155,6 +3371,7 @@ class ProviderClient:
         image_files: Optional[List[Dict]] = None,
         response_format: Optional[Dict] = None,
         allow_response_format_fallback: bool = False,
+        progress_callback=None,
     ) -> Dict:
         resolved_task_auth = task_auth if task_auth is not None else self.resolve_task_auth(task_type)
         timeout = timeout_seconds or self.settings.timeout_seconds
@@ -3175,6 +3392,7 @@ class ProviderClient:
                 image_files=image_files,
                 response_format=response_format,
                 allow_response_format_fallback=allow_response_format_fallback,
+                progress_callback=progress_callback,
             )
         provider_base_url = str(
             resolved_task_auth.get("providerBaseUrl") or self.settings.provider_base_url.rstrip("/")
@@ -3275,12 +3493,24 @@ class ProviderClient:
                     "X-Trace-Id": trace_id,
                 },
             )
+            t_start = time.monotonic()
+            t_headers = None
             try:
                 with urllib_request.urlopen(req, timeout=timeout) as response:
+                    t_headers = time.monotonic()
                     raw_body = response.read().decode("utf-8")
+                    t_complete = time.monotonic()
                     try:
                         body = json.loads(raw_body)
                     except json.JSONDecodeError as exc:
+                        t_parse = time.monotonic()
+                        perf_metrics = _provider_performance_metrics(
+                            t_start,
+                            headers_at=t_headers,
+                            completed_at=t_complete,
+                            parsed_at=t_parse,
+                        )
+                        _publish_provider_performance(progress_callback, perf_metrics)
                         record_provider_debug(
                             {
                                 "traceId": trace_id,
@@ -3293,6 +3523,7 @@ class ProviderClient:
                                     if compatibility_error
                                     else {}
                                 ),
+                                "performance": perf_metrics,
                                 "request": {"body": route_payload},
                                 "error": {
                                     "type": "JSONDecodeError",
@@ -3309,6 +3540,14 @@ class ProviderClient:
                         raise ProviderUnavailableError(
                             "Enterprise AI returned a non-JSON response."
                         ) from exc
+                    t_parse = time.monotonic()
+                    perf_metrics = _provider_performance_metrics(
+                        t_start,
+                        headers_at=t_headers,
+                        completed_at=t_complete,
+                        parsed_at=t_parse,
+                    )
+                    _publish_provider_performance(progress_callback, perf_metrics)
                     _PROVIDER_INPUT_MODE_CACHE[cache_key] = input_mode
                     resolved_task_auth["providerInputMode"] = input_mode
                     record_provider_debug(
@@ -3323,6 +3562,7 @@ class ProviderClient:
                                 if compatibility_error
                                 else {}
                             ),
+                            "performance": perf_metrics,
                             "request": {"body": route_payload},
                             "response": {
                                 "status": getattr(response, "status", 200),
@@ -3332,11 +3572,20 @@ class ProviderClient:
                     )
                     return body
             except error.HTTPError as exc:
-                error_body = _read_http_error_body(
-                    exc,
+                t_headers = time.monotonic()
+                raw_error_body, error_body_complete = _read_http_error_raw_result(exc)
+                error_body = _sanitize_provider_error_body(
+                    raw_error_body,
                     query=query,
                     api_key=task_api_key,
                 )
+                t_complete = time.monotonic() if error_body_complete else None
+                perf_metrics = _provider_performance_metrics(
+                    t_start,
+                    headers_at=t_headers,
+                    completed_at=t_complete,
+                )
+                _publish_provider_performance(progress_callback, perf_metrics)
                 error_info = {
                     "type": "HTTPError",
                     "status": exc.code,
@@ -3357,6 +3606,7 @@ class ProviderClient:
                             if compatibility_error
                             else {}
                         ),
+                        "performance": perf_metrics,
                         "request": {"body": route_payload},
                         "error": error_info,
                     }
@@ -3368,8 +3618,18 @@ class ProviderClient:
                 raise ProviderUnavailableError(
                     "Enterprise AI returned HTTP {0}.".format(exc.code)
                 ) from exc
-            except error.URLError as exc:
-                reason = getattr(exc, "reason", "")
+            except (
+                IncompleteRead,
+                RemoteDisconnected,
+                ConnectionResetError,
+                ConnectionAbortedError,
+                BrokenPipeError,
+            ) as exc:
+                perf_metrics = _provider_performance_metrics(
+                    t_start,
+                    headers_at=t_headers,
+                )
+                _publish_provider_performance(progress_callback, perf_metrics)
                 record_provider_debug(
                     {
                         "traceId": trace_id,
@@ -3382,8 +3642,37 @@ class ProviderClient:
                             if compatibility_error
                             else {}
                         ),
+                        "performance": perf_metrics,
                         "request": {"body": route_payload},
-                        "error": {"type": "URLError", "message": str(reason)},
+                        "error": {
+                            "type": type(exc).__name__,
+                            "message": "provider response interrupted",
+                        },
+                    }
+                )
+                raise
+            except error.URLError as exc:
+                reason = getattr(exc, "reason", "")
+                perf_metrics = _provider_performance_metrics(
+                    t_start,
+                    headers_at=t_headers,
+                )
+                _publish_provider_performance(progress_callback, perf_metrics)
+                record_provider_debug(
+                    {
+                        "traceId": trace_id,
+                        "taskType": task_type,
+                        "url": url,
+                        **debug_metadata,
+                        **attempt_metadata,
+                        **(
+                            {"compatibilityError": compatibility_error}
+                            if compatibility_error
+                            else {}
+                        ),
+                        "performance": perf_metrics,
+                        "request": {"body": route_payload},
+                        "error": {"type": "URLError", "message": "provider network error"},
                     }
                 )
                 if "timed out" in str(reason).lower():
@@ -3392,6 +3681,11 @@ class ProviderClient:
                     "Enterprise AI endpoint is unreachable."
                 ) from exc
             except (TimeoutError, socket.timeout) as exc:
+                perf_metrics = _provider_performance_metrics(
+                    t_start,
+                    headers_at=t_headers,
+                )
+                _publish_provider_performance(progress_callback, perf_metrics)
                 record_provider_debug(
                     {
                         "traceId": trace_id,
@@ -3404,6 +3698,7 @@ class ProviderClient:
                             if compatibility_error
                             else {}
                         ),
+                        "performance": perf_metrics,
                         "request": {"body": route_payload},
                         "error": {"type": "TimeoutError", "message": str(exc)},
                     }
@@ -4112,6 +4407,8 @@ class ProviderClient:
         }
         if has_auth_snapshot:
             post_kwargs["task_auth"] = resolved_task_auth
+        if progress_callback is not None:
+            post_kwargs["progress_callback"] = progress_callback
         if progress_callback:
             progress_callback("provider_processing")
         body = self.post_task(
@@ -4239,6 +4536,8 @@ class ProviderClient:
         }
         if has_auth_snapshot:
             post_kwargs["task_auth"] = resolved_task_auth
+        if progress_callback is not None:
+            post_kwargs["progress_callback"] = progress_callback
         body = self.post_task(
             task_type,
             trace_id,
@@ -4352,6 +4651,8 @@ class ProviderClient:
         }
         if has_auth_snapshot:
             post_kwargs["task_auth"] = resolved_task_auth
+        if progress_callback is not None:
+            post_kwargs["progress_callback"] = progress_callback
         input_data = {
             "scene": "excel",
             "itemCount": len(expected_item_ids),
@@ -4503,6 +4804,8 @@ class ProviderClient:
         }
         if has_auth_snapshot:
             post_kwargs["task_auth"] = resolved_task_auth
+        if progress_callback is not None:
+            post_kwargs["progress_callback"] = progress_callback
         body = self.post_task(
             task_type,
             trace_id,
@@ -4616,6 +4919,8 @@ class ProviderClient:
         }
         if has_auth_snapshot:
             post_kwargs["task_auth"] = resolved_task_auth
+        if progress_callback is not None:
+            post_kwargs["progress_callback"] = progress_callback
         body = self.post_task(
             task_type,
             trace_id,
@@ -4726,6 +5031,7 @@ class ProviderClient:
                 direct_prompt,
                 timeout_seconds=timeout,
                 task_auth=resolved_task_auth,
+                progress_callback=progress_callback,
             )
             if progress_callback:
                 progress_callback("parsing")
@@ -4765,6 +5071,7 @@ class ProviderClient:
             timeout_seconds=timeout,
             files=files,
             task_auth=resolved_task_auth,
+            progress_callback=progress_callback,
         )
         if progress_callback:
             progress_callback("parsing")
@@ -4838,6 +5145,7 @@ class ProviderClient:
                 self.settings.timeout_seconds, INTERACTIVE_WRITING_TIMEOUT_SECONDS
             ),
             task_auth=resolved_task_auth,
+            progress_callback=progress_callback,
         )
 
         if progress_callback:
@@ -4903,6 +5211,7 @@ class ProviderClient:
                 self.settings.timeout_seconds, INTERACTIVE_WRITING_TIMEOUT_SECONDS
             ),
             task_auth=resolved_task_auth,
+            progress_callback=progress_callback,
         )
         if progress_callback:
             progress_callback("parsing")
@@ -4969,6 +5278,7 @@ class ProviderClient:
         review_prompt: str = "",
         writing_policy_block: str = "",
         task_auth: Optional[Dict] = None,
+        progress_callback=None,
     ) -> Dict:
         source_text = text.strip()
         prompt = build_document_review_prompt(
@@ -5043,6 +5353,8 @@ class ProviderClient:
         }
         if has_auth_snapshot:
             post_kwargs["task_auth"] = resolved_task_auth
+        if progress_callback is not None:
+            post_kwargs["progress_callback"] = progress_callback
         body = self.post_task(task_type, trace_id, {}, prompt, **post_kwargs)
 
         parsed = parse_document_review_answer(extract_answer(body))

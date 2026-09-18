@@ -624,10 +624,12 @@ def delete_workflow_profile(profile_id: str) -> dict:
 
 
 @router.get("/provider/debug-last")
-def get_provider_debug_last() -> dict:
+def get_provider_debug_last(
+    trace_id: Optional[str] = Query(default=None, alias="traceId"),
+) -> dict:
     return {
         "success": True,
-        "data": get_last_provider_debug(),
+        "data": get_last_provider_debug(trace_id=trace_id),
     }
 
 

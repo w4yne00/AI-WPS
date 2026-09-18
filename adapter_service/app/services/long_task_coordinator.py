@@ -60,6 +60,26 @@ def _positive_int_from_env(name: str, default: int) -> int:
     return value if value > 0 else default
 
 
+def _phase_durations_ms(
+    durations: Dict[str, float],
+    elapsed_ms: int,
+    remainder_phase: Optional[str] = None,
+) -> Dict[str, int]:
+    converted = {
+        phase: int(max(duration, 0.0) * 1000)
+        for phase, duration in durations.items()
+    }
+    remainder_ms = elapsed_ms - sum(converted.values())
+    if remainder_ms > 0 and converted:
+        target_phase = (
+            remainder_phase
+            if remainder_phase in converted
+            else next(reversed(converted))
+        )
+        converted[target_phase] += remainder_ms
+    return converted
+
+
 class LongTaskCoordinator:
     """Bounded in-memory coordinator for blocking long-running task runners."""
 
@@ -214,6 +234,7 @@ class LongTaskCoordinator:
                 "_updatedMonotonic": now_mono,
                 "_phaseStartedMonotonic": now_mono,
                 "_phaseDurations": {},
+                "_lastTimedPhase": phase,
                 "_terminalAtMonotonic": None,
                 "_runner": runner,
                 "_snapshot": deepcopy(snapshot),
@@ -233,6 +254,7 @@ class LongTaskCoordinator:
                 "_authInvalidatedError": deepcopy(invalidated_error),
                 "_successCommitter": success_committer,
                 "_authInvalidationCommitter": auth_invalidation_committer,
+                "_metrics": {},
                 "result": None,
                 "error": deepcopy(invalidated_error),
             }
@@ -586,14 +608,60 @@ class LongTaskCoordinator:
             runner = job["_runner"]
             snapshot = job["_snapshot"]
 
-        def progress(phase: str) -> None:
-            if phase not in PUBLIC_PHASES or phase in {"queued", "completed", "failed", "cancelled"}:
-                return
-            now = self._monotonic()
-            with self._lock:
-                current = self._jobs.get(job_key)
-                if current is not None and current["status"] == "running":
-                    self._transition_phase_locked(current, phase, now)
+        class ExecutionControl:
+            def __call__(ctrl_self, phase: str) -> None:
+                if phase not in PUBLIC_PHASES or phase in {"queued", "completed", "failed", "cancelled"}:
+                    return
+                now = self._monotonic()
+                with self._lock:
+                    current = self._jobs.get(job_key)
+                    if current is not None and current["status"] == "running":
+                        self._transition_phase_locked(current, phase, now)
+
+            def record_metric(ctrl_self, name: str, milliseconds: Optional[int]) -> None:
+                with self._lock:
+                    current = self._jobs.get(job_key)
+                    if current is not None:
+                        if "_metrics" not in current:
+                            current["_metrics"] = {}
+                        current["_metrics"][name] = milliseconds
+
+            def record_provider_attempt(ctrl_self, attempt_metrics: Dict) -> None:
+                with self._lock:
+                    current = self._jobs.get(job_key)
+                    if current is None:
+                        return
+                    metrics = current.setdefault("_metrics", {})
+                    metrics["providerAttempts"] = int(
+                        metrics.get("providerAttempts", 0)
+                    ) + 1
+                    for name in (
+                        "providerHeadersMs",
+                        "providerFirstVisibleMs",
+                        "providerCompleteMs",
+                        "parseMs",
+                    ):
+                        value = attempt_metrics.get(name)
+                        if isinstance(value, int) and not isinstance(value, bool):
+                            previous = metrics.get(name)
+                            metrics[name] = (
+                                previous + value
+                                if isinstance(previous, int)
+                                and not isinstance(previous, bool)
+                                else value
+                            )
+                        elif name not in metrics:
+                            metrics[name] = None
+
+            def cancel_requested(ctrl_self) -> bool:
+                with self._lock:
+                    current = self._jobs.get(job_key)
+                    return bool(current and current.get("_cancelRequested"))
+
+            def publish_text(ctrl_self, text: str) -> None:
+                pass
+
+        control = ExecutionControl()
 
         result = None
         error = None
@@ -601,7 +669,7 @@ class LongTaskCoordinator:
         cancelled_result = None
         continuation = None
         try:
-            result = runner(snapshot, progress)
+            result = runner(snapshot, control)
             if isinstance(result, LongTaskContinuation):
                 continuation = result
         except LongTaskCancelled as exc:
@@ -833,6 +901,7 @@ class LongTaskCoordinator:
                 now_mono - phase_started,
                 0.0,
             )
+            job["_lastTimedPhase"] = current_phase
         job["phase"] = phase
         job["_phaseStartedMonotonic"] = now_mono
         job["_updatedMonotonic"] = now_mono
@@ -908,6 +977,20 @@ class LongTaskCoordinator:
         is_invalidated = bool(job.get("_authInvalidated"))
         effective_status = "failed" if is_invalidated else job["status"]
         effective_phase = "failed" if is_invalidated else job["phase"]
+        elapsed_ms = int(max(elapsed_until - job["_createdMonotonic"], 0.0) * 1000)
+        phase_elapsed_ms = int(max(phase_elapsed, 0.0) * 1000)
+        remainder_phase = (
+            job.get("phase")
+            if terminal_at is None
+            else job.get("_lastTimedPhase")
+        )
+        phase_durations_ms = _phase_durations_ms(
+            durations,
+            elapsed_ms,
+            remainder_phase=remainder_phase,
+        )
+        queue_wait_ms = phase_durations_ms.get("queued", 0)
+        metrics = deepcopy(job.get("_metrics", {}))
         public_job = {
             "jobId": job["jobId"],
             "traceId": job["traceId"],
@@ -921,6 +1004,11 @@ class LongTaskCoordinator:
                 phase: int(max(duration, 0.0))
                 for phase, duration in durations.items()
             },
+            "elapsedMs": elapsed_ms,
+            "phaseElapsedMs": phase_elapsed_ms,
+            "phaseDurationsMs": phase_durations_ms,
+            "queueWaitMs": queue_wait_ms,
+            "metrics": metrics,
             "heartbeatAgeSeconds": int(
                 max(now_mono - job.get("_updatedMonotonic", now_mono), 0.0)
             ),
@@ -960,6 +1048,17 @@ class LongTaskCoordinator:
             else job.get("_updatedMonotonic", job["_createdMonotonic"])
         )
         error = job.get("error") if isinstance(job.get("error"), dict) else {}
+        durations_sec = {
+            phase: int(max(duration, 0.0))
+            for phase, duration in job.get("_phaseDurations", {}).items()
+        }
+        elapsed_ms = int(max(elapsed_until - job["_createdMonotonic"], 0.0) * 1000)
+        durations_ms = _phase_durations_ms(
+            job.get("_phaseDurations", {}),
+            elapsed_ms,
+            remainder_phase=job.get("_lastTimedPhase"),
+        )
+        queue_wait_ms = durations_ms.get("queued", 0)
         return {
             "jobId": job["jobId"],
             "traceId": job["traceId"],
@@ -969,10 +1068,11 @@ class LongTaskCoordinator:
             "elapsedSeconds": int(
                 max(elapsed_until - job["_createdMonotonic"], 0.0)
             ),
-            "phaseDurations": {
-                phase: int(max(duration, 0.0))
-                for phase, duration in job.get("_phaseDurations", {}).items()
-            },
+            "phaseDurations": durations_sec,
+            "elapsedMs": elapsed_ms,
+            "phaseDurationsMs": durations_ms,
+            "queueWaitMs": queue_wait_ms,
+            "metrics": deepcopy(job.get("_metrics", {})),
             "errorCode": str(
                 job.get("_diagnosticErrorCode") or error.get("code", "")
             ),

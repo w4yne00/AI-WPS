@@ -618,5 +618,189 @@ class LongTaskCoordinatorTests(unittest.TestCase):
         self.assertNotIn("完整上传文件名-机密项目.docx", diagnostic_text)
 
 
+    def test_job_status_reports_millisecond_durations_and_queue_wait_ms(self):
+        fake_mono = FakeClock(100.0)
+        fake_wall = FakeClock(1000.0)
+        coordinator = LongTaskCoordinator(
+            max_running=1,
+            max_queued=2,
+            monotonic_clock=fake_mono,
+            wall_clock=fake_wall,
+        )
+        first_release = threading.Event()
+
+        def first_runner(_snapshot, _progress):
+            first_release.wait(timeout=2)
+            return {"ok": True}
+
+        coordinator.submit(
+            job_id="first-job",
+            trace_id="trace-first",
+            task_type="word.smart_write",
+            runner=first_runner,
+            snapshot={},
+            failure_code="FIRST_FAILED",
+            failure_message="first failed",
+        )
+
+        fake_mono.advance(0.35)
+        fake_wall.advance(0.35)
+
+        queued_job = coordinator.submit(
+            job_id="second-job",
+            trace_id="trace-second",
+            task_type="word.smart_write",
+            runner=lambda _snapshot, _control: {"ok": True},
+            snapshot={},
+            failure_code="SECOND_FAILED",
+            failure_message="second failed",
+        )
+        self.assertEqual(queued_job["status"], "queued")
+        self.assertIn("elapsedMs", queued_job)
+        self.assertIn("phaseElapsedMs", queued_job)
+        self.assertIn("phaseDurationsMs", queued_job)
+        self.assertIn("queueWaitMs", queued_job)
+        self.assertEqual(queued_job["queueWaitMs"], 0)
+
+        fake_mono.advance(0.45)
+        fake_wall.advance(0.45)
+
+        job_in_queue = coordinator.get("second-job")
+        self.assertEqual(job_in_queue["elapsedMs"], 450)
+        self.assertEqual(job_in_queue["phaseElapsedMs"], 450)
+        self.assertEqual(job_in_queue["phaseDurationsMs"].get("queued"), 450)
+        self.assertEqual(job_in_queue["queueWaitMs"], 450)
+        self.assertEqual(job_in_queue["elapsedSeconds"], 0)
+        self.assertEqual(job_in_queue["phaseElapsedSeconds"], 0)
+
+        first_release.set()
+        completed_first = coordinator.wait("first-job")
+        self.assertEqual(completed_first["status"], "completed")
+
+        completed_second = coordinator.wait("second-job")
+        self.assertEqual(completed_second["status"], "completed")
+        self.assertGreaterEqual(completed_second["queueWaitMs"], 450)
+        self.assertGreaterEqual(completed_second["elapsedMs"], completed_second["queueWaitMs"])
+        self.assertEqual(
+            completed_second["elapsedSeconds"],
+            completed_second["elapsedMs"] // 1000,
+        )
+
+    def test_submillisecond_phases_conserve_terminal_elapsed_ms(self):
+        fake_mono = FakeClock(100.0)
+        coordinator = LongTaskCoordinator(
+            max_running=1,
+            max_queued=1,
+            monotonic_clock=fake_mono,
+        )
+
+        def runner(_snapshot, control):
+            fake_mono.advance(0.0009)
+            control("provider_processing")
+            fake_mono.advance(0.0009)
+            return {"ok": True}
+
+        coordinator.submit(
+            job_id="submillisecond-job",
+            trace_id="trace-submillisecond",
+            task_type="word.smart_write",
+            runner=runner,
+            snapshot={},
+            failure_code="SUBMILLISECOND_FAILED",
+            failure_message="submillisecond failed",
+        )
+
+        completed = coordinator.wait("submillisecond-job")
+        self.assertGreater(completed["elapsedMs"], 0)
+        self.assertEqual(
+            sum(completed["phaseDurationsMs"].values()),
+            completed["elapsedMs"],
+        )
+
+        recent = coordinator.diagnostics()["recentTerminalJobs"][0]
+        self.assertEqual(
+            sum(recent["phaseDurationsMs"].values()),
+            recent["elapsedMs"],
+        )
+
+    def test_rounding_remainder_follows_last_executed_phase(self):
+        fake_mono = FakeClock(100.0)
+        coordinator = LongTaskCoordinator(
+            max_running=1,
+            max_queued=1,
+            monotonic_clock=fake_mono,
+        )
+
+        def runner(_snapshot, control):
+            fake_mono.advance(0.0004)
+            control("provider_processing")
+            fake_mono.advance(0.0004)
+            control("retrying")
+            fake_mono.advance(0.0004)
+            control("provider_processing")
+            fake_mono.advance(0.0004)
+            return {"ok": True}
+
+        coordinator.submit(
+            job_id="phase-revisit-job",
+            trace_id="trace-phase-revisit",
+            task_type="word.smart_write",
+            runner=runner,
+            snapshot={},
+            failure_code="PHASE_REVISIT_FAILED",
+            failure_message="phase revisit failed",
+        )
+
+        completed = coordinator.wait("phase-revisit-job")
+        self.assertEqual(completed["elapsedMs"], 1)
+        self.assertEqual(completed["phaseDurationsMs"]["provider_processing"], 1)
+        self.assertEqual(completed["phaseDurationsMs"]["retrying"], 0)
+
+    def test_execution_control_records_metrics_and_cancel_state(self):
+        fake_mono = FakeClock(200.0)
+        coordinator = LongTaskCoordinator(
+            max_running=1,
+            max_queued=1,
+            monotonic_clock=fake_mono,
+        )
+
+        def metric_runner(_snapshot, control):
+            self.assertTrue(callable(control))
+            self.assertTrue(hasattr(control, "record_metric"))
+            self.assertTrue(hasattr(control, "cancel_requested"))
+            control("provider_processing")
+            control.record_metric("providerHeadersMs", 150)
+            control.record_metric("providerCompleteMs", 420)
+            control.record_metric("parseMs", 30)
+            control.record_metric("providerFirstVisibleMs", None)
+            self.assertFalse(control.cancel_requested())
+            return {"status": "success"}
+
+        coordinator.submit(
+            job_id="metric-job",
+            trace_id="trace-metric",
+            task_type="word.smart_write",
+            runner=metric_runner,
+            snapshot={},
+            failure_code="METRIC_FAILED",
+            failure_message="metric failed",
+        )
+        completed = coordinator.wait("metric-job")
+        self.assertEqual(completed["status"], "completed")
+        metrics = completed.get("metrics")
+        self.assertIsInstance(metrics, dict)
+        self.assertEqual(metrics.get("providerHeadersMs"), 150)
+        self.assertEqual(metrics.get("providerCompleteMs"), 420)
+        self.assertEqual(metrics.get("parseMs"), 30)
+        self.assertIsNone(metrics.get("providerFirstVisibleMs"))
+
+        diagnostics = coordinator.diagnostics()
+        recent = diagnostics["recentTerminalJobs"][0]
+        self.assertIn("elapsedMs", recent)
+        self.assertIn("phaseDurationsMs", recent)
+        self.assertIn("metrics", recent)
+        self.assertEqual(recent["metrics"].get("providerHeadersMs"), 150)
+
+
 if __name__ == "__main__":
     unittest.main()

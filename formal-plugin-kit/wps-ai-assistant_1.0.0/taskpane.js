@@ -218,6 +218,10 @@
     imitationRequirement: "",
     imitationReferenceMaterial: "",
     traceId: "",
+    taskPerformanceByJobId: {},
+    taskPerformanceByTraceId: {},
+    taskPerformanceOrder: [],
+    lastTaskPerformance: null,
     pendingApplyAction: "",
     rewriteResult: null,
     smartWritePreviewModel: null,
@@ -440,8 +444,100 @@
     return modeConfig[mode] ? mode : "smartWrite";
   }
 
+  function getTaskPerformance(jobId, traceId) {
+    var byJobId = state.taskPerformanceByJobId || {};
+    var byTraceId = state.taskPerformanceByTraceId || {};
+    if (jobId && byJobId[jobId]) {
+      return byJobId[jobId];
+    }
+    if (traceId && byTraceId[traceId]) {
+      return byTraceId[traceId];
+    }
+    return null;
+  }
+
+  function beginTaskPerformance(jobId, taskType, clickTimestamp, clickToFeedbackMs) {
+    state.taskPerformanceByJobId = state.taskPerformanceByJobId || {};
+    state.taskPerformanceByTraceId = state.taskPerformanceByTraceId || {};
+    state.taskPerformanceOrder = state.taskPerformanceOrder || [];
+    var record = {
+      jobId: jobId,
+      traceId: "",
+      taskType: taskType,
+      clickTimestamp: clickTimestamp,
+      clickToFeedbackMs: clickToFeedbackMs,
+      clickToAdapterAcceptedMs: null,
+      completionToFirstRenderMs: null
+    };
+    state.taskPerformanceByJobId[jobId] = record;
+    state.taskPerformanceOrder.push(jobId);
+    while (state.taskPerformanceOrder.length > 50) {
+      var expiredJobId = state.taskPerformanceOrder.shift();
+      var expired = state.taskPerformanceByJobId[expiredJobId];
+      if (expired && expired.traceId) {
+        delete state.taskPerformanceByTraceId[expired.traceId];
+      }
+      delete state.taskPerformanceByJobId[expiredJobId];
+    }
+    state.lastTaskPerformance = record;
+    return record;
+  }
+
+  function bindTaskPerformanceTrace(jobId, traceId, resolvedJobId) {
+    var record = getTaskPerformance(jobId, traceId);
+    if (!record) {
+      return null;
+    }
+    if (resolvedJobId) {
+      state.taskPerformanceByJobId[resolvedJobId] = record;
+      if (jobId && resolvedJobId !== jobId) {
+        delete state.taskPerformanceByJobId[jobId];
+        for (var index = 0; index < state.taskPerformanceOrder.length; index += 1) {
+          if (state.taskPerformanceOrder[index] === jobId) {
+            state.taskPerformanceOrder[index] = resolvedJobId;
+            break;
+          }
+        }
+      }
+      record.jobId = resolvedJobId;
+    }
+    if (traceId) {
+      record.traceId = traceId;
+      state.taskPerformanceByTraceId[traceId] = record;
+    }
+    return record;
+  }
+
+  function selectTaskPerformance(jobId, traceId) {
+    var record = getTaskPerformance(jobId, traceId);
+    state.lastTaskPerformance = record;
+    return record;
+  }
+
+  function recordTaskFirstRender(jobId, traceId, taskType, completionTimestamp) {
+    var record = getTaskPerformance(jobId, traceId);
+    if (!record) {
+      record = beginTaskPerformance(jobId || traceId, taskType, null, null);
+    }
+    bindTaskPerformanceTrace(jobId || record.jobId, traceId, jobId || record.jobId);
+    var commitMetric = function () {
+      var firstRenderTimestamp = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+      record.completionToFirstRenderMs = Math.max(0, Math.round(firstRenderTimestamp - completionTimestamp));
+      record.taskType = taskType;
+      if (state.traceId === record.traceId || (!state.traceId && state.lastTaskPerformance === record)) {
+        state.lastTaskPerformance = record;
+      }
+    };
+    if (typeof requestAnimationFrame === "function") {
+      requestAnimationFrame(commitMetric);
+    } else {
+      setTimeout(commitMetric, 0);
+    }
+  }
+
   function setTrace(traceId) {
     state.traceId = traceId || "";
+    selectTaskPerformance("", state.traceId);
     byId("trace-line").textContent = traceId || "未检测";
   }
 
@@ -2389,13 +2485,57 @@
       lines.push("- 拒绝数：" + (longTasks.rejectedCount || 0));
       lines.push("- 超时数：" + (longTasks.timedOutCount || 0));
       (longTasks.recentTerminalJobs || []).forEach(function (job) {
+        var elapsedDesc = (typeof job.elapsedMs === "number")
+          ? (job.elapsedMs + " ms（" + (job.elapsedSeconds || 0) + " 秒）")
+          : ((job.elapsedSeconds || 0) + " 秒");
+        var queueDesc = (typeof job.queueWaitMs === "number")
+          ? ("，排队 " + job.queueWaitMs + " ms")
+          : "";
         lines.push(
           "- 最近任务 " + (job.jobId || "未记录") +
+          (job.taskType ? "（" + job.taskType + "）" : "") +
           "：" + (job.status || "未记录") +
-          "，耗时 " + (job.elapsedSeconds || 0) + " 秒" +
+          "，耗时 " + elapsedDesc +
+          queueDesc +
           (job.errorCode ? "，错误码 " + job.errorCode : "")
         );
       });
+    }
+
+    if (debug.performance) {
+      lines.push("");
+      lines.push("## 模型服务耗时");
+      if (typeof debug.performance.providerAttempts === "number") {
+        lines.push("- 模型调用次数：" + debug.performance.providerAttempts);
+      }
+      if (typeof debug.performance.providerHeadersMs === "number") {
+        lines.push("- 响应头耗时：" + debug.performance.providerHeadersMs + " ms");
+      }
+      if (debug.performance.providerFirstVisibleMs !== null && typeof debug.performance.providerFirstVisibleMs === "number") {
+        lines.push("- 首内容耗时：" + debug.performance.providerFirstVisibleMs + " ms");
+      } else {
+        lines.push("- 首内容耗时：阻塞调用无流式首包（null）");
+      }
+      if (typeof debug.performance.providerCompleteMs === "number") {
+        lines.push("- 完整响应耗时：" + debug.performance.providerCompleteMs + " ms");
+      }
+      if (typeof debug.performance.parseMs === "number") {
+        lines.push("- 解析耗时：" + debug.performance.parseMs + " ms");
+      }
+    }
+
+    if (typeof state !== "undefined" && state.lastTaskPerformance) {
+      lines.push("");
+      lines.push("## 任务窗格本地耗时");
+      if (typeof state.lastTaskPerformance.clickToFeedbackMs === "number") {
+        lines.push("- 点击到反馈耗时：" + state.lastTaskPerformance.clickToFeedbackMs + " ms");
+      }
+      if (typeof state.lastTaskPerformance.clickToAdapterAcceptedMs === "number") {
+        lines.push("- 点击到后台接收耗时：" + state.lastTaskPerformance.clickToAdapterAcceptedMs + " ms");
+      }
+      if (typeof state.lastTaskPerformance.completionToFirstRenderMs === "number") {
+        lines.push("- 完成到首渲染耗时：" + state.lastTaskPerformance.completionToFirstRenderMs + " ms");
+      }
     }
 
     if (debug.request) {
@@ -7247,8 +7387,12 @@
 
   function refreshDiagnostics() {
     setDiagnosticsResult("正在刷新最近一次任务诊断...");
+    var debugPath = "/provider/debug-last";
+    if (state.traceId) {
+      debugPath += "?traceId=" + encodeURIComponent(state.traceId);
+    }
     return Promise.all([
-      readAdapterJson("/provider/debug-last"),
+      readAdapterJson(debugPath),
       readAdapterJson("/provider/status"),
       readAdapterJson("/provider/route-diagnostics"),
       readAdapterJson("/provider/task-api-keys")
@@ -7614,6 +7758,7 @@
   }
 
   function completeWritingJob(result, traceId, taskType, resumed, mode, jobId, docSessionId) {
+    var completionTimestamp = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
     var label = writingTaskLabel(taskType);
     var targetJobId = jobId || traceId || state.writingJobId || "";
     var targetDocSession = docSessionId || state.documentSessionId || "default";
@@ -7671,6 +7816,7 @@
         hideCompareForSmartImitation();
       }
       setStatus(label + "结果已生成。" + notice + (resumed && taskType === "word.smart_write" ? "为保护原选区，本次恢复结果仅供预览和复制。" : ""));
+      recordTaskFirstRender(targetJobId, traceId || targetJobId || "", taskType, completionTimestamp);
     } else {
       state.historyUnreadCount = (state.historyUnreadCount || 0) + 1;
       updateHistoryBadge();
@@ -8164,6 +8310,12 @@
     setWritingJob(jobId, taskType, mode);
     state.writingJobStartedAt = startedAt;
     state.writingJobPollErrorCount = 0;
+    var taskPerformance = beginTaskPerformance(
+      jobId,
+      taskType,
+      Number(payload._clickTimestamp || startedAt),
+      Number(payload._clickToFeedbackMs || 0)
+    );
     var jobRecord = {
       jobId: jobId,
       taskType: taskType,
@@ -8176,8 +8328,17 @@
 
     request(writingJobPath(taskType), payload, { timeoutMs: WRITING_POLL_REQUEST_TIMEOUT_MS })
       .then(function (body) {
+        var now = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+        var baseClick = taskPerformance.clickTimestamp || startedAt;
+        var clickToAdapterAcceptedMs = Math.max(0, Math.round(now - baseClick));
+        taskPerformance.clickToAdapterAcceptedMs = clickToAdapterAcceptedMs;
         var job = body.data || {};
         var returnedJobId = job.jobId || jobId;
+        bindTaskPerformanceTrace(
+          jobId,
+          body.traceId || job.traceId || returnedJobId,
+          returnedJobId
+        );
         setWritingJob(returnedJobId, taskType, mode);
         setTrace(body.traceId || job.traceId || returnedJobId);
         jobRecord.jobId = returnedJobId;
@@ -10483,6 +10644,7 @@
   }
 
   function runSmartWriteAction() {
+    var clickTimestamp = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
     var document = getActiveDocument();
     var docSession = helpers.getDocumentSessionId ? helpers.getDocumentSessionId(document) : "doc_session_default";
     var docDisplayName = helpers.getDocumentDisplayName ? helpers.getDocumentDisplayName(document) : "未命名文档.docx";
@@ -10510,7 +10672,8 @@
     var config = modeConfig[state.currentMode] || modeConfig.smartWrite;
     setModelTaskBusy(true);
     setStatus("正在读取选中文本...");
-
+    var clickFeedbackTimestamp = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+    var clickToFeedbackMs = Math.max(0, Math.round(clickFeedbackTimestamp - clickTimestamp));
     resetSmartWritePreviewState();
     setActiveResultRecord("word.smart_write", docSession, null);
     setPlainResult("正在读取选中文本，请稍候。");
@@ -10528,6 +10691,8 @@
         state.latestDocumentPayload.host = "wps";
         state.latestDocumentPayload.documentSessionId = docSession;
         state.latestDocumentPayload.documentDisplayName = docDisplayName;
+        state.latestDocumentPayload._clickTimestamp = clickTimestamp;
+        state.latestDocumentPayload._clickToFeedbackMs = clickToFeedbackMs;
       } catch (error) {
         setModelTaskBusy(false);
         setStatus(error.message);
@@ -10541,6 +10706,7 @@
   }
 
   function runSmartImitationAction() {
+    var clickTimestamp = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
     var document = getActiveDocument();
     var docSession = helpers.getDocumentSessionId ? helpers.getDocumentSessionId(document) : "doc_session_default";
     var docDisplayName = helpers.getDocumentDisplayName ? helpers.getDocumentDisplayName(document) : "未命名文档.docx";
@@ -10591,6 +10757,7 @@
       documentSessionId: docSession,
       documentDisplayName: docDisplayName,
       writingPolicyScene: getWritingPolicyScene(),
+      _clickTimestamp: clickTimestamp,
       content: {
         plainText: templateText,
         paragraphs: paragraphs,
@@ -10605,6 +10772,9 @@
 
     setModelTaskBusy(true);
     setStatus(config.runningText);
+    var clickFeedbackTimestamp = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+    var clickToFeedbackMs = Math.max(0, Math.round(clickFeedbackTimestamp - clickTimestamp));
+    state.latestDocumentPayload._clickToFeedbackMs = clickToFeedbackMs;
     setPlainResult("正在生成仿写内容，请稍候。");
     startWritingJob(state.latestDocumentPayload, "word.smart_imitation", "smartImitation");
   }

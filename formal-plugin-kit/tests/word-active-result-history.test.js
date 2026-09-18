@@ -125,6 +125,7 @@ function createBaseContext(initialOverrides = {}) {
     setTrace: (traceId) => {
       byId("trace-line").textContent = traceId || "";
     },
+    recordTaskFirstRender: () => {},
     writingTaskLabel: (tt) => tt === "word.smart_imitation" ? "智能仿写" : "智能编写",
     describeFetchError: (err) => (err && err.message) || String(err || ""),
     hideCompareForSmartImitation: () => {},
