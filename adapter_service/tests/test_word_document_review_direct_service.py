@@ -4,6 +4,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import threading
 import unittest
+from unittest.mock import patch
 
 HAS_PYDANTIC = importlib.util.find_spec("pydantic") is not None
 HAS_PROVIDER_API = HAS_PYDANTIC and importlib.util.find_spec("fastapi") is not None
@@ -505,37 +506,59 @@ class WordDocumentReviewDirectServiceTest(unittest.TestCase):
 
         called = {}
 
-        def mock_post_task(task_type, trace_id, input_data, query, **kwargs):
-            called["task_type"] = task_type
-            called["trace_id"] = trace_id
-            called["query"] = query
-            called["task_auth"] = kwargs.get("task_auth")
-            return {
-                "answer": '{"summary":"审查完成","issues":[]}',
-                "conversation_id": "conv-test",
-            }
+        class StreamingResponse:
+            headers = {"Content-Type": "text/event-stream"}
 
-        client.post_task = mock_post_task
+            def __enter__(self):
+                return self
 
-        res = client.validate_task_model_selection(
-            "word.document_review",
-            {
-                "serviceId": svc["id"],
-                "modelName": "custom-doc-model",
-                "customModel": True,
-                "temperature": 0.1,
-                "maxOutputTokens": 2048,
-                "contextWindowTokens": 40000,
-            },
-            trace_id="trace-validate-doc",
-        )
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def __iter__(self):
+                content = '{"summary":"审查完成","issues":[]}'
+                event = json.dumps(
+                    {
+                        "choices": [
+                            {
+                                "delta": {"content": content},
+                                "finish_reason": "stop",
+                            }
+                        ]
+                    },
+                    ensure_ascii=False,
+                )
+                yield ("data: " + event + "\n\n").encode("utf-8")
+
+        def streaming_response(request, timeout=None):
+            payload = json.loads(request.data.decode("utf-8"))
+            called["model"] = payload["model"]
+            called["query"] = payload["messages"][1]["content"]
+            called["stream"] = payload["stream"]
+            return StreamingResponse()
+
+        with patch("urllib.request.urlopen", side_effect=streaming_response):
+            res = client.validate_task_model_selection(
+                "word.document_review",
+                {
+                    "serviceId": svc["id"],
+                    "modelName": "custom-doc-model",
+                    "customModel": True,
+                    "temperature": 0.1,
+                    "maxOutputTokens": 2048,
+                    "contextWindowTokens": 40000,
+                },
+                trace_id="trace-validate-doc",
+            )
 
         self.assertTrue(res["success"])
         self.assertEqual(res["taskType"], "word.document_review")
         self.assertEqual(res["modelName"], "custom-doc-model")
         self.assertTrue(res["customModel"])
         self.assertTrue(res["customModelValidated"])
-        self.assertEqual(called["task_type"], "word.document_review")
+        self.assertEqual(res["streamingCapability"], "validated")
+        self.assertEqual(called["model"], "custom-doc-model")
+        self.assertTrue(called["stream"])
         self.assertIn("请审查", called["query"])
 
     @unittest.skipUnless(HAS_PYDANTIC, "pydantic is required for FullDocumentReviewService tests")

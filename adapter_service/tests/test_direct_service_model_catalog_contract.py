@@ -230,25 +230,44 @@ class DirectServiceModelCatalogContractTests(unittest.TestCase):
             model_configuration_store=None,
             direct_service_store=self.store,
         )
-        response_body = {
-            "answer": json.dumps(
-                {
-                    "overview": "概述",
-                    "findings": [],
-                    "risks": [],
-                    "actions": [],
-                },
-                ensure_ascii=False,
-            )
-        }
+        answer = json.dumps(
+            {
+                "overview": "概述",
+                "findings": [],
+                "risks": [],
+                "actions": [],
+            },
+            ensure_ascii=False,
+        )
+        event = json.dumps(
+            {
+                "choices": [
+                    {"delta": {"content": answer}, "finish_reason": "stop"}
+                ]
+            },
+            ensure_ascii=False,
+        )
 
-        def rotate_key_then_return(*_args, **_kwargs):
-            self.store.replace_api_key(
-                service["id"], "sk-rotated-during-validation", expected_revision=1
-            )
-            return response_body
+        class RotatingStreamingResponse:
+            headers = {"Content-Type": "text/event-stream"}
 
-        with patch.object(client, "post_task", side_effect=rotate_key_then_return):
+            def __enter__(inner_self):
+                return inner_self
+
+            def __exit__(inner_self, exc_type, exc, tb):
+                return False
+
+            def __iter__(inner_self):
+                self.store.replace_api_key(
+                    service["id"],
+                    "sk-rotated-during-validation",
+                    expected_revision=1,
+                )
+                yield ("data: " + event + "\n\n").encode("utf-8")
+
+        with patch(
+            "urllib.request.urlopen", return_value=RotatingStreamingResponse()
+        ):
             with self.assertRaises(DirectServiceError) as context:
                 client.validate_task_model_selection(
                     "excel.analysis",

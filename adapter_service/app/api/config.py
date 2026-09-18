@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from app.core.config import default_config_path, load_settings
 from app.core.features import (
     deterministic_format_review_enabled,
+    direct_streaming_enabled,
     full_document_review_enabled,
     image_semantics_enabled,
 )
@@ -50,6 +51,7 @@ def get_config() -> dict:
                 "fullDocumentReviewEnabled": full_document_review_enabled(),
                 "deterministicFormatReviewEnabled": deterministic_format_review_enabled(),
                 "imageSemanticsEnabled": image_semantics_enabled(),
+                "directStreamingEnabled": direct_streaming_enabled(),
             },
             "formatReview": {
                 "imageSemantics": image_semantic_settings,
