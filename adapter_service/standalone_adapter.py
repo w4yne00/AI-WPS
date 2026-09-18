@@ -101,7 +101,11 @@ from app.services.task_history import (
     get_task_history_store,
 )
 from app.services.system_prompts import SystemPromptError, SystemPromptStore
-from app.services.word.writing_jobs import SmartImitationJobStore, SmartWriteJobStore
+from app.services.word.writing_jobs import (
+    SmartImitationJobStore,
+    SmartWriteJobStore,
+    normalize_writing_events_query,
+)
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -295,11 +299,11 @@ def writing_job_payload(job):
 
 def writing_job_missing_envelope(job_id, task_type, interrupted=False):
     label = "智能编写" if task_type == "word.smart_write" else "智能仿写"
-    code_prefix = "WORD_SMART_WRITE" if task_type == "word.smart_write" else "WORD_SMART_IMITATION"
+    code_prefix = "SMART_WRITE" if task_type == "word.smart_write" else "SMART_IMITATION"
     message = (
-        "未找到进行中的{0}任务，请重新发起。".format(label)
+        "{0}任务不存在，可能因 Adapter 重启而中断，请重新提交。".format(label)
         if interrupted
-        else "后台{0}任务不存在或已过期。".format(label)
+        else "{0}后台任务不存在或已过期。".format(label)
     )
     data = (
         {
@@ -1896,13 +1900,22 @@ class Handler(BaseHTTPRequestHandler):
                     job_id = suffix[: -len("/events")].strip("/")
                     query_params = parse_qs(parsed.query, keep_blank_values=True)
                     try:
-                        after_seq = int(query_params.get("afterSequence", ["0"])[0])
-                    except (TypeError, ValueError):
-                        after_seq = 0
-                    try:
-                        wait_ms = int(query_params.get("waitMs", ["0"])[0])
-                    except (TypeError, ValueError):
-                        wait_ms = 0
+                        after_seq, wait_ms = normalize_writing_events_query(
+                            query_params.get("afterSequence", ["0"])[0],
+                            query_params.get("waitMs", ["0"])[0],
+                        )
+                    except AdapterError as error:
+                        self._write(
+                            error.status_code,
+                            envelope(
+                                job_id,
+                                task_type,
+                                success=False,
+                                message=error.message,
+                                errors=[{"code": error.code, "message": error.message}],
+                            ),
+                        )
+                        return
                     events_data = store.wait_events(
                         job_id, after_sequence=after_seq, wait_ms=wait_ms
                     )

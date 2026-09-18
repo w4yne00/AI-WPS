@@ -121,6 +121,30 @@ class WordWritingEventsApiTests(unittest.TestCase):
         self.assertFalse(sa_res["body"]["success"])
         self.assertEqual(sa_res["body"]["data"]["status"], "not_found")
         self.assertIn("NOT_FOUND", sa_res["body"]["errors"][0]["code"])
+        self.assertEqual(sa_res["body"], fa_res["body"])
+
+    def test_invalid_event_query_returns_equivalent_validation_error(self):
+        paths = (
+            "/word/smart-write/jobs/non-existent-job-id/events?afterSequence=invalid",
+            "/word/smart-write/jobs/non-existent-job-id/events?waitMs=invalid",
+        )
+        for path in paths:
+            with self.subTest(path=path):
+                fa_res = self._invoke_fastapi("GET", path)
+                sa_res = self._invoke_standalone("do_GET", path)
+
+                self.assertEqual(fa_res["status"], 422)
+                self.assertEqual(sa_res["status"], 422)
+                self.assertEqual(
+                    fa_res["body"]["errors"][0]["code"],
+                    "REQUEST_VALIDATION_FAILED",
+                )
+                self.assertEqual(
+                    sa_res["body"]["errors"][0]["code"],
+                    "REQUEST_VALIDATION_FAILED",
+                )
+                self.assertEqual(sa_res["body"]["taskType"], fa_res["body"]["taskType"])
+                self.assertEqual(sa_res["body"]["message"], fa_res["body"]["message"])
 
     def test_events_long_polling_parity_between_fastapi_and_standalone(self):
         job_req = make_request_dict("smart-write-events-job-001")
@@ -170,11 +194,13 @@ class WordWritingEventsApiTests(unittest.TestCase):
         self.assertEqual(fa_term["status"], 200)
         self.assertTrue(fa_term["body"]["data"]["terminal"])
         self.assertEqual(fa_term["body"]["data"]["status"], "completed")
+        self.assertNotIn("result", fa_term["body"]["data"])
 
         sa_term = self._invoke_standalone("do_GET", f"/word/smart-write/jobs/smart-write-events-job-001/events?afterSequence={seq_fa}&waitMs=50")
         self.assertEqual(sa_term["status"], 200)
         self.assertTrue(sa_term["body"]["data"]["terminal"])
         self.assertEqual(sa_term["body"]["data"]["status"], "completed")
+        self.assertNotIn("result", sa_term["body"]["data"])
 
     def test_smart_imitation_events_and_waitms_clamping(self):
         import app.api.word as word_api

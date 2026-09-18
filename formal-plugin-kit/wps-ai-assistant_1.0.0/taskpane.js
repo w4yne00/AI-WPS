@@ -7778,7 +7778,7 @@
     }
     setActiveWritingJobRecord(taskType, targetDocSession, null);
 
-    var isCurrentGlobalJob = (!targetJobId || state.writingJobId === targetJobId || state.writingJobTaskType === taskType);
+    var isCurrentGlobalJob = (!targetJobId || state.writingJobId === targetJobId);
     if (isCurrentGlobalJob) {
       setWritingJob("", "", "");
       state.writingJobStartedAt = 0;
@@ -8288,7 +8288,7 @@
     });
   }
 
-  function pollWritingJobEvents(jobId, taskType, mode, resumed, docSessionId, afterSequence, consecutiveErrors) {
+  function pollWritingJobEvents(jobId, taskType, mode, resumed, docSessionId, afterSequence, consecutiveErrors, consumerVersion) {
     if (!jobId) {
       return;
     }
@@ -8297,11 +8297,40 @@
     var targetDocSession = docSessionId || (state && state.documentSessionId) || "default";
     var seq = typeof afterSequence === "number" ? afterSequence : 0;
     var errors = typeof consecutiveErrors === "number" ? consecutiveErrors : 0;
+    var consumerKey = [taskType, targetDocSession, jobId].join("::");
+    state.writingEventConsumers = state.writingEventConsumers || {};
+    var activeConsumerVersion = consumerVersion;
+    if (typeof activeConsumerVersion !== "number") {
+      activeConsumerVersion = Number(state.writingEventConsumers[consumerKey] || 0) + 1;
+      state.writingEventConsumers[consumerKey] = activeConsumerVersion;
+    }
+
+    function isCurrentConsumer() {
+      return state.writingEventConsumers[consumerKey] === activeConsumerVersion;
+    }
+
+    function stopCurrentConsumer() {
+      if (isCurrentConsumer()) {
+        delete state.writingEventConsumers[consumerKey];
+      }
+    }
+
+    function isCurrentWritingView() {
+      var currentDoc = (helpers && helpers.getDocumentSessionId && typeof getActiveDocument === "function")
+        ? helpers.getDocumentSessionId(getActiveDocument())
+        : state.documentSessionId;
+      return state.currentMode === mode &&
+        state.writingJobId === jobId &&
+        (!targetDocSession || targetDocSession === currentDoc || !currentDoc);
+    }
     var url = writingJobPath(taskType) + "/" + encodeURIComponent(jobId) + "/events?afterSequence=" + seq + "&waitMs=" + waitMs;
 
     request(url, null, {
       timeoutMs: reqTimeoutMs
     }).then(function (body) {
+      if (!isCurrentConsumer()) {
+        return;
+      }
       var payload = body.data || {};
       var events = payload.events || [];
       var nextSequence = (typeof payload.latestSequence === "number") ? payload.latestSequence : seq;
@@ -8318,7 +8347,7 @@
       });
 
       if (payload.resetRequired && payload.previewSnapshot) {
-        if (!state || state.currentMode === mode) {
+        if (isCurrentWritingView()) {
           renderWritingJobProgress(payload.previewSnapshot, taskType, jobId);
         }
       }
@@ -8328,26 +8357,19 @@
         if (typeof evt.sequence === "number" && evt.sequence > nextSequence) {
           nextSequence = evt.sequence;
         }
-        if (!state || state.currentMode === mode) {
+        if (isCurrentWritingView()) {
           renderWritingJobProgress(evt, taskType, jobId);
         }
       }
 
       if (isTerminal || terminalStatus === "completed" || terminalStatus === "cancelled" || terminalStatus === "failed") {
         if (terminalStatus === "completed") {
-          if (typeof releaseTaskSlotsForJob === "function") {
-            releaseTaskSlotsForJob(jobId);
-          }
-          if (typeof helpers !== "undefined" && helpers && helpers.releaseTaskSlot) {
-            helpers.releaseTaskSlot(state.activeTaskSlots, "wps", taskType, targetDocSession, jobId);
-          }
-          if (typeof clearWritingActiveJob === "function") {
-            clearWritingActiveJob(jobId, taskType, targetDocSession);
-          }
-          completeWritingJob(payload.result || {}, body.traceId || jobId, taskType, resumed, mode, jobId, targetDocSession);
+          stopCurrentConsumer();
+          pollWritingJob(jobId, taskType, mode, resumed, targetDocSession);
           return;
         }
         if (terminalStatus === "cancelled") {
+          stopCurrentConsumer();
           if (typeof releaseTaskSlotsForJob === "function") {
             releaseTaskSlotsForJob(jobId);
           }
@@ -8387,25 +8409,36 @@
           return;
         }
         if (terminalStatus === "failed") {
+          stopCurrentConsumer();
           failWritingJob(jobId, taskType, mode, payload.error, targetDocSession);
           return;
         }
       }
 
-      pollWritingJobEvents(jobId, taskType, mode, resumed, targetDocSession, nextSequence, 0);
+      pollWritingJobEvents(jobId, taskType, mode, resumed, targetDocSession, nextSequence, 0, activeConsumerVersion);
     }).catch(function (error) {
-      if (isFatalWritingPollError(error)) {
-        failWritingJob(jobId, taskType, mode, error, targetDocSession);
+      if (!isCurrentConsumer()) {
         return;
       }
       var status = error && (error.httpStatus || error.status);
+      if (status === 404) {
+        stopCurrentConsumer();
+        pollWritingJob(jobId, taskType, mode, resumed, targetDocSession);
+        return;
+      }
+      if (isFatalWritingPollError(error)) {
+        stopCurrentConsumer();
+        failWritingJob(jobId, taskType, mode, error, targetDocSession);
+        return;
+      }
       var nextErrors = errors + 1;
-      if (status === 404 || nextErrors >= 3) {
+      if (nextErrors >= 3) {
+        stopCurrentConsumer();
         pollWritingJob(jobId, taskType, mode, resumed, targetDocSession);
         return;
       }
       setTimeout(function () {
-        pollWritingJobEvents(jobId, taskType, mode, resumed, targetDocSession, seq, nextErrors);
+        pollWritingJobEvents(jobId, taskType, mode, resumed, targetDocSession, seq, nextErrors, activeConsumerVersion);
       }, 1000);
     });
   }

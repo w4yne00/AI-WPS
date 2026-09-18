@@ -2,11 +2,12 @@
 
 ## 当前功能实现：Issue #203 为智能编写建立可恢复增量任务事件（2026-09-18）
 
+- **PR #215 审查修复（2026-09-18）**：事件终态完成后改为复用现有状态查询取得权威 `result`，避免首个 tracer 不携带正文时丢失生成结果；长轮询消费者按 `taskType/documentSessionId/jobId` 维护版本令牌，旧消费者、跨文档进度和后台终态不再污染当前任务；events 404 优先平滑降级，FastAPI 与 standalone 共用参数归一化并恢复一致的缺失任务 envelope。
 - **后台长任务增量事件与非忙等待**：遵循 ADR-0132 与 Issue #203 契约，`LongTaskCoordinator` 为每个任务维护最多 256 项的有界环形事件队列（`_events`）与单调递增 `latestSequence`；`wait_events()` 基于 `threading.Condition` 实现非忙等待与超时唤醒（`waitMs` 上限 25000ms）；客户端请求超出环形缓冲范围时自动返回 `resetRequired=True` 与 `previewSnapshot` 快照，确保断线恢复不丢状态。
 - **阶段扩充与首个 Tracer 边界**：阶段枚举扩充 `provider_connecting`、`provider_waiting`、`streaming`、`stopping`；首个 tracer 严格只传输真实阶段与终态事件，绝不提前发布模型正文，严格不改变现有 queued-only 取消语义（正文预览与运行中取消分别归属 #205 与 #206）。
 - **FastAPI 与 Standalone 双运行时对等**：对等实现 `GET /word/smart-write/jobs/{job_id}/events` 和 `GET /word/smart-imitation/jobs/{job_id}/events`，统一参数校验、25 秒等待上限、超时空响应信封与 404 错误信封对等性。
 - **Word 任务窗格事件消费与平滑降级**：`taskpane.js` 实现 `pollWritingJobEvents`，按文档会话消费阶段推进，终态（完成/取消/失败）统一释放任务槽位并同步结果；当接口返回 404（旧版本 Adapter）或连续 3 次长轮询失败时，平滑降级回退至现有 3 秒状态短轮询，用户无感知。
-- **验证数据**：Docker Python 3.8 全量后端测试 `1409 passed / 55 skipped`；正式插件套件 `232 passed / 0 fail`；Python 3.8 兼容扫描 173 个生产文件通过；`git diff --check` 通过，无空白或冲突异常；未触碰任何受保护文件。
+- **审查修复验证**：本地后端 `1410 passed / 54 skipped`，受沙箱浏览器限制的组装插件门禁单独在沙箱外通过，因此共 `1411` 项通过；麒麟 V10/Python 3.8 为 `1410 passed / 55 skipped`。正式插件 `232/232`（含真实浏览器视口）、`wps-addon` `12/12` 且 Vite 构建通过，Python 3.8 兼容扫描 77 文件及 `git diff --check` 均通过。
 
 ## 当前功能实现：Issue #202 建立毫秒级性能诊断（2026-09-17）
 
