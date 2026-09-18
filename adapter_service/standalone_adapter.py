@@ -295,11 +295,11 @@ def writing_job_payload(job):
 
 def writing_job_missing_envelope(job_id, task_type, interrupted=False):
     label = "智能编写" if task_type == "word.smart_write" else "智能仿写"
-    code_prefix = "SMART_WRITE" if task_type == "word.smart_write" else "SMART_IMITATION"
+    code_prefix = "WORD_SMART_WRITE" if task_type == "word.smart_write" else "WORD_SMART_IMITATION"
     message = (
-        "{0}任务不存在，可能因 Adapter 重启而中断，请重新提交。".format(label)
+        "未找到进行中的{0}任务，请重新发起。".format(label)
         if interrupted
-        else "{0}后台任务不存在或已过期。".format(label)
+        else "后台{0}任务不存在或已过期。".format(label)
     )
     data = (
         {
@@ -1891,7 +1891,38 @@ class Handler(BaseHTTPRequestHandler):
         )
         for prefix, task_type, store in writing_job_routes:
             if path.startswith(prefix):
-                job_id = unquote(path[len(prefix) :]).strip("/")
+                suffix = unquote(path[len(prefix) :]).strip("/")
+                if suffix.endswith("/events"):
+                    job_id = suffix[: -len("/events")].strip("/")
+                    query_params = parse_qs(parsed.query, keep_blank_values=True)
+                    try:
+                        after_seq = int(query_params.get("afterSequence", ["0"])[0])
+                    except (TypeError, ValueError):
+                        after_seq = 0
+                    try:
+                        wait_ms = int(query_params.get("waitMs", ["0"])[0])
+                    except (TypeError, ValueError):
+                        wait_ms = 0
+                    events_data = store.wait_events(
+                        job_id, after_sequence=after_seq, wait_ms=wait_ms
+                    )
+                    if not events_data:
+                        self._write(
+                            404,
+                            writing_job_missing_envelope(job_id, task_type),
+                        )
+                        return
+                    self._write(
+                        200,
+                        envelope(
+                            events_data.get("traceId", job_id),
+                            task_type,
+                            events_data,
+                            message=events_data.get("status", "success"),
+                        ),
+                    )
+                    return
+                job_id = suffix
                 job = store.get(job_id)
                 interrupted = str(
                     parse_qs(parsed.query).get("resume", [""])[0]

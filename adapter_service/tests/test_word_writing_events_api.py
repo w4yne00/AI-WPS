@@ -1,0 +1,207 @@
+import json
+import threading
+import time
+import unittest
+from io import BytesIO
+
+from app.core.models import WordDocumentRequest
+from app.services.long_task_coordinator import LongTaskCoordinator
+from app.services.word.writing_jobs import SmartWriteJobStore
+
+
+class BlockingWritingWorker:
+    def __init__(self):
+        self.started = threading.Event()
+        self.step_event = threading.Event()
+        self.release_event = threading.Event()
+
+    def snapshot_task_auth(self):
+        return {"configurationId": "test-config"}
+
+    def smart_write(self, request, trace_id="", task_auth=None, progress_callback=None):
+        if progress_callback:
+            progress_callback("provider_processing")
+        self.started.set()
+        self.step_event.wait(timeout=2)
+        if progress_callback:
+            progress_callback("parsing")
+        self.release_event.wait(timeout=2)
+        return {
+            "originalText": request.content.plain_text,
+            "rewrittenText": "处理完成结果。",
+            "rewriteMode": "rewrite",
+        }
+
+
+def make_request_dict(client_job_id):
+    return {
+        "documentId": "test-doc.docx",
+        "scene": "word",
+        "selectionMode": "selection",
+        "clientJobId": client_job_id,
+        "documentSessionId": "session-1",
+        "documentDisplayName": "test.docx",
+        "host": "wps",
+        "content": {
+            "plainText": "原文",
+            "paragraphs": [],
+            "headings": [],
+        },
+        "options": {},
+    }
+
+
+class WordWritingEventsApiTests(unittest.TestCase):
+    def setUp(self):
+        import app.api.word as word_api
+        import standalone_adapter
+
+        self.worker = BlockingWritingWorker()
+        self.coordinator = LongTaskCoordinator(max_running=2, max_queued=4)
+        self.store = SmartWriteJobStore(worker=self.worker, coordinator=self.coordinator)
+
+        self.orig_fastapi_store = word_api.smart_write_jobs
+        self.orig_standalone_store = standalone_adapter.SMART_WRITE_JOB_STORE
+
+        word_api.smart_write_jobs = self.store
+        standalone_adapter.SMART_WRITE_JOB_STORE = self.store
+
+    def tearDown(self):
+        import app.api.word as word_api
+        import standalone_adapter
+
+        self.worker.step_event.set()
+        self.worker.release_event.set()
+
+        word_api.smart_write_jobs = self.orig_fastapi_store
+        standalone_adapter.SMART_WRITE_JOB_STORE = self.orig_standalone_store
+
+    def _invoke_standalone(self, method, path, payload=None):
+        import standalone_adapter
+
+        raw = json.dumps(payload or {}, ensure_ascii=False).encode("utf-8") if payload is not None else b""
+        captured = {}
+        handler = object.__new__(standalone_adapter.Handler)
+        handler.path = path
+        handler.headers = {"Content-Length": str(len(raw))}
+        handler.rfile = BytesIO(raw)
+        handler._write = lambda status, body: captured.update(status=status, body=body)
+        getattr(handler, method)()
+        return captured
+
+    def _invoke_fastapi(self, method, path, payload=None):
+        from fastapi.testclient import TestClient
+        from app.main import app
+
+        client = TestClient(app)
+        if method == "GET":
+            resp = client.get(path)
+        elif method == "POST":
+            resp = client.post(path, json=payload)
+        elif method == "DELETE":
+            resp = client.delete(path)
+        else:
+            raise ValueError(method)
+        return {
+            "status": resp.status_code,
+            "body": resp.json() if resp.headers.get("content-type", "").startswith("application/json") else resp.text,
+        }
+
+    def test_missing_job_returns_404_on_fastapi_and_standalone(self):
+        # 1. FastAPI 404
+        fa_res = self._invoke_fastapi("GET", "/word/smart-write/jobs/non-existent-job-id/events")
+        self.assertEqual(fa_res["status"], 404)
+        self.assertFalse(fa_res["body"]["success"])
+        self.assertEqual(fa_res["body"]["data"]["status"], "not_found")
+        self.assertIn("NOT_FOUND", fa_res["body"]["errors"][0]["code"])
+
+        # 2. Standalone 404
+        sa_res = self._invoke_standalone("do_GET", "/word/smart-write/jobs/non-existent-job-id/events")
+        self.assertEqual(sa_res["status"], 404)
+        self.assertFalse(sa_res["body"]["success"])
+        self.assertEqual(sa_res["body"]["data"]["status"], "not_found")
+        self.assertIn("NOT_FOUND", sa_res["body"]["errors"][0]["code"])
+
+    def test_events_long_polling_parity_between_fastapi_and_standalone(self):
+        job_req = make_request_dict("smart-write-events-job-001")
+        req_obj = WordDocumentRequest(**job_req)
+        self.store.start(req_obj, "trace-events-001")
+        self.assertTrue(self.worker.started.wait(timeout=2))
+
+        # Initial query (afterSequence=0) on FastAPI
+        fa_init = self._invoke_fastapi("GET", "/word/smart-write/jobs/smart-write-events-job-001/events?afterSequence=0")
+        self.assertEqual(fa_init["status"], 200)
+        fa_data = fa_init["body"]["data"]
+        self.assertEqual(fa_data["jobId"], "smart-write-events-job-001")
+        self.assertFalse(fa_data["resetRequired"])
+        self.assertFalse(fa_data["terminal"])
+        self.assertIsNotNone(fa_data["previewSnapshot"])
+        self.assertGreater(len(fa_data["events"]), 0)
+        seq_fa = fa_data["latestSequence"]
+
+        # Initial query (afterSequence=0) on Standalone
+        sa_init = self._invoke_standalone("do_GET", "/word/smart-write/jobs/smart-write-events-job-001/events?afterSequence=0")
+        self.assertEqual(sa_init["status"], 200)
+        sa_data = sa_init["body"]["data"]
+        self.assertEqual(sa_data["jobId"], "smart-write-events-job-001")
+        self.assertFalse(sa_data["resetRequired"])
+        self.assertFalse(sa_data["terminal"])
+        self.assertIsNotNone(sa_data["previewSnapshot"])
+        self.assertEqual(sa_data["latestSequence"], seq_fa)
+
+        # Timeout query with afterSequence=latestSequence on Standalone
+        sa_timeout = self._invoke_standalone("do_GET", f"/word/smart-write/jobs/smart-write-events-job-001/events?afterSequence={seq_fa}&waitMs=20")
+        self.assertEqual(sa_timeout["status"], 200)
+        self.assertEqual(sa_timeout["body"]["data"]["events"], [])
+        self.assertEqual(sa_timeout["body"]["data"]["latestSequence"], seq_fa)
+
+        # Timeout query on FastAPI
+        fa_timeout = self._invoke_fastapi("GET", f"/word/smart-write/jobs/smart-write-events-job-001/events?afterSequence={seq_fa}&waitMs=20")
+        self.assertEqual(fa_timeout["status"], 200)
+        self.assertEqual(fa_timeout["body"]["data"]["events"], [])
+        self.assertEqual(fa_timeout["body"]["data"]["latestSequence"], seq_fa)
+
+        # Release worker and verify terminal events on both
+        self.worker.step_event.set()
+        self.worker.release_event.set()
+        self.coordinator.wait("smart-write-events-job-001")
+
+        fa_term = self._invoke_fastapi("GET", f"/word/smart-write/jobs/smart-write-events-job-001/events?afterSequence={seq_fa}&waitMs=50")
+        self.assertEqual(fa_term["status"], 200)
+        self.assertTrue(fa_term["body"]["data"]["terminal"])
+        self.assertEqual(fa_term["body"]["data"]["status"], "completed")
+
+        sa_term = self._invoke_standalone("do_GET", f"/word/smart-write/jobs/smart-write-events-job-001/events?afterSequence={seq_fa}&waitMs=50")
+        self.assertEqual(sa_term["status"], 200)
+        self.assertTrue(sa_term["body"]["data"]["terminal"])
+        self.assertEqual(sa_term["body"]["data"]["status"], "completed")
+
+    def test_smart_imitation_events_and_waitms_clamping(self):
+        import app.api.word as word_api
+        import standalone_adapter
+
+        orig_im_fa = word_api.smart_imitation_jobs
+        orig_im_sa = standalone_adapter.SMART_IMITATION_JOB_STORE
+        try:
+            word_api.smart_imitation_jobs = self.store
+            standalone_adapter.SMART_IMITATION_JOB_STORE = self.store
+
+            # Missing job 404
+            fa_404 = self._invoke_fastapi("GET", "/word/smart-imitation/jobs/missing-im-id/events")
+            self.assertEqual(fa_404["status"], 404)
+            self.assertEqual(fa_404["body"]["taskType"], "word.smart_imitation")
+
+            sa_404 = self._invoke_standalone("do_GET", "/word/smart-imitation/jobs/missing-im-id/events")
+            self.assertEqual(sa_404["status"], 404)
+            self.assertEqual(sa_404["body"]["taskType"], "word.smart_imitation")
+
+            # waitMs clamping: 99999 waitMs does not fail
+            fa_clamp = self._invoke_fastapi("GET", "/word/smart-imitation/jobs/missing-im-id/events?afterSequence=0&waitMs=99999")
+            self.assertEqual(fa_clamp["status"], 404)
+        finally:
+            word_api.smart_imitation_jobs = orig_im_fa
+            standalone_adapter.SMART_IMITATION_JOB_STORE = orig_im_sa
+
+
+if __name__ == "__main__":
+    unittest.main()

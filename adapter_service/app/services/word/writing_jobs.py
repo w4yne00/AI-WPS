@@ -120,6 +120,19 @@ class WritingJobStore:
     def get(self, job_id: str) -> Optional[Dict]:
         return self.coordinator.get(job_id, task_type=self.task_type)
 
+    def wait_events(
+        self,
+        job_id: str,
+        after_sequence: int = 0,
+        wait_ms: int = 0,
+    ) -> Optional[Dict]:
+        return self.coordinator.wait_events(
+            job_id,
+            task_type=self.task_type,
+            after_sequence=after_sequence,
+            wait_ms=wait_ms,
+        )
+
     def cancel(self, job_id: str) -> Optional[Dict]:
         return self.coordinator.cancel(job_id, task_type=self.task_type)
 

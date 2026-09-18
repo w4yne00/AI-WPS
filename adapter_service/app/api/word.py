@@ -312,6 +312,18 @@ def _writing_job_envelope(job: dict, task_type: str) -> dict:
     }
 
 
+def _writing_events_envelope(data: dict, task_type: str) -> dict:
+    payload = dict(data)
+    return {
+        "success": True,
+        "traceId": payload.get("traceId", payload.get("jobId", "")),
+        "taskType": task_type,
+        "message": payload.get("status", "success"),
+        "data": payload,
+        "errors": [],
+    }
+
+
 @router.post("/word/smart-write/jobs")
 def start_smart_write_job(request: WordDocumentRequest) -> dict:
     trace_id = new_trace_id("word-smart-write")
@@ -324,6 +336,16 @@ def get_smart_write_job(job_id: str, resume: bool = False):
     if not job:
         return _missing_writing_job_response(job_id, "word.smart_write", resume)
     return _writing_job_envelope(job, "word.smart_write")
+
+
+@router.get("/word/smart-write/jobs/{job_id}/events")
+def get_smart_write_job_events(job_id: str, afterSequence: int = 0, waitMs: int = 0):
+    events_data = smart_write_jobs.wait_events(
+        job_id, after_sequence=afterSequence, wait_ms=waitMs
+    )
+    if not events_data:
+        return _missing_writing_job_response(job_id, "word.smart_write")
+    return _writing_events_envelope(events_data, "word.smart_write")
 
 
 @router.delete("/word/smart-write/jobs/{job_id}")
@@ -348,6 +370,16 @@ def get_smart_imitation_job(job_id: str, resume: bool = False):
     if not job:
         return _missing_writing_job_response(job_id, "word.smart_imitation", resume)
     return _writing_job_envelope(job, "word.smart_imitation")
+
+
+@router.get("/word/smart-imitation/jobs/{job_id}/events")
+def get_smart_imitation_job_events(job_id: str, afterSequence: int = 0, waitMs: int = 0):
+    events_data = smart_imitation_jobs.wait_events(
+        job_id, after_sequence=afterSequence, wait_ms=waitMs
+    )
+    if not events_data:
+        return _missing_writing_job_response(job_id, "word.smart_imitation")
+    return _writing_events_envelope(events_data, "word.smart_imitation")
 
 
 @router.delete("/word/smart-imitation/jobs/{job_id}")
