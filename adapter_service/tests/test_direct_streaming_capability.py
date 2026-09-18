@@ -7,7 +7,12 @@ from unittest.mock import patch
 from urllib.error import HTTPError
 
 from app.core.config import AppSettings
-from app.core.errors import AdapterError
+from app.core.errors import (
+    AdapterError,
+    ProviderMidStreamDisconnectError,
+    ProviderTimeoutError,
+    ProviderUnavailableError,
+)
 from app.services.direct_services import DirectServiceStore
 from app.services.provider_client import ProviderClient
 
@@ -166,6 +171,155 @@ class DirectStreamingCapabilityTests(unittest.TestCase):
 
         sel = self.store.get_task_model_selection("word.smart_write")
         self.assertEqual(sel["streamingCapability"]["status"], "not_checked")
+
+    def test_streaming_probe_error_event_does_not_mark_validated(self):
+        service = self._create_service()
+        sse_resp = FakeSseResponse(
+            [
+                'data: {"choices": [{"delta": {"content": "部分正文"}}]}\n\n',
+                'data: {"error": {"code": "server_error", "message": "failed"}}\n\n',
+            ]
+        )
+
+        with patch("urllib.request.urlopen", return_value=sse_resp):
+            with self.assertRaises(ProviderUnavailableError):
+                self.client.validate_task_model_selection(
+                    "word.smart_write",
+                    {"serviceId": service["id"], "modelName": "gpt-4o"},
+                    "trace-streaming-probe-error-event",
+                )
+
+        selection = self.store.get_task_model_selection("word.smart_write")
+        self.assertEqual(selection["streamingCapability"]["status"], "not_checked")
+
+    def test_streaming_probe_requires_successful_terminal_event(self):
+        service = self._create_service()
+        sse_resp = FakeSseResponse(
+            ['data: {"choices": [{"delta": {"content": "未完成正文"}}]}\n\n']
+        )
+
+        with patch("urllib.request.urlopen", return_value=sse_resp):
+            with self.assertRaises(ProviderMidStreamDisconnectError):
+                self.client.validate_task_model_selection(
+                    "word.smart_write",
+                    {"serviceId": service["id"], "modelName": "gpt-4o"},
+                    "trace-streaming-probe-incomplete",
+                )
+
+        selection = self.store.get_task_model_selection("word.smart_write")
+        self.assertEqual(selection["streamingCapability"]["status"], "not_checked")
+
+    def test_streaming_probe_empty_sse_does_not_fallback_to_blocking(self):
+        service = self._create_service()
+        sse_resp = FakeSseResponse([": heartbeat\n\n"])
+        self.client.post_task = lambda *args, **kwargs: {"answer": "不应调用"}
+
+        with patch("urllib.request.urlopen", return_value=sse_resp):
+            with self.assertRaises(ProviderMidStreamDisconnectError):
+                self.client.validate_task_model_selection(
+                    "word.smart_write",
+                    {"serviceId": service["id"], "modelName": "gpt-4o"},
+                    "trace-streaming-probe-empty-sse",
+                )
+
+        selection = self.store.get_task_model_selection("word.smart_write")
+        self.assertEqual(selection["streamingCapability"]["status"], "not_checked")
+
+    def test_streaming_probe_rejects_reasoning_only_content(self):
+        service = self._create_service()
+        sse_resp = FakeSseResponse(
+            [
+                'data: {"choices": [{"delta": {"content": "<think>内部"}}]}\n\n',
+                'data: {"choices": [{"delta": {"content": "推理</think>"}}]}\n\n',
+                "data: [DONE]\n\n",
+            ]
+        )
+
+        with patch("urllib.request.urlopen", return_value=sse_resp):
+            with self.assertRaises(AdapterError) as raised:
+                self.client.validate_task_model_selection(
+                    "word.smart_write",
+                    {"serviceId": service["id"], "modelName": "gpt-4o"},
+                    "trace-streaming-probe-reasoning-only",
+                )
+
+        self.assertEqual(raised.exception.code, "MODEL_FINAL_CONTENT_MISSING")
+        selection = self.store.get_task_model_selection("word.smart_write")
+        self.assertEqual(selection["streamingCapability"]["status"], "not_checked")
+
+    def test_streaming_probe_rejects_response_over_five_mib(self):
+        service = self._create_service()
+        oversized_content = "x" * (5 * 1024 * 1024)
+        sse_resp = FakeSseResponse(
+            [
+                'data: {"choices": [{"delta": {"content": "'
+                + oversized_content
+                + '"}}]}\n\n',
+                "data: [DONE]\n\n",
+            ]
+        )
+
+        with patch("urllib.request.urlopen", return_value=sse_resp):
+            with self.assertRaises(AdapterError) as raised:
+                self.client.validate_task_model_selection(
+                    "word.smart_write",
+                    {"serviceId": service["id"], "modelName": "gpt-4o"},
+                    "trace-streaming-probe-size-limit",
+                )
+
+        self.assertEqual(raised.exception.code, "MODEL_RESPONSE_SIZE_LIMIT")
+        selection = self.store.get_task_model_selection("word.smart_write")
+        self.assertEqual(selection["streamingCapability"]["status"], "not_checked")
+
+    def test_streaming_probe_enforces_total_timeout(self):
+        service = self._create_service()
+        sse_resp = FakeSseResponse(
+            [
+                ': heartbeat\n\n',
+                'data: {"choices": [{"delta": {"content": "迟到正文"}}]}\n\n',
+                "data: [DONE]\n\n",
+            ]
+        )
+
+        with patch("urllib.request.urlopen", return_value=sse_resp), patch(
+            "app.services.provider_client.time.monotonic",
+            side_effect=[100.0, 100.0, 706.0],
+        ):
+            with self.assertRaises(ProviderTimeoutError):
+                self.client.validate_task_model_selection(
+                    "word.smart_write",
+                    {"serviceId": service["id"], "modelName": "gpt-4o"},
+                    "trace-streaming-probe-total-timeout",
+                )
+
+        selection = self.store.get_task_model_selection("word.smart_write")
+        self.assertEqual(selection["streamingCapability"]["status"], "not_checked")
+
+    def test_post_task_override_does_not_skip_streaming_probe(self):
+        service = self._create_service()
+        self.client.post_task = lambda *args, **kwargs: {"answer": "阻塞验证成功"}
+
+        def reject_streaming(req, timeout=None):
+            fp = FakeBlockingResponse({"error": {"message": "Invalid API key"}})
+            raise HTTPError(
+                req.full_url,
+                401,
+                "Unauthorized",
+                {"Content-Type": "application/json"},
+                fp,
+            )
+
+        with patch("urllib.request.urlopen", side_effect=reject_streaming):
+            with self.assertRaises(AdapterError) as raised:
+                self.client.validate_task_model_selection(
+                    "word.smart_write",
+                    {"serviceId": service["id"], "modelName": "gpt-4o"},
+                    "trace-streaming-probe-post-task-override",
+                )
+
+        self.assertEqual(raised.exception.code, "PROVIDER_AUTH_FAILED")
+        selection = self.store.get_task_model_selection("word.smart_write")
+        self.assertEqual(selection["streamingCapability"]["status"], "not_checked")
 
     def test_auth_snapshot_freezes_streaming_capability(self):
         service = self._create_service()

@@ -76,6 +76,7 @@ PPT_SLIDE_ASSISTANT_TIMEOUT_SECONDS = EXCEL_ANALYSIS_TIMEOUT_SECONDS
 PPT_STRUCTURE_REVIEW_TIMEOUT_SECONDS = EXCEL_ANALYSIS_TIMEOUT_SECONDS
 PPT_DOCUMENT_SLIDE_COUNTS = (5, 8, 10, 12, 15)
 INTERACTIVE_WRITING_TIMEOUT_SECONDS = 600
+MAX_STREAMING_PROBE_RESPONSE_BYTES = 5 * 1024 * 1024
 DIFY_INPUT_MODE_LEGACY = "legacy-input-query"
 DIFY_INPUT_MODE_USER_INPUT = "user-input-node"
 DIFY_INPUT_MODES = (DIFY_INPUT_MODE_LEGACY, DIFY_INPUT_MODE_USER_INPUT)
@@ -3943,40 +3944,67 @@ class ProviderClient:
             },
         )
 
+        started_at = time.monotonic()
         try:
             with urllib_request.urlopen(req, timeout=timeout) as response:
-                raw_bytes = response.read()
-                if isinstance(raw_bytes, bytes):
-                    raw_text = raw_bytes.decode("utf-8", errors="replace")
-                else:
-                    raw_text = str(raw_bytes)
-
                 accumulated = []
-                saw_event = False
-                for line in raw_text.splitlines():
+                terminated = False
+                received_bytes = 0
+                content_type = str(response.headers.get("Content-Type", "")).lower()
+                if "text/event-stream" not in content_type:
+                    raise StreamingUnsupportedError(
+                        "直连模型未返回 text/event-stream。"
+                    )
+                for raw_line in response:
+                    if time.monotonic() - started_at > timeout:
+                        raise ProviderTimeoutError("模型流式能力验证超过等待时限。")
+                    if isinstance(raw_line, bytes):
+                        received_bytes += len(raw_line)
+                        line = raw_line.decode("utf-8", errors="replace")
+                    else:
+                        line = str(raw_line)
+                        received_bytes += len(line.encode("utf-8"))
+                    if received_bytes > MAX_STREAMING_PROBE_RESPONSE_BYTES:
+                        raise AdapterError(
+                            "MODEL_RESPONSE_SIZE_LIMIT",
+                            "模型流式能力验证响应超过 5 MiB 上限。",
+                            status_code=502,
+                        )
                     line = line.strip()
                     if not line:
                         continue
                     if line.startswith("data:"):
-                        saw_event = True
                         data_content = line[5:].strip()
                         if data_content == "[DONE]":
+                            terminated = True
                             break
                         try:
                             chunk = json.loads(data_content)
                         except json.JSONDecodeError:
                             continue
+                        if isinstance(chunk, dict) and isinstance(
+                            chunk.get("error"), dict
+                        ):
+                            raise ProviderUnavailableError(
+                                "模型后台在流式能力验证期间返回错误。"
+                            )
                         choices = chunk.get("choices") or []
                         if choices and isinstance(choices, list):
-                            delta = choices[0].get("delta") or {}
+                            choice = choices[0] if isinstance(choices[0], dict) else {}
+                            delta = choice.get("delta") or {}
                             content = delta.get("content") or delta.get("text") or ""
                             if content:
                                 accumulated.append(content)
+                            if choice.get("finish_reason"):
+                                terminated = True
+                                break
 
-                if not saw_event or not accumulated:
-                    raise StreamingUnsupportedError("直连模型未返回有效流式事件。")
+                if not terminated:
+                    raise ProviderMidStreamDisconnectError(
+                        "模型后台在流式能力验证完成前断开连接。"
+                    )
 
-                return "".join(accumulated)
+                return strip_think_tag_content("".join(accumulated))
         except error.HTTPError as exc:
             status = exc.code
             if status in (401, 403):
@@ -3995,6 +4023,16 @@ class ProviderClient:
             if isinstance(reason, (TimeoutError, socket.timeout)) or "timed out" in str(reason).lower():
                 raise ProviderTimeoutError() from exc
             raise ProviderUnavailableError("直连模型服务地址无法连接。") from exc
+        except (
+            IncompleteRead,
+            RemoteDisconnected,
+            ConnectionResetError,
+            ConnectionAbortedError,
+            BrokenPipeError,
+        ) as exc:
+            raise ProviderMidStreamDisconnectError(
+                "模型后台在流式能力验证完成前断开连接。"
+            ) from exc
         except (TimeoutError, socket.timeout) as exc:
             raise ProviderTimeoutError() from exc
 
@@ -4173,7 +4211,13 @@ class ProviderClient:
         timeout = max(self.settings.timeout_seconds, INTERACTIVE_WRITING_TIMEOUT_SECONDS)
         streaming_status = "not_checked"
 
-        if "post_task" in self.__dict__:
+        try:
+            answer = self._probe_direct_streaming(
+                task_type, trace_id, probe, task_auth, timeout
+            )
+            _validate_probe_answer(task_type, answer)
+            streaming_status = "validated"
+        except StreamingUnsupportedError:
             body = self.post_task(
                 task_type,
                 trace_id,
@@ -4184,41 +4228,23 @@ class ProviderClient:
             )
             answer = extract_answer(body)
             _validate_probe_answer(task_type, answer)
-        else:
-            try:
-                answer = self._probe_direct_streaming(
-                    task_type, trace_id, probe, task_auth, timeout
-                )
-                _validate_probe_answer(task_type, answer)
-                streaming_status = "validated"
-            except StreamingUnsupportedError:
-                body = self.post_task(
-                    task_type,
-                    trace_id,
-                    {"validation": True},
-                    probe,
-                    timeout_seconds=timeout,
-                    task_auth=task_auth,
-                )
-                answer = extract_answer(body)
-                _validate_probe_answer(task_type, answer)
-                streaming_status = "unsupported"
+            streaming_status = "unsupported"
 
-            binding = {
-                "serviceRevision": int(service.get("revision", 1)),
-                "serviceBaseUrl": normalize_service_base_url(
-                    service.get("serviceBaseUrl", "")
-                ),
-                "apiKeyFingerprint": DirectServiceStore.api_key_fingerprint(
-                    service.get("apiKey", "")
-                ),
-            }
-            self.direct_service_store.record_streaming_capability(
-                service["id"],
-                model_name,
-                streaming_status,
-                expected_binding=binding,
-            )
+        binding = {
+            "serviceRevision": int(service.get("revision", 1)),
+            "serviceBaseUrl": normalize_service_base_url(
+                service.get("serviceBaseUrl", "")
+            ),
+            "apiKeyFingerprint": DirectServiceStore.api_key_fingerprint(
+                service.get("apiKey", "")
+            ),
+        }
+        self.direct_service_store.record_streaming_capability(
+            service["id"],
+            model_name,
+            streaming_status,
+            expected_binding=binding,
+        )
 
         if is_custom:
             self.direct_service_store.mark_custom_model_validated(
