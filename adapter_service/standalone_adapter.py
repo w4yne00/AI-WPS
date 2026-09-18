@@ -17,6 +17,7 @@ from app.core.config import load_settings, save_provider_base_url
 from app.core.errors import AdapterError
 from app.core.features import (
     deterministic_format_review_enabled,
+    direct_streaming_enabled,
     full_document_review_enabled,
 )
 from app.core.models import (
@@ -1635,6 +1636,7 @@ class Handler(BaseHTTPRequestHandler):
                         "features": {
                             "fullDocumentReviewEnabled": full_document_review_enabled(),
                             "deterministicFormatReviewEnabled": deterministic_format_review_enabled(),
+                            "directStreamingEnabled": direct_streaming_enabled(),
                         },
                     },
                 ),

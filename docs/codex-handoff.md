@@ -1,5 +1,14 @@
 # Codex Handoff - AI-WPS
 
+## 当前功能实现：Issue #204 直连模型流式能力探针验证与任务快照冻结（2026-09-18）
+
+- **特性开关与前端接口传导**：遵循 ADR-0132 Task 7，新增 `AI_WPS_ENABLE_DIRECT_STREAMING` 特性环境变量与 helper `direct_streaming_enabled()`，默认保持关闭（`0`），仅当显式设为 `"1"` 时启用。FastAPI 与 Standalone 运行时通过 `/config` 端点在 `features.directStreamingEnabled` 中对等暴露。
+- **流式能力五元组绑定与状态流转**：`DirectServiceStore` 维护模型流式能力状态（`validated`、`unsupported`、`stale`、`not_checked`），强绑定 `serviceId`、`serviceRevision`、规范化 `serviceBaseUrl`、`apiKeyFingerprint`（SHA-256 前缀）及精确 `modelName`。当服务地址、API Key、版本号或任务所选模型发生任何变更时，旧能力结论立即可靠降级为 `stale`。
+- **真实流式探针与不支持时阻塞回退**：复用现有任务选择验证机制（`validate_task_model_selection`），向服务发送携带 `stream: True` 与 `Accept: text/event-stream` 的最小探针调用。当模型支持流式且满足现有任务合同（`_validate_probe_answer`）时，能力标记为 `validated`；当模型不支持流式（返回 400/415/422 或非 SSE 响应体）时，平滑回退至既有阻塞验证调用，校验通过后能力标记为 `unsupported`；当遇到认证失败（401/403）或网络错误时，立即抛出对应异常且绝不记录虚假能力。
+- **任务认证快照冻结**：`ProviderClient.resolve_task_auth` 在任务提交时冻结当前的 `streamingCapability` 快照；运行中修改服务配置或轮换 Key 不影响当前执行中任务的既有判定，旧任务依据既有快照和 Key 失效机制安全收敛。
+- **零安全泄露与有界存储**：`DirectServiceStore` 对模型流式能力记录实施 50 条上限的 LRU 淘汰清理；存储与调试日志严格禁止保存原始 API Key、提示词正文或模型响应正文，杜绝敏感凭据泄露。普通设置页不增加虚假手动开关，绝不根据厂商或模型名称擅自推断能力。
+- **全量验证结论**：全量后端 pytest 测试 `1419 passed / 54 skipped`（包含新增流式探针生命周期、回退机制与快照冻结 4 项测试及 DirectService 全生命周期测试），正式插件 Node 测试 `232/232 passed`，Python 3.8 兼容性扫描 174 个文件全部通过，`git diff --check` 无格式异常。
+
 ## 当前功能实现：Issue #203 为智能编写建立可恢复增量任务事件（2026-09-18）
 
 - **PR #215 审查修复（2026-09-18）**：事件终态完成后改为复用现有状态查询取得权威 `result`，避免首个 tracer 不携带正文时丢失生成结果；长轮询消费者按 `taskType/documentSessionId/jobId` 维护版本令牌，旧消费者、跨文档进度和后台终态不再污染当前任务；events 404 优先平滑降级，FastAPI 与 standalone 共用参数归一化并恢复一致的缺失任务 envelope。

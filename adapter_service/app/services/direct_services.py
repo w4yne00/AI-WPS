@@ -2122,6 +2122,9 @@ class DirectServiceStore:
                     "manualModelAllowed": bool(
                         catalog.get("manualModelAllowed", False)
                     ),
+                    "streamingCapability": self._evaluate_streaming_capability(
+                        payload, service, effective_model
+                    ),
                     "updatedAt": str(raw.get("updatedAt", "")),
                 }
                 if task == "word.document_review":
@@ -2335,6 +2338,145 @@ class DirectServiceStore:
             payload["customModelValidations"] = validations
             save_config_payload(payload, self.config_path)
             return dict(validations[clean_task])
+
+    def _evaluate_streaming_capability(
+        self, payload: dict, service: Optional[dict], model_name: str
+    ) -> dict:
+        clean_model = str(model_name or "").strip()
+        if not service or not clean_model:
+            return {
+                "status": "not_checked",
+                "serviceId": service["id"] if service else "",
+                "serviceRevision": int(service.get("revision", 1)) if service else None,
+                "serviceBaseUrl": normalize_service_base_url(service.get("serviceBaseUrl", "")) if service else "",
+                "apiKeyFingerprint": (
+                    self._api_key_fingerprint(self._read_key(service["id"]))
+                    if (service and self._key_exists(service.get("id")))
+                    else ""
+                ),
+                "modelName": clean_model,
+                "testedAt": None,
+            }
+        key = f"{service['id']}::{clean_model}"
+        capabilities = payload.get("streamingCapabilities")
+        record = capabilities.get(key) if isinstance(capabilities, dict) else None
+        current_revision = int(service.get("revision", 1))
+        current_url = normalize_service_base_url(service.get("serviceBaseUrl", ""))
+        current_fingerprint = (
+            self._api_key_fingerprint(self._read_key(service["id"]))
+            if self._key_exists(service.get("id"))
+            else ""
+        )
+        if not record or not isinstance(record, dict):
+            return {
+                "status": "not_checked",
+                "serviceId": service["id"],
+                "serviceRevision": current_revision,
+                "serviceBaseUrl": current_url,
+                "apiKeyFingerprint": current_fingerprint,
+                "modelName": clean_model,
+                "testedAt": None,
+            }
+        is_match = (
+            int(record.get("serviceRevision", 0)) == current_revision
+            and str(record.get("serviceBaseUrl", "")).strip() == current_url.strip()
+            and str(record.get("apiKeyFingerprint", "")) == current_fingerprint
+            and str(record.get("modelName", "")).strip() == clean_model
+        )
+        status = str(record.get("status", "not_checked")) if is_match else "stale"
+        return {
+            "status": status,
+            "serviceId": service["id"],
+            "serviceRevision": current_revision,
+            "serviceBaseUrl": current_url,
+            "apiKeyFingerprint": current_fingerprint,
+            "modelName": clean_model,
+            "testedAt": record.get("testedAt"),
+        }
+
+    @_serialized_store_transaction
+    def record_streaming_capability(
+        self,
+        service_id: str,
+        model_name: str,
+        status: str,
+        expected_binding: Optional[dict] = None,
+    ) -> dict:
+        clean_service_id = str(service_id or "").strip()
+        clean_model = self._validate_model_name(model_name)
+        if not clean_model:
+            raise DirectServiceError(
+                "DIRECT_SERVICE_MODEL_REQUIRED", "模型名称不能为空。"
+            )
+        if status not in {"validated", "unsupported"}:
+            raise DirectServiceError(
+                "DIRECT_SERVICE_PARAM_INVALID",
+                "流式能力状态必须为 validated 或 unsupported。",
+            )
+        with _STORE_LOCK:
+            payload, _ = self._load_with_legacy_direct_migration()
+            services = self._service_map(payload)
+            service = self._require_service(services, clean_service_id)
+            if not self._key_exists(service["id"]):
+                raise DirectServiceError(
+                    "DIRECT_SERVICE_KEY_REQUIRED",
+                    "直连服务未配置 API Key，无法记录流式能力。",
+                )
+            current_revision = int(service.get("revision", 1))
+            current_url = normalize_service_base_url(service.get("serviceBaseUrl", ""))
+            current_fingerprint = self._api_key_fingerprint(
+                self._read_key(service["id"])
+            )
+            if expected_binding is not None:
+                if (
+                    expected_binding.get("serviceRevision") is not None
+                    and int(expected_binding.get("serviceRevision"))
+                    != current_revision
+                ):
+                    raise DirectServiceError(
+                        "DIRECT_SERVICE_CONFIG_CHANGED",
+                        "服务版本在验证期间发生变化，请重新验证。",
+                    )
+                if (
+                    expected_binding.get("serviceBaseUrl") is not None
+                    and str(expected_binding.get("serviceBaseUrl")).strip()
+                    != current_url.strip()
+                ):
+                    raise DirectServiceError(
+                        "DIRECT_SERVICE_CONFIG_CHANGED",
+                        "服务地址在验证期间发生变化，请重新验证。",
+                    )
+                if (
+                    expected_binding.get("apiKeyFingerprint") is not None
+                    and str(expected_binding.get("apiKeyFingerprint"))
+                    != current_fingerprint
+                ):
+                    raise DirectServiceError(
+                        "DIRECT_SERVICE_CONFIG_CHANGED",
+                        "API Key 在验证期间发生变化，请重新验证。",
+                    )
+            capabilities = payload.setdefault("streamingCapabilities", {})
+            if (
+                len(capabilities) >= 50
+                and f"{clean_service_id}::{clean_model}" not in capabilities
+            ):
+                oldest_key = min(
+                    capabilities.keys(),
+                    key=lambda k: str(capabilities[k].get("testedAt", "")),
+                )
+                capabilities.pop(oldest_key, None)
+            record = {
+                "serviceId": service["id"],
+                "serviceRevision": current_revision,
+                "serviceBaseUrl": current_url,
+                "apiKeyFingerprint": current_fingerprint,
+                "modelName": clean_model,
+                "status": status,
+                "testedAt": _utc_now(),
+            }
+            capabilities[f"{clean_service_id}::{clean_model}"] = record
+            save_config_payload(payload, self.config_path)
+            return dict(record)
 
     @_serialized_store_transaction
     def set_image_external_authorization(

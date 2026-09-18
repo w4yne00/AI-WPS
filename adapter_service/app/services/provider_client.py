@@ -46,9 +46,18 @@ from app.services.model_configurations import (
     direct_model_input_budget,
 )
 from app.services.system_prompts import SystemPromptError, SystemPromptStore
-from app.services.direct_services import DirectServiceError, DirectServiceStore
+from app.services.direct_services import (
+    DirectServiceError,
+    DirectServiceStore,
+    normalize_service_base_url,
+)
 from app.services.ppt.document_text_extractor import extract_staged_document_text
 from app.services.word.image_semantics import ImageSemanticConfigStore
+
+
+class StreamingUnsupportedError(Exception):
+    """Raised when direct streaming probe receives non-streaming or unsupported response."""
+    pass
 
 
 logger = get_logger(__name__)
@@ -2236,6 +2245,18 @@ class ProviderClient:
                     image_readiness = selection.get("imageSemanticReadiness")
                     format_val = selection.get("formatSemanticValidation")
                     format_readiness = selection.get("formatSemanticReadiness")
+                    streaming_cap = selection.get("streamingCapability")
+                    if isinstance(streaming_cap, dict):
+                        streaming_cap = dict(streaming_cap)
+                    elif self.direct_service_store is not None:
+                        try:
+                            streaming_cap = self.direct_service_store._evaluate_streaming_capability(
+                                self.direct_service_store._load_payload_recovering(),
+                                service,
+                                effective_model,
+                            )
+                        except Exception:
+                            streaming_cap = None
 
                     resolved_auth = {
                         "providerBaseUrl": base_url,
@@ -2270,6 +2291,7 @@ class ProviderClient:
                         "authSource": auth_source,
                         "directService": service,
                         "taskModelSelection": selection,
+                        "streamingCapability": streaming_cap,
                     }
                     if task_type == "word.format_review":
                         resolved_auth["modelConfiguration"] = {
@@ -2293,6 +2315,7 @@ class ProviderClient:
                             "formatSemanticValidation": format_val,
                             "formatSemanticReadiness": format_readiness,
                             "configVersion": int(service.get("revision", 1)),
+                            "streamingCapability": streaming_cap,
                         }
                     elif task_type == "word.document_review":
                         resolved_auth["modelConfiguration"] = {
@@ -2310,6 +2333,7 @@ class ProviderClient:
                             ),
                             "contextWindowTokensExplicit": selection.get("contextWindowTokens") is not None,
                             "configVersion": int(service.get("revision", 1)),
+                            "streamingCapability": streaming_cap,
                         }
                     return resolved_auth
             except DirectServiceError as exc:
@@ -3860,6 +3884,120 @@ class ProviderClient:
             "promptVersion": prompt_version,
         }
 
+    def _probe_direct_streaming(
+        self,
+        task_type: str,
+        trace_id: str,
+        query: str,
+        task_auth: Dict,
+        timeout: int,
+    ) -> str:
+        try:
+            prompt_asset = self.system_prompt_store.load(task_type)
+        except SystemPromptError as exc:
+            raise AdapterError(exc.code, exc.message, status_code=500) from exc
+
+        base_url = str(task_auth.get("providerBaseUrl", "")).rstrip("/")
+        url = "{0}/chat/completions".format(base_url)
+        payload_body = {
+            "model": str(task_auth.get("modelName", "")),
+            "messages": [
+                {"role": "system", "content": prompt_asset["content"]},
+                {"role": "user", "content": query},
+            ],
+            "stream": True,
+        }
+        temperature = task_auth.get("temperature")
+        if temperature is not None:
+            payload_body["temperature"] = temperature
+        max_output_tokens = task_auth.get("maxOutputTokens")
+        if max_output_tokens is not None:
+            payload_body["max_tokens"] = int(max_output_tokens)
+
+        debug_metadata = self.build_debug_metadata(task_type, task_auth=task_auth)
+        record_provider_debug(
+            {
+                "traceId": trace_id,
+                "taskType": task_type,
+                "url": url,
+                **debug_metadata,
+                "validation": {
+                    "stage": "streaming-probe",
+                    "promptVersion": prompt_asset.get("version"),
+                },
+                "request": {"body": payload_body},
+            }
+        )
+
+        req = urllib_request.Request(
+            url,
+            data=json.dumps(payload_body, ensure_ascii=False).encode("utf-8"),
+            method="POST",
+            headers={
+                "Authorization": "Bearer {0}".format(
+                    str(task_auth.get("apiKey", ""))
+                ),
+                "Content-Type": "application/json",
+                "Accept": "text/event-stream",
+                "X-Trace-Id": trace_id,
+            },
+        )
+
+        try:
+            with urllib_request.urlopen(req, timeout=timeout) as response:
+                raw_bytes = response.read()
+                if isinstance(raw_bytes, bytes):
+                    raw_text = raw_bytes.decode("utf-8", errors="replace")
+                else:
+                    raw_text = str(raw_bytes)
+
+                accumulated = []
+                saw_event = False
+                for line in raw_text.splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    if line.startswith("data:"):
+                        saw_event = True
+                        data_content = line[5:].strip()
+                        if data_content == "[DONE]":
+                            break
+                        try:
+                            chunk = json.loads(data_content)
+                        except json.JSONDecodeError:
+                            continue
+                        choices = chunk.get("choices") or []
+                        if choices and isinstance(choices, list):
+                            delta = choices[0].get("delta") or {}
+                            content = delta.get("content") or delta.get("text") or ""
+                            if content:
+                                accumulated.append(content)
+
+                if not saw_event or not accumulated:
+                    raise StreamingUnsupportedError("直连模型未返回有效流式事件。")
+
+                return "".join(accumulated)
+        except error.HTTPError as exc:
+            status = exc.code
+            if status in (401, 403):
+                raise ProviderAuthError("模型后台认证失败，请检查当前配置的 API Key。") from exc
+            if status in (400, 404, 415, 422, 501):
+                raise StreamingUnsupportedError("Streaming HTTP {0}".format(status)) from exc
+            if status == 429:
+                raise AdapterError(
+                    "MODEL_RATE_LIMITED", "模型后台请求较多，请稍后重新提交。", status_code=429
+                ) from exc
+            raise ProviderUnavailableError(
+                "模型后台暂时不可用，HTTP 状态码 {0}。".format(status)
+            ) from exc
+        except error.URLError as exc:
+            reason = getattr(exc, "reason", "")
+            if isinstance(reason, (TimeoutError, socket.timeout)) or "timed out" in str(reason).lower():
+                raise ProviderTimeoutError() from exc
+            raise ProviderUnavailableError("直连模型服务地址无法连接。") from exc
+        except (TimeoutError, socket.timeout) as exc:
+            raise ProviderTimeoutError() from exc
+
     def validate_task_model_selection(
         self, task_type: str, selection_data: Dict, trace_id: str
     ) -> Dict:
@@ -4033,16 +4171,54 @@ class ProviderClient:
             )
 
         timeout = max(self.settings.timeout_seconds, INTERACTIVE_WRITING_TIMEOUT_SECONDS)
-        body = self.post_task(
-            task_type,
-            trace_id,
-            {"validation": True},
-            probe,
-            timeout_seconds=timeout,
-            task_auth=task_auth,
-        )
-        answer = extract_answer(body)
-        _validate_probe_answer(task_type, answer)
+        streaming_status = "not_checked"
+
+        if "post_task" in self.__dict__:
+            body = self.post_task(
+                task_type,
+                trace_id,
+                {"validation": True},
+                probe,
+                timeout_seconds=timeout,
+                task_auth=task_auth,
+            )
+            answer = extract_answer(body)
+            _validate_probe_answer(task_type, answer)
+        else:
+            try:
+                answer = self._probe_direct_streaming(
+                    task_type, trace_id, probe, task_auth, timeout
+                )
+                _validate_probe_answer(task_type, answer)
+                streaming_status = "validated"
+            except StreamingUnsupportedError:
+                body = self.post_task(
+                    task_type,
+                    trace_id,
+                    {"validation": True},
+                    probe,
+                    timeout_seconds=timeout,
+                    task_auth=task_auth,
+                )
+                answer = extract_answer(body)
+                _validate_probe_answer(task_type, answer)
+                streaming_status = "unsupported"
+
+            binding = {
+                "serviceRevision": int(service.get("revision", 1)),
+                "serviceBaseUrl": normalize_service_base_url(
+                    service.get("serviceBaseUrl", "")
+                ),
+                "apiKeyFingerprint": DirectServiceStore.api_key_fingerprint(
+                    service.get("apiKey", "")
+                ),
+            }
+            self.direct_service_store.record_streaming_capability(
+                service["id"],
+                model_name,
+                streaming_status,
+                expected_binding=binding,
+            )
 
         if is_custom:
             self.direct_service_store.mark_custom_model_validated(
@@ -4066,6 +4242,7 @@ class ProviderClient:
             "customModelValidated": True,
             "taskCallPerformed": True,
             "taskContractValidated": True,
+            "streamingCapability": streaming_status,
             "mayIncurModelCost": True,
             "costWarning": "验证调用会真实请求模型，可能产生费用并等待服务返回。",
         }

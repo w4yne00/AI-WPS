@@ -20,3 +20,10 @@ def image_semantics_enabled() -> bool:
 
     settings = ImageSemanticConfigStore(default_config_path()).get()
     return bool(settings.get("enabled"))
+
+
+DIRECT_STREAMING_ENV = "AI_WPS_ENABLE_DIRECT_STREAMING"
+
+
+def direct_streaming_enabled() -> bool:
+    return os.environ.get(DIRECT_STREAMING_ENV, "").strip() == "1"

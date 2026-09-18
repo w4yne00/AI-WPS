@@ -463,6 +463,98 @@ class DirectServiceStoreTests(unittest.TestCase):
             )
             self.assertEqual(after_failure, before_failure)
 
+    def test_streaming_capability_lifecycle_and_invalidation(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = self._store(root)
+            service = store.create_service(
+                name="流式能力测试网关",
+                service_base_url="https://api.example.com/v1",
+                default_model="model-stream-1",
+            )
+            svc_id = service["id"]
+            store.replace_api_key(svc_id, "sk-test-secret-key-123456", expected_revision=1)
+            service = store.get_service(svc_id)
+
+            # 1. Initially, task selection has streamingCapability with status "not_checked"
+            store.update_task_model_selection(
+                "word.smart_write",
+                service_id=svc_id,
+                model_name="model-stream-1",
+            )
+            selection = store.get_task_model_selection("word.smart_write")
+            self.assertIn("streamingCapability", selection)
+            cap = selection["streamingCapability"]
+            self.assertEqual(cap["status"], "not_checked")
+            self.assertEqual(cap["serviceId"], svc_id)
+            self.assertEqual(cap["modelName"], "model-stream-1")
+            self.assertIsNone(cap.get("testedAt"))
+
+            # 2. Record streaming capability as validated
+            rec = store.record_streaming_capability(
+                service_id=svc_id,
+                model_name="model-stream-1",
+                status="validated",
+            )
+            self.assertEqual(rec["status"], "validated")
+            self.assertEqual(rec["serviceId"], svc_id)
+            self.assertEqual(rec["modelName"], "model-stream-1")
+            self.assertEqual(rec["serviceRevision"], service["revision"])
+            self.assertTrue(rec["apiKeyFingerprint"])
+            self.assertTrue(rec["testedAt"])
+
+            selection = store.get_task_model_selection("word.smart_write")
+            cap = selection["streamingCapability"]
+            self.assertEqual(cap["status"], "validated")
+            self.assertEqual(cap["testedAt"], rec["testedAt"])
+
+            # 3. Changing serviceBaseUrl causes capability to become stale
+            store.update_service(
+                svc_id,
+                name=service["name"],
+                service_base_url="https://api.example.com/v2",
+                expected_revision=service["revision"],
+            )
+            selection = store.get_task_model_selection("word.smart_write")
+            self.assertEqual(selection["streamingCapability"]["status"], "stale")
+
+            # Re-record with new URL -> validated
+            service = store.get_service(svc_id)
+            store.record_streaming_capability(
+                service_id=svc_id,
+                model_name="model-stream-1",
+                status="validated",
+            )
+            self.assertEqual(store.get_task_model_selection("word.smart_write")["streamingCapability"]["status"], "validated")
+
+            # 4. Replacing API Key causes capability to become stale
+            service = store.get_service(svc_id)
+            store.replace_api_key(svc_id, "sk-new-secret-key-999999", expected_revision=service["revision"])
+            self.assertEqual(store.get_task_model_selection("word.smart_write")["streamingCapability"]["status"], "stale")
+
+            # Re-record with new key -> unsupported
+            service = store.get_service(svc_id)
+            store.record_streaming_capability(
+                service_id=svc_id,
+                model_name="model-stream-1",
+                status="unsupported",
+            )
+            self.assertEqual(store.get_task_model_selection("word.smart_write")["streamingCapability"]["status"], "unsupported")
+
+            # 5. Switching model on task to an unchecked model
+            store.update_task_model_selection(
+                "word.smart_write",
+                service_id=svc_id,
+                model_name="model-other-2",
+            )
+            self.assertEqual(store.get_task_model_selection("word.smart_write")["streamingCapability"]["status"], "not_checked")
+
+            # 6. Verify payload security: NO raw API Key, NO prompt, NO response body in saved adapter.json
+            saved_json = (root / "adapter.json").read_text(encoding="utf-8")
+            self.assertNotIn("sk-test-secret-key-123456", saved_json)
+            self.assertNotIn("sk-new-secret-key-999999", saved_json)
+
+
 
 @unittest.skipUnless(HAS_PYDANTIC, "pydantic is required for standalone adapter tests")
 class StandaloneDirectServiceHandlerTests(unittest.TestCase):
@@ -689,6 +781,8 @@ class StandaloneDirectServiceHandlerTests(unittest.TestCase):
         self.assertEqual(len(res["writes"]), 1)
         self.assertEqual(len(res["body"]["data"]["taskModelSelections"]), 1)
         self.assertEqual(res["body"]["data"]["taskModelSelections"][0]["serviceName"], "DeepSeek Renamed")
+        self.assertIn("streamingCapability", res["body"]["data"]["taskModelSelections"][0])
+        self.assertEqual(res["body"]["data"]["taskModelSelections"][0]["streamingCapability"]["status"], "not_checked")
 
         # 9. Try deleting service while in use -> should return 409 with referencedTasks
         res = self._invoke("do_DELETE", f"/provider/direct-services/{service_id}?expectedRevision=4")
