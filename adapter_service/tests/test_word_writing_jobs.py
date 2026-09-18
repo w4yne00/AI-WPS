@@ -228,6 +228,113 @@ class WritingJobStoreTests(unittest.TestCase):
         histories_after = self.history_store.list_history("word.smart_write")
         self.assertEqual(len(histories_after), 1)
 
+    def test_smart_write_streaming_with_validated_capability_publishes_deltas(self):
+        from app.services.word.rewriter import WordRewriter
+        from app.services.provider_client import ProviderClient
+
+        captured_requests = []
+
+        class FakeStreamingProviderClient:
+            def resolve_task_auth(self, task_type):
+                return {
+                    "accessMethod": "direct_model",
+                    "providerBaseUrl": "http://127.0.0.1:19999",
+                    "apiKey": "test-key",
+                    "modelName": "test-model",
+                    "streamingCapability": "validated",
+                }
+
+            def smart_write(self, text, action, trace_id, progress_callback=None, task_auth=None, **kwargs):
+                if progress_callback and hasattr(progress_callback, "publish_text"):
+                    progress_callback("streaming")
+                    progress_callback.publish_text("流式增量第一段 ")
+                    progress_callback.publish_text("流式增量第二段。")
+                    progress_callback.flush()
+                return {
+                    "rewrittenText": "流式增量第一段 流式增量第二段。",
+                    "provider": "direct_model",
+                    "prompt": "prompt",
+                }
+
+        worker = WordRewriter(provider_client=FakeStreamingProviderClient())
+        coordinator = LongTaskCoordinator(max_running=1, max_queued=2)
+        store = SmartWriteJobStore(worker=worker, coordinator=coordinator)
+
+        req = make_request(
+            "client-write-stream-1",
+            document_session_id="doc-stream-1",
+            document_display_name="流式测试.docx",
+        )
+
+        with patch.dict("os.environ", {"AI_WPS_ENABLE_DIRECT_STREAMING": "1"}):
+            store.start(req, "trace-stream-1")
+            res = self.wait_completed(store, "client-write-stream-1")
+
+        self.assertEqual(res["status"], "completed")
+        self.assertEqual(res["result"]["rewrittenText"], "流式增量第一段 流式增量第二段。")
+
+        # Verify coordinator events contain delta events
+        events_resp = store.wait_events("client-write-stream-1", after_sequence=0)
+        deltas = [e for e in events_resp["events"] if e.get("type") == "delta"]
+        self.assertGreaterEqual(len(deltas), 1)
+        combined = "".join(d["delta"] for d in deltas)
+        self.assertEqual(combined, "流式增量第一段 流式增量第二段。")
+
+
+    def test_smart_write_streaming_end_to_end_with_real_provider_client(self):
+        from unittest.mock import patch
+        from app.services.word.rewriter import WordRewriter
+        from app.services.provider_client import ProviderClient
+        from tests.test_direct_text_stream import FakeHTTPResponse
+
+        client = ProviderClient()
+        task_auth = {
+            "accessMethod": "direct_model",
+            "providerBaseUrl": "https://api.openai.com/v1",
+            "apiKey": "sk-test12345",
+            "modelName": "gpt-4o",
+            "streamingCapability": "validated",
+            "contextWindowTokens": 100000,
+            "maxOutputTokens": 4096,
+        }
+
+        sse_payload = (
+            'data: {"choices":[{"delta":{"content":"全链路流式正文"}}]}\n\n'
+            'data: [DONE]\n\n'
+        ).encode("utf-8")
+
+        sent_requests = []
+
+        def fake_urlopen(req, timeout=None):
+            sent_requests.append(req)
+            return FakeHTTPResponse([sse_payload])
+
+        worker = WordRewriter(provider_client=client)
+        # Mock snapshot_task_auth to return validated direct_model auth
+        worker.snapshot_task_auth = lambda: task_auth
+
+        coordinator = LongTaskCoordinator(max_running=1, max_queued=2)
+        store = SmartWriteJobStore(worker=worker, coordinator=coordinator)
+
+        req = make_request(
+            "client-write-e2e-1",
+            document_session_id="doc-e2e-1",
+            document_display_name="全链路.docx",
+        )
+
+        with patch.dict("os.environ", {"AI_WPS_ENABLE_DIRECT_STREAMING": "1"}), patch("urllib.request.urlopen", fake_urlopen):
+            store.start(req, "trace-e2e-1")
+            res = self.wait_completed(store, "client-write-e2e-1")
+
+        self.assertEqual(res["status"], "completed")
+        self.assertEqual(res["result"]["rewrittenText"], "全链路流式正文")
+
+        events_resp = store.wait_events("client-write-e2e-1", after_sequence=0)
+        deltas = [e for e in events_resp["events"] if e.get("type") == "delta"]
+        self.assertGreaterEqual(len(deltas), 1)
+        self.assertEqual("".join(d["delta"] for d in deltas), "全链路流式正文")
+        self.assertEqual(events_resp["previewSnapshot"]["text"], "全链路流式正文")
+
 
 if __name__ == "__main__":
     unittest.main()

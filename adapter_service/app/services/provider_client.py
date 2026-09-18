@@ -51,6 +51,8 @@ from app.services.direct_services import (
     DirectServiceStore,
     normalize_service_base_url,
 )
+from app.core.features import direct_streaming_enabled
+from app.services.direct_text_stream import read_direct_text_stream
 from app.services.ppt.document_text_extractor import extract_staged_document_text
 from app.services.word.image_semantics import ImageSemanticConfigStore
 
@@ -1203,14 +1205,21 @@ def _provider_performance_metrics(
     completed_at: Optional[float] = None,
     parsed_at: Optional[float] = None,
     parse_ms: Optional[int] = None,
+    first_visible_at: Optional[float] = None,
+    first_visible_ms: Optional[int] = None,
 ) -> Dict:
+    calc_first_visible = (
+        max(0, int((first_visible_at - started_at) * 1000))
+        if first_visible_at is not None
+        else first_visible_ms
+    )
     return {
         "providerHeadersMs": (
             max(0, int((headers_at - started_at) * 1000))
             if headers_at is not None
             else None
         ),
-        "providerFirstVisibleMs": None,
+        "providerFirstVisibleMs": calc_first_visible,
         "providerCompleteMs": (
             max(0, int((completed_at - started_at) * 1000))
             if completed_at is not None
@@ -3053,6 +3062,7 @@ class ProviderClient:
         image_files: Optional[List[Dict]] = None,
         allow_response_format_fallback: bool = False,
         progress_callback=None,
+        allow_streaming_fallback: bool = True,
     ) -> Dict:
         if prompt_asset is None:
             try:
@@ -3088,13 +3098,20 @@ class ProviderClient:
                     "image_url": {"url": self._image_data_uri(image)},
                 })
             user_content = content_parts
+        should_stream = bool(
+            allow_streaming_fallback
+            and direct_streaming_enabled()
+            and resolved_task_auth.get("streamingCapability") == "validated"
+            and task_type in ("word.smart_write", "word.smart_imitation")
+            and response_format is None
+        )
         payload_body = {
             "model": str(resolved_task_auth.get("modelName", "")),
             "messages": [
                 {"role": "system", "content": prompt_asset["content"]},
                 {"role": "user", "content": user_content},
             ],
-            "stream": False,
+            "stream": bool(should_stream),
         }
         temperature = resolved_task_auth.get("temperature")
         if temperature is not None:
@@ -3138,23 +3155,147 @@ class ProviderClient:
                 "request": {"body": payload_body},
             }
         )
+        headers = {
+            "Authorization": "Bearer {0}".format(
+                str(resolved_task_auth.get("apiKey", ""))
+            ),
+            "Content-Type": "application/json",
+            "X-Trace-Id": trace_id,
+        }
+        if should_stream:
+            headers["Accept"] = "text/event-stream"
         req = urllib_request.Request(
             url,
             data=json.dumps(payload_body, ensure_ascii=False).encode("utf-8"),
             method="POST",
-            headers={
-                "Authorization": "Bearer {0}".format(
-                    str(resolved_task_auth.get("apiKey", ""))
-                ),
-                "Content-Type": "application/json",
-                "X-Trace-Id": trace_id,
-            },
+            headers=headers,
         )
         t_start = time.monotonic()
         t_headers = None
+        first_visible_ms = None
+        first_delta_seen = False
+        if should_stream and progress_callback:
+            try:
+                progress_callback("provider_connecting")
+            except Exception:
+                pass
         try:
+            if should_stream and progress_callback:
+                try:
+                    progress_callback("provider_waiting")
+                except Exception:
+                    pass
             with urllib_request.urlopen(req, timeout=timeout) as response:
                 t_headers = time.monotonic()
+                if should_stream:
+                    def on_delta(delta: str) -> None:
+                        nonlocal first_delta_seen
+                        if not first_delta_seen:
+                            first_delta_seen = True
+                            if progress_callback:
+                                try:
+                                    progress_callback("streaming")
+                                except Exception:
+                                    pass
+                        if progress_callback and hasattr(progress_callback, "publish_text"):
+                            progress_callback.publish_text(delta)
+
+                    def record_metric(name: str, value: int) -> None:
+                        nonlocal first_visible_ms
+                        if name == "providerFirstVisibleMs":
+                            first_visible_ms = value
+                        if progress_callback and hasattr(progress_callback, "record_metric"):
+                            progress_callback.record_metric(name, value)
+
+                    cancel_checker = (
+                        progress_callback.cancel_requested
+                        if progress_callback and hasattr(progress_callback, "cancel_requested")
+                        else None
+                    )
+
+                    try:
+                        stream_result = read_direct_text_stream(
+                            response,
+                            publish_callback=on_delta,
+                            record_metric_callback=record_metric,
+                            start_mono=t_start,
+                            timeout=float(timeout),
+                            cancel_checker=cancel_checker,
+                        )
+                    finally:
+                        if progress_callback and hasattr(progress_callback, "flush"):
+                            try:
+                                progress_callback.flush()
+                            except Exception:
+                                pass
+
+                    t_complete = time.monotonic()
+                    content = stream_result.get("rewrittenText", "")
+                    finish_reason = stream_result.get("finishReason") or "stop"
+                    perf_metrics = _provider_performance_metrics(
+                        t_start,
+                        headers_at=t_headers,
+                        completed_at=t_complete,
+                        first_visible_ms=first_visible_ms,
+                    )
+                    _publish_provider_performance(progress_callback, perf_metrics)
+                    if not content:
+                        record_provider_debug(
+                            {
+                                "traceId": trace_id,
+                                "taskType": task_type,
+                                "url": url,
+                                **debug_metadata,
+                                "validation": safe_validation,
+                                "performance": perf_metrics,
+                                "response": {
+                                    "status": getattr(response, "status", 200),
+                                    "body": {
+                                        "answer": "",
+                                        "finishReason": finish_reason,
+                                        "contentType": "string",
+                                        "reasoningContentPresent": False,
+                                        "usage": stream_result.get("usage", {}),
+                                    },
+                                },
+                            }
+                        )
+                        raise _missing_final_content_error(finish_reason)
+                    normalized = {
+                        "answer": content,
+                        "finishReason": _safe_finish_reason(finish_reason),
+                        "contentType": "string",
+                        "reasoningContentPresent": False,
+                        "usage": stream_result.get("usage", {}),
+                        "id": str(stream_result.get("id", "")),
+                        "model": str(stream_result.get("model", resolved_task_auth.get("modelName", ""))),
+                        "promptVersion": prompt_asset["version"],
+                        "choices": [
+                            {
+                                "message": {
+                                    "role": "assistant",
+                                    "content": content,
+                                },
+                                "finish_reason": finish_reason,
+                            }
+                        ],
+                    }
+                    record_provider_debug(
+                        {
+                            "traceId": trace_id,
+                            "taskType": task_type,
+                            "url": url,
+                            **debug_metadata,
+                            "validation": safe_validation,
+                            "performance": perf_metrics,
+                            "response": {
+                                "status": getattr(response, "status", 200),
+                                "body": normalized,
+                            },
+                        }
+                    )
+                    return normalized
+
                 raw_body = response.read().decode("utf-8")
                 t_complete = time.monotonic()
                 try:
@@ -3282,6 +3423,26 @@ class ProviderClient:
                     },
                 }
             )
+            if (
+                should_stream
+                and allow_streaming_fallback
+                and not first_delta_seen
+                and status in (400, 404, 415, 422, 501)
+            ):
+                return self._post_direct_task(
+                    task_type,
+                    trace_id,
+                    query,
+                    resolved_task_auth,
+                    timeout,
+                    prompt_asset=prompt_asset,
+                    response_format=response_format,
+                    input_token_limit=input_token_limit,
+                    image_files=image_files,
+                    allow_response_format_fallback=allow_response_format_fallback,
+                    progress_callback=progress_callback,
+                    allow_streaming_fallback=False,
+                )
             if _should_retry_without_response_format(
                 status,
                 response_format,
