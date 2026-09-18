@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from app.core.errors import AdapterError
 from app.core.models import WordDocumentRequest
 from app.services.long_task_coordinator import (
+    MAX_EVENT_WAIT_MS,
     PRIORITY_INTERACTIVE,
     LongTaskCoordinator,
     get_long_task_coordinator,
@@ -22,6 +23,23 @@ from app.services.word.smart_imitator import WordSmartImitator
 
 
 CLIENT_JOB_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{7,95}$")
+WRITING_EVENTS_QUERY_INVALID_MESSAGE = "afterSequence 和 waitMs 必须为整数。"
+
+
+def normalize_writing_events_query(after_sequence="0", wait_ms="0") -> Tuple[int, int]:
+    try:
+        parsed_after_sequence = int(after_sequence)
+        parsed_wait_ms = int(wait_ms)
+    except (TypeError, ValueError):
+        raise AdapterError(
+            "REQUEST_VALIDATION_FAILED",
+            WRITING_EVENTS_QUERY_INVALID_MESSAGE,
+            status_code=422,
+        )
+    return (
+        max(0, parsed_after_sequence),
+        max(0, min(parsed_wait_ms, MAX_EVENT_WAIT_MS)),
+    )
 
 
 def _normalize_client_job_id(value: str) -> str:
@@ -119,6 +137,19 @@ class WritingJobStore:
 
     def get(self, job_id: str) -> Optional[Dict]:
         return self.coordinator.get(job_id, task_type=self.task_type)
+
+    def wait_events(
+        self,
+        job_id: str,
+        after_sequence: int = 0,
+        wait_ms: int = 0,
+    ) -> Optional[Dict]:
+        return self.coordinator.wait_events(
+            job_id,
+            task_type=self.task_type,
+            after_sequence=after_sequence,
+            wait_ms=wait_ms,
+        )
 
     def cancel(self, job_id: str) -> Optional[Dict]:
         return self.coordinator.cancel(job_id, task_type=self.task_type)

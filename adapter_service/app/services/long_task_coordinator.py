@@ -13,6 +13,8 @@ DEFAULT_MAX_RUNNING = 2
 DEFAULT_MAX_QUEUED = 8
 DEFAULT_TERMINAL_TTL_SECONDS = 2 * 60 * 60
 DEFAULT_MAX_TERMINAL_JOBS = 50
+DEFAULT_MAX_EVENTS = 256
+MAX_EVENT_WAIT_MS = 25000
 PUBLIC_PHASES = {
     "queued",
     "preparing",
@@ -21,6 +23,10 @@ PUBLIC_PHASES = {
     "chunking",
     "uploading",
     "provider_processing",
+    "provider_connecting",
+    "provider_waiting",
+    "streaming",
+    "stopping",
     "retrying",
     "splitting",
     "parsing",
@@ -255,10 +261,22 @@ class LongTaskCoordinator:
                 "_successCommitter": success_committer,
                 "_authInvalidationCommitter": auth_invalidation_committer,
                 "_metrics": {},
+                "_events": deque(maxlen=DEFAULT_MAX_EVENTS),
+                "_latest_sequence": 0,
+                "_oldest_sequence": 0,
+                "_text_preview": "",
                 "result": None,
                 "error": deepcopy(invalidated_error),
             }
             job["_snapshot"].setdefault("traceId", trace_id)
+            initial_event_type = "terminal" if status in TERMINAL_STATUSES else "phase"
+            self._append_event_locked(
+                job,
+                initial_event_type,
+                phase,
+                status,
+                error=invalidated_error,
+            )
             self._jobs[job_key] = job
             if status == "failed":
                 self._commit_auth_invalidation_locked(job, invalidated_error or {})
@@ -336,6 +354,177 @@ class LongTaskCoordinator:
         message = str(error.get("message") or failure_message)
         status_code = (safe_error_statuses or {}).get(code, 502)
         raise AdapterError(code, message, status_code=status_code)
+
+    def _append_event_locked(
+        self,
+        job: Dict,
+        event_type: str,
+        phase: str,
+        status: str,
+        error: Optional[Dict] = None,
+        data: Optional[Dict] = None,
+    ) -> Dict:
+        seq = job.get("_latest_sequence", 0) + 1
+        job["_latest_sequence"] = seq
+        now_wall = self._wall_clock()
+        event = {
+            "sequence": seq,
+            "type": event_type,
+            "phase": phase,
+            "status": status,
+            "createdAt": now_wall,
+        }
+        if error is not None:
+            event["error"] = deepcopy(error)
+        if data is not None:
+            event.update(deepcopy(data))
+        job["_events"].append(event)
+        job["_oldest_sequence"] = job["_events"][0]["sequence"]
+        return event
+
+    def _build_preview_snapshot_locked(self, job: Dict) -> Dict:
+        return {
+            "jobId": job["jobId"],
+            "taskType": job["taskType"],
+            "status": "failed" if job.get("_authInvalidated") else job["status"],
+            "phase": "failed" if job.get("_authInvalidated") else job["phase"],
+            "text": str(job.get("_text_preview") or ""),
+            "latestSequence": job.get("_latest_sequence", 0),
+        }
+
+    def wait_events(
+        self,
+        job_id: str,
+        task_type: Optional[str] = None,
+        after_sequence: int = 0,
+        wait_ms: int = 0,
+    ) -> Optional[Dict]:
+        """Query or long-poll incremental task events for a job."""
+        try:
+            after_seq = int(after_sequence)
+        except (TypeError, ValueError):
+            after_seq = 0
+        try:
+            bounded_wait_ms = max(0, min(int(wait_ms), MAX_EVENT_WAIT_MS))
+        except (TypeError, ValueError):
+            bounded_wait_ms = 0
+
+        now_mono = self._monotonic()
+        deadline_mono = now_mono + (bounded_wait_ms / 1000.0)
+
+        with self._condition:
+            while True:
+                now_mono = self._monotonic()
+                self._cleanup_locked(now_mono)
+                job_key = self._find_job_key_locked(job_id, task_type)
+                job = self._jobs.get(job_key) if job_key is not None else None
+                if job is None:
+                    return None
+
+                latest_seq = job.get("_latest_sequence", 0)
+                events_ring = list(job.get("_events", []))
+                oldest_seq = events_ring[0]["sequence"] if events_ring else 1
+                is_terminal = job["status"] in TERMINAL_STATUSES or bool(
+                    job.get("_authInvalidated")
+                )
+                effective_status = (
+                    "failed" if job.get("_authInvalidated") else job["status"]
+                )
+                effective_phase = (
+                    "failed" if job.get("_authInvalidated") else job["phase"]
+                )
+                error = deepcopy(
+                    job.get("_authInvalidatedError") or job.get("error")
+                )
+
+                reset_required = False
+                if after_seq < 0:
+                    after_seq = 0
+                elif after_seq > latest_seq:
+                    reset_required = True
+                elif after_seq > 0 and after_seq < oldest_seq - 1:
+                    reset_required = True
+
+                if reset_required:
+                    return {
+                        "jobId": job["jobId"],
+                        "traceId": job["traceId"],
+                        "taskType": job["taskType"],
+                        "status": effective_status,
+                        "phase": effective_phase,
+                        "latestSequence": latest_seq,
+                        "events": [deepcopy(e) for e in events_ring],
+                        "previewSnapshot": self._build_preview_snapshot_locked(job),
+                        "resetRequired": True,
+                        "terminal": is_terminal,
+                        "error": error,
+                    }
+
+                if after_seq == 0:
+                    return {
+                        "jobId": job["jobId"],
+                        "traceId": job["traceId"],
+                        "taskType": job["taskType"],
+                        "status": effective_status,
+                        "phase": effective_phase,
+                        "latestSequence": latest_seq,
+                        "events": [deepcopy(e) for e in events_ring],
+                        "previewSnapshot": self._build_preview_snapshot_locked(job),
+                        "resetRequired": False,
+                        "terminal": is_terminal,
+                        "error": error,
+                    }
+
+                if after_seq < latest_seq:
+                    new_events = [
+                        deepcopy(e) for e in events_ring if e["sequence"] > after_seq
+                    ]
+                    return {
+                        "jobId": job["jobId"],
+                        "traceId": job["traceId"],
+                        "taskType": job["taskType"],
+                        "status": effective_status,
+                        "phase": effective_phase,
+                        "latestSequence": latest_seq,
+                        "events": new_events,
+                        "previewSnapshot": None,
+                        "resetRequired": False,
+                        "terminal": is_terminal,
+                        "error": error,
+                    }
+
+                if is_terminal:
+                    return {
+                        "jobId": job["jobId"],
+                        "traceId": job["traceId"],
+                        "taskType": job["taskType"],
+                        "status": effective_status,
+                        "phase": effective_phase,
+                        "latestSequence": latest_seq,
+                        "events": [],
+                        "previewSnapshot": None,
+                        "resetRequired": False,
+                        "terminal": True,
+                        "error": error,
+                    }
+
+                remaining = deadline_mono - self._monotonic()
+                if remaining <= 0 or bounded_wait_ms <= 0:
+                    return {
+                        "jobId": job["jobId"],
+                        "traceId": job["traceId"],
+                        "taskType": job["taskType"],
+                        "status": effective_status,
+                        "phase": effective_phase,
+                        "latestSequence": latest_seq,
+                        "events": [],
+                        "previewSnapshot": None,
+                        "resetRequired": False,
+                        "terminal": False,
+                        "error": error,
+                    }
+
+                self._condition.wait(timeout=remaining)
 
     def cancel(self, job_id: str, task_type: Optional[str] = None) -> Optional[Dict]:
         now_mono = self._monotonic()
@@ -906,6 +1095,15 @@ class LongTaskCoordinator:
         job["_phaseStartedMonotonic"] = now_mono
         job["_updatedMonotonic"] = now_mono
         job["updatedAt"] = self._wall_clock()
+        event_type = "terminal" if phase in TERMINAL_STATUSES else "phase"
+        self._append_event_locked(
+            job,
+            event_type,
+            phase,
+            job.get("status", phase),
+            error=job.get("error"),
+        )
+        self._condition.notify_all()
 
     def _finish_locked(self, job: Dict, status: str, now_mono: float) -> None:
         job["status"] = status

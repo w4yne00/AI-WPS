@@ -801,6 +801,146 @@ class LongTaskCoordinatorTests(unittest.TestCase):
         self.assertIn("metrics", recent)
         self.assertEqual(recent["metrics"].get("providerHeadersMs"), 150)
 
+    def test_wait_events_initial_query_and_monotonic_sequence(self):
+        coordinator = LongTaskCoordinator(max_running=1, max_queued=1)
+        phase_event = threading.Event()
+        finish_event = threading.Event()
+
+        def runner(_snapshot, control):
+            control("provider_processing")
+            phase_event.set()
+            finish_event.wait(timeout=2)
+            return {"text": "done"}
+
+        submitted = coordinator.submit(
+            job_id="stream-job-1",
+            trace_id="trace-stream-1",
+            task_type="word.smart_write",
+            runner=runner,
+            snapshot={},
+            failure_code="STREAM_FAILED",
+            failure_message="stream failed",
+        )
+        self.assertTrue(phase_event.wait(timeout=2))
+
+        # Initial query (after_sequence=0)
+        events_resp = coordinator.wait_events("stream-job-1", task_type="word.smart_write", after_sequence=0)
+        self.assertIsNotNone(events_resp)
+        self.assertEqual(events_resp["jobId"], "stream-job-1")
+        self.assertFalse(events_resp["resetRequired"])
+        self.assertFalse(events_resp["terminal"])
+        self.assertIn("previewSnapshot", events_resp)
+        self.assertGreater(events_resp["latestSequence"], 0)
+        self.assertGreater(len(events_resp["events"]), 0)
+
+        # Sequences must be strictly monotonic
+        sequences = [e["sequence"] for e in events_resp["events"]]
+        self.assertEqual(sequences, sorted(sequences))
+        self.assertEqual(len(sequences), len(set(sequences)))
+
+        # Next query with after_sequence = latestSequence (timeout fast)
+        seq_now = events_resp["latestSequence"]
+        empty_resp = coordinator.wait_events(
+            "stream-job-1",
+            task_type="word.smart_write",
+            after_sequence=seq_now,
+            wait_ms=20,
+        )
+        self.assertEqual(empty_resp["events"], [])
+        self.assertEqual(empty_resp["latestSequence"], seq_now)
+        self.assertFalse(empty_resp["resetRequired"])
+
+        # Release runner to finish
+        finish_event.set()
+        completed = coordinator.wait("stream-job-1")
+        self.assertEqual(completed["status"], "completed")
+
+        # Query after runner finished
+        terminal_resp = coordinator.wait_events(
+            "stream-job-1",
+            task_type="word.smart_write",
+            after_sequence=seq_now,
+            wait_ms=100,
+        )
+        self.assertTrue(terminal_resp["terminal"])
+        self.assertEqual(terminal_resp["status"], "completed")
+        self.assertGreater(terminal_resp["latestSequence"], seq_now)
+        self.assertTrue(any(e["type"] == "terminal" for e in terminal_resp["events"]))
+
+    def test_wait_events_condition_wakeup_on_phase_transition(self):
+        coordinator = LongTaskCoordinator(max_running=1, max_queued=1)
+        step_gate = threading.Event()
+        finish_gate = threading.Event()
+
+        def runner(_snapshot, control):
+            step_gate.wait(timeout=2)
+            control("provider_processing")
+            finish_gate.wait(timeout=2)
+            return {"result": "ok"}
+
+        coordinator.submit(
+            job_id="wake-job-1",
+            trace_id="trace-wake-1",
+            task_type="word.smart_write",
+            runner=runner,
+            snapshot={},
+            failure_code="FAILED",
+            failure_message="failed",
+        )
+
+        initial = coordinator.wait_events("wake-job-1", after_sequence=0)
+        initial_seq = initial["latestSequence"]
+
+        result_box = []
+
+        def wait_worker():
+            resp = coordinator.wait_events("wake-job-1", after_sequence=initial_seq, wait_ms=5000)
+            result_box.append(resp)
+
+        thread = threading.Thread(target=wait_worker)
+        thread.start()
+
+        time.sleep(0.05)
+        # Trigger phase change
+        step_gate.set()
+        thread.join(timeout=2)
+        self.assertFalse(thread.is_alive(), "wait_events did not wake up promptly on phase change")
+        self.assertEqual(len(result_box), 1)
+        self.assertGreater(result_box[0]["latestSequence"], initial_seq)
+
+        finish_gate.set()
+        coordinator.wait("wake-job-1")
+
+    def test_wait_events_gap_detection_requires_reset(self):
+        coordinator = LongTaskCoordinator(max_running=1, max_queued=1)
+        finish_event = threading.Event()
+
+        # Emit 300 phase transitions in runner to overflow the 256-entry ring buffer
+        def overflow_runner(_snapshot, control):
+            for i in range(300):
+                # alternate phases
+                control("provider_processing" if i % 2 == 0 else "parsing")
+            finish_event.set()
+            return {"done": True}
+
+        coordinator.submit(
+            job_id="gap-job-1",
+            trace_id="trace-gap-1",
+            task_type="word.smart_write",
+            runner=overflow_runner,
+            snapshot={},
+            failure_code="FAILED",
+            failure_message="failed",
+        )
+        self.assertTrue(finish_event.wait(timeout=3))
+        coordinator.wait("gap-job-1")
+
+        # Client asks for after_sequence=1, but sequence 1 has been evicted from 256 ring buffer
+        gap_resp = coordinator.wait_events("gap-job-1", after_sequence=1)
+        self.assertTrue(gap_resp["resetRequired"])
+        self.assertIn("previewSnapshot", gap_resp)
+        self.assertGreater(gap_resp["latestSequence"], 256)
+
 
 if __name__ == "__main__":
     unittest.main()

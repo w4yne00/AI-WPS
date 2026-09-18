@@ -24,13 +24,19 @@
   var WRITING_POLL_INTERVAL_MS = 3000;
   var WRITING_POLL_RETRY_DELAY_MS = 15000;
   var WRITING_POLL_REQUEST_TIMEOUT_MS = 10000;
+  var WRITING_EVENTS_WAIT_MS = 25000;
+  var WRITING_EVENTS_REQUEST_TIMEOUT_MS = 35000;
   var DOCUMENT_REVIEW_PHASE_TEXT = {
     queued: "排队等待",
     preparing: "准备审查内容",
     extracting: "抽取审查内容",
     confirming: "等待大型文档确认",
     chunking: "处理审查分片",
+    provider_connecting: "正在连接模型服务",
+    provider_waiting: "等待模型服务响应",
     provider_processing: "模型后台处理",
+    streaming: "正在生成内容",
+    stopping: "正在停止任务",
     retrying: "受控重试中",
     splitting: "拆分饱和分片",
     parsing: "解析并整理审查结果",
@@ -7772,7 +7778,7 @@
     }
     setActiveWritingJobRecord(taskType, targetDocSession, null);
 
-    var isCurrentGlobalJob = (!targetJobId || state.writingJobId === targetJobId || state.writingJobTaskType === taskType);
+    var isCurrentGlobalJob = (!targetJobId || state.writingJobId === targetJobId);
     if (isCurrentGlobalJob) {
       setWritingJob("", "", "");
       state.writingJobStartedAt = 0;
@@ -8282,6 +8288,161 @@
     });
   }
 
+  function pollWritingJobEvents(jobId, taskType, mode, resumed, docSessionId, afterSequence, consecutiveErrors, consumerVersion) {
+    if (!jobId) {
+      return;
+    }
+    var waitMs = typeof WRITING_EVENTS_WAIT_MS !== "undefined" ? WRITING_EVENTS_WAIT_MS : 25000;
+    var reqTimeoutMs = typeof WRITING_EVENTS_REQUEST_TIMEOUT_MS !== "undefined" ? WRITING_EVENTS_REQUEST_TIMEOUT_MS : 35000;
+    var targetDocSession = docSessionId || (state && state.documentSessionId) || "default";
+    var seq = typeof afterSequence === "number" ? afterSequence : 0;
+    var errors = typeof consecutiveErrors === "number" ? consecutiveErrors : 0;
+    var consumerKey = [taskType, targetDocSession, jobId].join("::");
+    state.writingEventConsumers = state.writingEventConsumers || {};
+    var activeConsumerVersion = consumerVersion;
+    if (typeof activeConsumerVersion !== "number") {
+      activeConsumerVersion = Number(state.writingEventConsumers[consumerKey] || 0) + 1;
+      state.writingEventConsumers[consumerKey] = activeConsumerVersion;
+    }
+
+    function isCurrentConsumer() {
+      return state.writingEventConsumers[consumerKey] === activeConsumerVersion;
+    }
+
+    function stopCurrentConsumer() {
+      if (isCurrentConsumer()) {
+        delete state.writingEventConsumers[consumerKey];
+      }
+    }
+
+    function isCurrentWritingView() {
+      var currentDoc = (helpers && helpers.getDocumentSessionId && typeof getActiveDocument === "function")
+        ? helpers.getDocumentSessionId(getActiveDocument())
+        : state.documentSessionId;
+      return state.currentMode === mode &&
+        state.writingJobId === jobId &&
+        (!targetDocSession || targetDocSession === currentDoc || !currentDoc);
+    }
+    var url = writingJobPath(taskType) + "/" + encodeURIComponent(jobId) + "/events?afterSequence=" + seq + "&waitMs=" + waitMs;
+
+    request(url, null, {
+      timeoutMs: reqTimeoutMs
+    }).then(function (body) {
+      if (!isCurrentConsumer()) {
+        return;
+      }
+      var payload = body.data || {};
+      var events = payload.events || [];
+      var nextSequence = (typeof payload.latestSequence === "number") ? payload.latestSequence : seq;
+      var isTerminal = Boolean(payload.terminal);
+      var terminalStatus = payload.status || (events.length > 0 ? events[events.length - 1].status : "");
+
+      saveWritingActiveJob({
+        jobId: jobId,
+        taskType: taskType,
+        mode: mode,
+        documentSessionId: targetDocSession,
+        traceId: body.traceId || jobId,
+        startedAt: (state && state.writingJobStartedAt) || Date.now()
+      });
+
+      if (payload.resetRequired && payload.previewSnapshot) {
+        if (isCurrentWritingView()) {
+          renderWritingJobProgress(payload.previewSnapshot, taskType, jobId);
+        }
+      }
+
+      for (var i = 0; i < events.length; i++) {
+        var evt = events[i];
+        if (typeof evt.sequence === "number" && evt.sequence > nextSequence) {
+          nextSequence = evt.sequence;
+        }
+        if (isCurrentWritingView()) {
+          renderWritingJobProgress(evt, taskType, jobId);
+        }
+      }
+
+      if (isTerminal || terminalStatus === "completed" || terminalStatus === "cancelled" || terminalStatus === "failed") {
+        if (terminalStatus === "completed") {
+          stopCurrentConsumer();
+          pollWritingJob(jobId, taskType, mode, resumed, targetDocSession);
+          return;
+        }
+        if (terminalStatus === "cancelled") {
+          stopCurrentConsumer();
+          if (typeof releaseTaskSlotsForJob === "function") {
+            releaseTaskSlotsForJob(jobId);
+          }
+          if (typeof helpers !== "undefined" && helpers && helpers.releaseTaskSlot) {
+            helpers.releaseTaskSlot(state.activeTaskSlots, "wps", taskType, targetDocSession, jobId);
+          }
+          if (typeof clearWritingActiveJob === "function") {
+            clearWritingActiveJob(jobId, taskType, targetDocSession);
+          }
+          if (typeof setActiveWritingJobRecord === "function") {
+            setActiveWritingJobRecord(taskType, targetDocSession, null);
+          }
+
+          var targetMode = mode || (taskType === "word.smart_imitation" ? "smartImitation" : "smartWrite");
+          var currentDoc = (typeof helpers !== "undefined" && helpers && helpers.getDocumentSessionId && typeof getActiveDocument === "function")
+            ? helpers.getDocumentSessionId(getActiveDocument())
+            : (state && state.documentSessionId);
+          var isCurrentView = (!state || state.currentMode === targetMode) && (!targetDocSession || targetDocSession === currentDoc || !currentDoc);
+
+          if (isCurrentView || (state && state.writingJobId === jobId)) {
+            if (typeof setWritingJob === "function") {
+              setWritingJob("", "", "");
+            }
+            if (typeof setModelTaskBusy === "function") {
+              setModelTaskBusy(false);
+            }
+          }
+          if (isCurrentView) {
+            var label = typeof writingTaskLabel === "function" ? writingTaskLabel(taskType) : "写作";
+            if (typeof setStatus === "function") {
+              setStatus("排队中的" + label + "任务已取消。");
+            }
+            if (typeof setPlainResult === "function") {
+              setPlainResult("排队任务已取消，未调用模型后台。\n任务编号：" + jobId);
+            }
+          }
+          return;
+        }
+        if (terminalStatus === "failed") {
+          stopCurrentConsumer();
+          failWritingJob(jobId, taskType, mode, payload.error, targetDocSession);
+          return;
+        }
+      }
+
+      pollWritingJobEvents(jobId, taskType, mode, resumed, targetDocSession, nextSequence, 0, activeConsumerVersion);
+    }).catch(function (error) {
+      if (!isCurrentConsumer()) {
+        return;
+      }
+      var status = error && (error.httpStatus || error.status);
+      if (status === 404) {
+        stopCurrentConsumer();
+        pollWritingJob(jobId, taskType, mode, resumed, targetDocSession);
+        return;
+      }
+      if (isFatalWritingPollError(error)) {
+        stopCurrentConsumer();
+        failWritingJob(jobId, taskType, mode, error, targetDocSession);
+        return;
+      }
+      var nextErrors = errors + 1;
+      if (nextErrors >= 3) {
+        stopCurrentConsumer();
+        pollWritingJob(jobId, taskType, mode, resumed, targetDocSession);
+        return;
+      }
+      setTimeout(function () {
+        pollWritingJobEvents(jobId, taskType, mode, resumed, targetDocSession, seq, nextErrors, activeConsumerVersion);
+      }, 1000);
+    });
+  }
+
   function startWritingJob(payload, taskType, mode, docSessionId, docDisplayName) {
     var document = getActiveDocument();
     var docSession = docSessionId || payload.documentSessionId || (helpers.getDocumentSessionId ? helpers.getDocumentSessionId(document) : "doc_session_default");
@@ -8362,14 +8523,22 @@
         if (state.currentMode === mode) {
           renderWritingJobProgress(job, taskType, returnedJobId);
         }
-        pollWritingJob(returnedJobId, taskType, mode, false, docSession);
+        if (typeof pollWritingJobEvents === "function") {
+          pollWritingJobEvents(returnedJobId, taskType, mode, false, docSession, 0, 0);
+        } else {
+          pollWritingJob(returnedJobId, taskType, mode, false, docSession);
+        }
       }).catch(function (error) {
         if (isFatalWritingPollError(error)) {
           failWritingJob(jobId, taskType, mode, error, docSession);
           return;
         }
         setStatus(writingTaskLabel(taskType) + "提交响应未确认，正在按任务编号恢复查询...");
-        pollWritingJob(jobId, taskType, mode, false, docSession);
+        if (typeof pollWritingJobEvents === "function") {
+          pollWritingJobEvents(jobId, taskType, mode, false, docSession, 0, 0);
+        } else {
+          pollWritingJob(jobId, taskType, mode, false, docSession);
+        }
       });
   }
 
@@ -8406,7 +8575,11 @@
     setApplyEnabled(false);
     setStatus("已恢复未完成的" + writingTaskLabel(active.taskType) + "任务，正在查询结果...");
     setPlainResult("检测到未完成的写作任务，将继续查询 adapter 后台状态。\n任务编号：" + active.jobId);
-    pollWritingJob(active.jobId, active.taskType, active.mode, true, docSession);
+    if (typeof pollWritingJobEvents === "function") {
+      pollWritingJobEvents(active.jobId, active.taskType, active.mode, true, docSession, 0, 0);
+    } else {
+      pollWritingJob(active.jobId, active.taskType, active.mode, true, docSession);
+    }
   }
 
   function cancelQueuedWritingJob() {

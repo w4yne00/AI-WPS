@@ -101,7 +101,11 @@ from app.services.task_history import (
     get_task_history_store,
 )
 from app.services.system_prompts import SystemPromptError, SystemPromptStore
-from app.services.word.writing_jobs import SmartImitationJobStore, SmartWriteJobStore
+from app.services.word.writing_jobs import (
+    SmartImitationJobStore,
+    SmartWriteJobStore,
+    normalize_writing_events_query,
+)
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -1891,7 +1895,47 @@ class Handler(BaseHTTPRequestHandler):
         )
         for prefix, task_type, store in writing_job_routes:
             if path.startswith(prefix):
-                job_id = unquote(path[len(prefix) :]).strip("/")
+                suffix = unquote(path[len(prefix) :]).strip("/")
+                if suffix.endswith("/events"):
+                    job_id = suffix[: -len("/events")].strip("/")
+                    query_params = parse_qs(parsed.query, keep_blank_values=True)
+                    try:
+                        after_seq, wait_ms = normalize_writing_events_query(
+                            query_params.get("afterSequence", ["0"])[0],
+                            query_params.get("waitMs", ["0"])[0],
+                        )
+                    except AdapterError as error:
+                        self._write(
+                            error.status_code,
+                            envelope(
+                                job_id,
+                                task_type,
+                                success=False,
+                                message=error.message,
+                                errors=[{"code": error.code, "message": error.message}],
+                            ),
+                        )
+                        return
+                    events_data = store.wait_events(
+                        job_id, after_sequence=after_seq, wait_ms=wait_ms
+                    )
+                    if not events_data:
+                        self._write(
+                            404,
+                            writing_job_missing_envelope(job_id, task_type),
+                        )
+                        return
+                    self._write(
+                        200,
+                        envelope(
+                            events_data.get("traceId", job_id),
+                            task_type,
+                            events_data,
+                            message=events_data.get("status", "success"),
+                        ),
+                    )
+                    return
+                job_id = suffix
                 job = store.get(job_id)
                 interrupted = str(
                     parse_qs(parsed.query).get("resume", [""])[0]

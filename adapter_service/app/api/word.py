@@ -20,7 +20,11 @@ from app.services.word.deterministic_format_review import (
 from app.services.word.full_document_review import full_document_review_service
 from app.services.word.smart_imitator import WordSmartImitator
 from app.services.word.rewriter import WordRewriter
-from app.services.word.writing_jobs import SmartImitationJobStore, SmartWriteJobStore
+from app.services.word.writing_jobs import (
+    SmartImitationJobStore,
+    SmartWriteJobStore,
+    normalize_writing_events_query,
+)
 
 router = APIRouter()
 rewriter = WordRewriter()
@@ -312,6 +316,18 @@ def _writing_job_envelope(job: dict, task_type: str) -> dict:
     }
 
 
+def _writing_events_envelope(data: dict, task_type: str) -> dict:
+    payload = dict(data)
+    return {
+        "success": True,
+        "traceId": payload.get("traceId", payload.get("jobId", "")),
+        "taskType": task_type,
+        "message": payload.get("status", "success"),
+        "data": payload,
+        "errors": [],
+    }
+
+
 @router.post("/word/smart-write/jobs")
 def start_smart_write_job(request: WordDocumentRequest) -> dict:
     trace_id = new_trace_id("word-smart-write")
@@ -324,6 +340,17 @@ def get_smart_write_job(job_id: str, resume: bool = False):
     if not job:
         return _missing_writing_job_response(job_id, "word.smart_write", resume)
     return _writing_job_envelope(job, "word.smart_write")
+
+
+@router.get("/word/smart-write/jobs/{job_id}/events")
+def get_smart_write_job_events(job_id: str, afterSequence: str = "0", waitMs: str = "0"):
+    after_sequence, wait_ms = normalize_writing_events_query(afterSequence, waitMs)
+    events_data = smart_write_jobs.wait_events(
+        job_id, after_sequence=after_sequence, wait_ms=wait_ms
+    )
+    if not events_data:
+        return _missing_writing_job_response(job_id, "word.smart_write")
+    return _writing_events_envelope(events_data, "word.smart_write")
 
 
 @router.delete("/word/smart-write/jobs/{job_id}")
@@ -348,6 +375,17 @@ def get_smart_imitation_job(job_id: str, resume: bool = False):
     if not job:
         return _missing_writing_job_response(job_id, "word.smart_imitation", resume)
     return _writing_job_envelope(job, "word.smart_imitation")
+
+
+@router.get("/word/smart-imitation/jobs/{job_id}/events")
+def get_smart_imitation_job_events(job_id: str, afterSequence: str = "0", waitMs: str = "0"):
+    after_sequence, wait_ms = normalize_writing_events_query(afterSequence, waitMs)
+    events_data = smart_imitation_jobs.wait_events(
+        job_id, after_sequence=after_sequence, wait_ms=wait_ms
+    )
+    if not events_data:
+        return _missing_writing_job_response(job_id, "word.smart_imitation")
+    return _writing_events_envelope(events_data, "word.smart_imitation")
 
 
 @router.delete("/word/smart-imitation/jobs/{job_id}")
