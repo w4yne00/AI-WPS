@@ -7,6 +7,7 @@ from app.core.errors import (
     AdapterError,
     ProviderAuthError,
     ProviderMidStreamDisconnectError,
+    ProviderTimeoutError,
     ProviderUnavailableError,
 )
 from app.services.direct_text_stream import (
@@ -48,6 +49,34 @@ class FakeHTTPResponse:
 
     def close(self):
         self.closed = True
+
+
+class BoundedReadOnlyResponse:
+    def __init__(self, content):
+        self._content = content
+        self._offset = 0
+        self.closed = False
+
+    def read1(self, amt):
+        chunk = self._content[self._offset:self._offset + amt]
+        self._offset += len(chunk)
+        return chunk
+
+    def __iter__(self):
+        raise AssertionError("stream parser must not use unbounded line iteration")
+
+    def close(self):
+        self.closed = True
+
+
+class ClockAdvancingResponse(BoundedReadOnlyResponse):
+    def __init__(self, content, advance_clock):
+        super().__init__(content)
+        self._advance_clock = advance_clock
+
+    def read1(self, amt):
+        self._advance_clock()
+        return super().read1(amt)
 
 
 class StreamingThinkFilterTests(unittest.TestCase):
@@ -137,6 +166,24 @@ class DirectTextStreamTests(unittest.TestCase):
         self.assertEqual(result["rewrittenText"], "Line 1 Line 2 ")
         self.assertEqual("".join(published), "Line 1 Line 2 ")
 
+    def test_multiple_data_fields_form_one_sse_event(self):
+        payload = (
+            b'data: {"choices":\n'
+            b'data: [{"delta":{"content":"joined event"}}]}\n\n'
+            b'data: [DONE]\n\n'
+        )
+        response = FakeHTTPResponse([payload])
+        published = []
+
+        result = read_direct_text_stream(
+            response=response,
+            publish_callback=published.append,
+            timeout=5.0,
+        )
+
+        self.assertEqual(result["rewrittenText"], "joined event")
+        self.assertEqual(published, ["joined event"])
+
     def test_heartbeat_comments_and_empty_deltas_ignored(self):
         payloads = [
             b": ping\n\n",
@@ -212,6 +259,10 @@ class DirectTextStreamTests(unittest.TestCase):
 
         self.assertEqual(result["rewrittenText"], "Result")
         self.assertEqual("".join(published), "Result")
+        self.assertEqual(
+            result["usage"],
+            {"prompt_tokens": 10, "completion_tokens": 5},
+        )
 
     def test_finish_reason_terminates_stream(self):
         payloads = [
@@ -255,6 +306,76 @@ class DirectTextStreamTests(unittest.TestCase):
             )
         self.assertEqual(ctx.exception.code, "MODEL_RESPONSE_SIZE_LIMIT")
         self.assertEqual(ctx.exception.status_code, 502)
+
+    def test_response_size_limit_uses_bounded_reads_without_newlines(self):
+        response = BoundedReadOnlyResponse(b"x" * 65)
+
+        with self.assertRaises(AdapterError) as ctx:
+            read_direct_text_stream(
+                response=response,
+                publish_callback=lambda text: None,
+                timeout=5.0,
+                max_bytes=64,
+            )
+
+        self.assertEqual(ctx.exception.code, "MODEL_RESPONSE_SIZE_LIMIT")
+        self.assertTrue(response.closed)
+
+    def test_total_timeout_is_checked_after_each_bounded_read(self):
+        from unittest.mock import patch
+
+        clock = [100.0]
+        response = ClockAdvancingResponse(
+            b"data: [DONE]\n\n",
+            lambda: clock.__setitem__(0, 106.0),
+        )
+
+        with patch(
+            "app.services.direct_text_stream.time.monotonic",
+            side_effect=lambda: clock[0],
+        ):
+            with self.assertRaises(ProviderTimeoutError):
+                read_direct_text_stream(
+                    response=response,
+                    publish_callback=lambda text: None,
+                    timeout=5.0,
+                )
+
+        self.assertTrue(response.closed)
+
+    def test_each_read_uses_only_the_remaining_total_deadline(self):
+        from unittest.mock import patch
+
+        class RecordingSocket:
+            def __init__(self):
+                self.timeouts = []
+
+            def settimeout(self, value):
+                self.timeouts.append(value)
+
+        class SocketResponse(BoundedReadOnlyResponse):
+            def __init__(self, content):
+                super().__init__(content)
+                self.socket = RecordingSocket()
+                self.fp = type("Buffered", (), {})()
+                self.fp.raw = type("Raw", (), {"_sock": self.socket})()
+
+        response = SocketResponse(b"data: [DONE]\n\n")
+        clock_values = iter((100.0, 104.5, 104.5))
+
+        with patch(
+            "app.services.direct_text_stream.time.monotonic",
+            side_effect=lambda: next(clock_values),
+        ):
+            read_direct_text_stream(
+                response=response,
+                publish_callback=lambda text: None,
+                timeout=5.0,
+            )
+
+        self.assertEqual(len(response.socket.timeouts), 1)
+        self.assertGreater(response.socket.timeouts[0], 0)
+        self.assertLessEqual(response.socket.timeouts[0], 0.5)
 
     def test_first_visible_metric_timing(self):
         payloads = [

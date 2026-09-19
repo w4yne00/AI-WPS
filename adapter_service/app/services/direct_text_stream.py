@@ -1,6 +1,5 @@
 import codecs
 import json
-import re
 import time
 from typing import Callable, Dict, Optional
 
@@ -12,11 +11,21 @@ from app.core.errors import (
 )
 
 MAX_DIRECT_STREAM_RESPONSE_BYTES = 5 * 1024 * 1024
+DIRECT_STREAM_READ_BYTES = 64 * 1024
 
 
 class StreamingUnsupportedError(Exception):
     """Raised when streaming probe or request receives non-streaming or unsupported response."""
     pass
+
+
+def _set_response_read_timeout(response, timeout_seconds: float) -> None:
+    fp = getattr(response, "fp", None)
+    raw = getattr(fp, "raw", None)
+    sock = getattr(raw, "_sock", None)
+    settimeout = getattr(sock, "settimeout", None)
+    if callable(settimeout):
+        settimeout(max(0.001, timeout_seconds))
 
 
 class StreamingThinkFilter:
@@ -141,6 +150,10 @@ def read_direct_text_stream(
     terminated = False
     finish_reason = None
     line_buffer = ""
+    event_data_lines = []
+    usage = {}
+    response_id = ""
+    response_model = ""
 
     def emit_text(text: str) -> None:
         nonlocal first_visible_recorded
@@ -154,14 +167,95 @@ def read_direct_text_stream(
         publish_callback(text)
         accumulated_chunks.append(text)
 
+    def process_event() -> None:
+        nonlocal terminated, finish_reason, usage, response_id, response_model
+        if not event_data_lines:
+            return
+        data_content = "\n".join(event_data_lines)
+        event_data_lines[:] = []
+        if not data_content:
+            return
+        if data_content.strip() == "[DONE]":
+            terminated = True
+            return
+        try:
+            chunk = json.loads(data_content)
+        except json.JSONDecodeError as exc:
+            raise AdapterError(
+                "MODEL_RESULT_INVALID",
+                "模型后台返回了无法解析的流式事件。",
+                status_code=502,
+            ) from exc
+
+        if not isinstance(chunk, dict):
+            return
+        if isinstance(chunk.get("error"), dict):
+            err_msg = chunk["error"].get("message") or "模型后台在流式响应期间返回错误。"
+            raise ProviderUnavailableError(err_msg)
+
+        raw_usage = chunk.get("usage")
+        if isinstance(raw_usage, dict):
+            usage = {
+                key: value
+                for key, value in raw_usage.items()
+                if key in {"prompt_tokens", "completion_tokens", "total_tokens"}
+                and isinstance(value, (int, float))
+                and not isinstance(value, bool)
+            }
+        if chunk.get("id") is not None:
+            response_id = str(chunk.get("id"))
+        if chunk.get("model") is not None:
+            response_model = str(chunk.get("model"))
+
+        choices = chunk.get("choices")
+        if not choices or not isinstance(choices, list):
+            return
+        choice = choices[0] if isinstance(choices[0], dict) else {}
+        delta = choice.get("delta") if isinstance(choice, dict) else {}
+        if isinstance(delta, dict):
+            content = delta.get("content") or delta.get("text") or ""
+            if content:
+                filtered = think_filter.feed(content)
+                if filtered:
+                    emit_text(filtered)
+        if choice.get("finish_reason"):
+            finish_reason = choice.get("finish_reason")
+            terminated = True
+
+    def process_line(raw_line: str) -> None:
+        if raw_line.endswith("\r"):
+            raw_line = raw_line[:-1]
+        if raw_line == "":
+            process_event()
+            return
+        if raw_line.startswith(":"):
+            return
+        if raw_line.startswith("data:"):
+            value = raw_line[5:]
+            if value.startswith(" "):
+                value = value[1:]
+            event_data_lines.append(value)
+
     try:
-        # Read chunks
-        for raw_chunk in response:
-            if time.monotonic() - started_at > timeout:
+        read_chunk = getattr(response, "read1", None)
+        if not callable(read_chunk):
+            read_chunk = response.read
+
+        while not terminated:
+            elapsed = time.monotonic() - started_at
+            if elapsed >= timeout:
                 raise ProviderTimeoutError("模型服务流式响应读取超时。")
             if cancel_checker and cancel_checker():
                 break
 
+            remaining_bytes = max_bytes - received_bytes
+            read_size = min(DIRECT_STREAM_READ_BYTES, max(1, remaining_bytes + 1))
+            _set_response_read_timeout(response, timeout - elapsed)
+            raw_chunk = read_chunk(read_size)
+            if time.monotonic() - started_at >= timeout:
+                raise ProviderTimeoutError("模型服务流式响应读取超时。")
+            if not raw_chunk:
+                break
             if isinstance(raw_chunk, bytes):
                 received_bytes += len(raw_chunk)
                 chunk_str = decoder.decode(raw_chunk)
@@ -177,71 +271,16 @@ def read_direct_text_stream(
                 )
 
             line_buffer += chunk_str
-            lines = line_buffer.split("\n")
-            line_buffer = lines.pop()  # Keep trailing incomplete line in buffer
+            while "\n" in line_buffer and not terminated:
+                raw_line, line_buffer = line_buffer.split("\n", 1)
+                process_line(raw_line)
 
-            for raw_line in lines:
-                line = raw_line.strip()
-                if not line or line.startswith(":"):
-                    continue
-                if line.startswith("data:"):
-                    data_content = line[5:].strip()
-                    if data_content == "[DONE]":
-                        terminated = True
-                        break
-                    try:
-                        chunk = json.loads(data_content)
-                    except json.JSONDecodeError:
-                        continue
-
-                    if isinstance(chunk, dict) and isinstance(chunk.get("error"), dict):
-                        err_msg = chunk["error"].get("message") or "模型后台在流式响应期间返回错误。"
-                        raise ProviderUnavailableError(err_msg)
-
-                    choices = chunk.get("choices") if isinstance(chunk, dict) else None
-                    if choices and isinstance(choices, list) and len(choices) > 0:
-                        choice = choices[0] if isinstance(choices[0], dict) else {}
-                        delta = choice.get("delta") if isinstance(choice, dict) else {}
-                        if isinstance(delta, dict):
-                            # Filter out reasoning_content, thought, tool_calls
-                            content = delta.get("content") or delta.get("text") or ""
-                            if content:
-                                filtered = think_filter.feed(content)
-                                if filtered:
-                                    emit_text(filtered)
-                        if choice.get("finish_reason"):
-                            finish_reason = choice.get("finish_reason")
-                            terminated = True
-                            break
-
-            if terminated:
-                break
-
-        # Process any final remaining line in line_buffer
-        if not terminated and line_buffer:
-            line = line_buffer.strip()
-            if line.startswith("data:"):
-                data_content = line[5:].strip()
-                if data_content == "[DONE]":
-                    terminated = True
-                else:
-                    try:
-                        chunk = json.loads(data_content)
-                        choices = chunk.get("choices") if isinstance(chunk, dict) else None
-                        if choices and isinstance(choices, list) and len(choices) > 0:
-                            choice = choices[0] if isinstance(choices[0], dict) else {}
-                            delta = choice.get("delta") if isinstance(choice, dict) else {}
-                            if isinstance(delta, dict):
-                                content = delta.get("content") or delta.get("text") or ""
-                                if content:
-                                    filtered = think_filter.feed(content)
-                                    if filtered:
-                                        emit_text(filtered)
-                            if choice.get("finish_reason"):
-                                finish_reason = choice.get("finish_reason")
-                                terminated = True
-                    except json.JSONDecodeError:
-                        pass
+        if not terminated:
+            line_buffer += decoder.decode(b"", final=True)
+            if line_buffer:
+                process_line(line_buffer)
+            if event_data_lines:
+                process_event()
 
         # Flush filter
         tail = think_filter.flush()
@@ -254,6 +293,9 @@ def read_direct_text_stream(
         return {
             "rewrittenText": "".join(accumulated_chunks),
             "finishReason": finish_reason or "stop",
+            "usage": usage,
+            "id": response_id,
+            "model": response_model,
         }
     finally:
         if hasattr(response, "close"):

@@ -132,6 +132,97 @@ async function testIncrementalPreviewRenderingAndCopySync() {
   assert.strictEqual(resultOutput.classList.contains("markdown-body"), false);
 }
 
+async function testSnapshotRecoveryUsesAuthoritativeText() {
+  async function runCase(jobId, payload, expectedText) {
+    const resultOutput = createMockElement("result-output");
+    const elements = {
+      "result-output": resultOutput,
+      "result-view-switch": createMockElement("result-view-switch")
+    };
+    const state = {
+      activeTaskSlots: {},
+      currentMode: "smartWrite",
+      documentSessionId: "doc-1",
+      writingJobId: jobId,
+      writingJobStartedAt: 1000,
+      writingJobPreviews: {},
+      copyText: ""
+    };
+    let requestCount = 0;
+    const context = {
+      state,
+      WRITING_POLL_REQUEST_TIMEOUT_MS: 10000,
+      byId(id) { return elements[id] || null; },
+      helpers: {
+        getDocumentSessionId: () => "doc-1",
+        releaseTaskSlot() {}
+      },
+      getActiveDocument: () => ({}),
+      writingJobPath: () => "/word/smart-write/jobs",
+      releaseTaskSlotsForJob() {},
+      clearWritingActiveJob() {},
+      saveWritingActiveJob() {},
+      renderWritingJobProgress() {},
+      clearWritingPolicyUsage() {},
+      hideCompareForSmartImitation() {},
+      completeWritingJob() {},
+      failWritingJob() {},
+      isFatalWritingPollError: () => false,
+      request() {
+        requestCount += 1;
+        if (requestCount === 1) {
+          return Promise.resolve({ traceId: "trace-snapshot", data: payload });
+        }
+        return new Promise(() => {});
+      }
+    };
+    const fns = loadFunctions([
+      "pollWritingJobEvents",
+      "renderWritingJobPreview",
+      "appendWritingJobPreviewDelta",
+      "setWritingJobPreviewSnapshot",
+      "scheduleWritingJobPreviewRender",
+      "flushWritingJobPreviewRender"
+    ], context);
+
+    fns.pollWritingJobEvents(jobId, "word.smart_write", "smartWrite", false, "doc-1", 0, 0);
+    await new Promise((resolve) => setTimeout(resolve, 80));
+
+    assert.strictEqual(resultOutput.textContent, expectedText);
+    assert.strictEqual(state.copyText, expectedText);
+  }
+
+  await runCase(
+    "job-first-snapshot",
+    {
+      jobId: "job-first-snapshot",
+      latestSequence: 5,
+      resetRequired: false,
+      previewSnapshot: { text: "已淘汰的前文 + 尾文", latestSequence: 5 },
+      events: [
+        { sequence: 4, type: "delta", delta: " + " },
+        { sequence: 5, type: "delta", delta: "尾文" }
+      ]
+    },
+    "已淘汰的前文 + 尾文"
+  );
+
+  await runCase(
+    "job-gap-snapshot",
+    {
+      jobId: "job-gap-snapshot",
+      latestSequence: 8,
+      resetRequired: true,
+      previewSnapshot: { text: "缺口后的完整正文", latestSequence: 8 },
+      events: [
+        { sequence: 7, type: "delta", delta: "完整" },
+        { sequence: 8, type: "delta", delta: "正文" }
+      ]
+    },
+    "缺口后的完整正文"
+  );
+}
+
 async function testScrollFollowingLogic() {
   const resultOutput = createMockElement("result-output");
   // Set up scrolled to bottom initially: scrollHeight 200, scrollTop 100, clientHeight 100 => remaining 0 <= 30
@@ -363,6 +454,7 @@ async function testTerminalCompletionHandoff() {
 
 async function main() {
   await testIncrementalPreviewRenderingAndCopySync();
+  await testSnapshotRecoveryUsesAuthoritativeText();
   await testScrollFollowingLogic();
   await testPreviewIsolationBetweenDocuments();
   await testModeSwitchRestoresPreview();
@@ -374,4 +466,3 @@ main().catch((err) => {
   console.error(err);
   process.exit(1);
 });
-

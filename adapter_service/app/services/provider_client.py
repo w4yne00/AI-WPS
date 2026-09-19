@@ -3188,6 +3188,49 @@ class ProviderClient:
             with urllib_request.urlopen(req, timeout=timeout) as response:
                 t_headers = time.monotonic()
                 if should_stream:
+                    content_type = str(
+                        response.headers.get("Content-Type", "")
+                    ).lower()
+                    if "text/event-stream" not in content_type:
+                        perf_metrics = _provider_performance_metrics(
+                            t_start,
+                            headers_at=t_headers,
+                        )
+                        record_provider_debug(
+                            {
+                                "traceId": trace_id,
+                                "taskType": task_type,
+                                "url": url,
+                                **debug_metadata,
+                                "validation": safe_validation,
+                                "performance": perf_metrics,
+                                "error": {
+                                    "type": "StreamingUnsupportedError",
+                                    "status": getattr(response, "status", 200),
+                                    "message": "direct model returned non-SSE response",
+                                },
+                            }
+                        )
+                        _publish_provider_performance(
+                            progress_callback,
+                            perf_metrics,
+                        )
+                        response.close()
+                        return self._post_direct_task(
+                            task_type,
+                            trace_id,
+                            query,
+                            resolved_task_auth,
+                            timeout,
+                            prompt_asset=prompt_asset,
+                            response_format=response_format,
+                            input_token_limit=input_token_limit,
+                            image_files=image_files,
+                            allow_response_format_fallback=allow_response_format_fallback,
+                            progress_callback=progress_callback,
+                            allow_streaming_fallback=False,
+                        )
+
                     def on_delta(delta: str) -> None:
                         nonlocal first_delta_seen
                         if not first_delta_seen:

@@ -268,6 +268,7 @@ class LongTaskCoordinator:
                 "_latest_sequence": 0,
                 "_oldest_sequence": 0,
                 "_text_preview": "",
+                "_text_preview_truncated": False,
                 "result": None,
                 "error": deepcopy(invalidated_error),
             }
@@ -806,6 +807,7 @@ class LongTaskCoordinator:
                 ctrl_self._pending_bytes = 0
                 ctrl_self._last_flush_mono = self._monotonic()
                 ctrl_self._flush_lock = threading.Lock()
+                ctrl_self._flush_timer = None
 
             def __call__(ctrl_self, phase: str) -> None:
                 if phase not in PUBLIC_PHASES or phase in {"queued", "completed", "failed", "cancelled"}:
@@ -868,11 +870,40 @@ class LongTaskCoordinator:
                         ctrl_self._pending_bytes >= MAX_TEXT_BATCH_BYTES
                         or (now_mono - ctrl_self._last_flush_mono) >= MAX_TEXT_BATCH_INTERVAL_SECONDS
                     ):
+                        ctrl_self._cancel_flush_timer_locked()
                         ctrl_self._flush_locked(now_mono, force=False)
+                    if ctrl_self._pending_chunks:
+                        ctrl_self._schedule_flush_locked(now_mono)
 
             def flush(ctrl_self) -> None:
                 with ctrl_self._flush_lock:
+                    ctrl_self._cancel_flush_timer_locked()
                     ctrl_self._flush_locked(self._monotonic(), force=True)
+
+            def _cancel_flush_timer_locked(ctrl_self) -> None:
+                timer = ctrl_self._flush_timer
+                ctrl_self._flush_timer = None
+                if timer is not None:
+                    timer.cancel()
+
+            def _schedule_flush_locked(ctrl_self, now_mono: float) -> None:
+                if ctrl_self._flush_timer is not None or not ctrl_self._pending_chunks:
+                    return
+                delay = max(
+                    0.0,
+                    MAX_TEXT_BATCH_INTERVAL_SECONDS
+                    - (now_mono - ctrl_self._last_flush_mono),
+                )
+
+                def flush_pending() -> None:
+                    with ctrl_self._flush_lock:
+                        ctrl_self._flush_timer = None
+                        ctrl_self._flush_locked(self._monotonic(), force=True)
+
+                timer = threading.Timer(delay, flush_pending)
+                timer.daemon = True
+                ctrl_self._flush_timer = timer
+                timer.start()
 
             def _flush_locked(ctrl_self, now_mono: float, force: bool = False) -> None:
                 while ctrl_self._pending_chunks:
@@ -903,14 +934,20 @@ class LongTaskCoordinator:
                     current = self._jobs.get(job_key)
                     if current is None or current["status"] != "running":
                         return
+                    if current.get("_text_preview_truncated"):
+                        return
                     current_preview = str(current.get("_text_preview") or "")
                     current_len = len(current_preview.encode("utf-8"))
                     if current_len >= MAX_TEXT_PREVIEW_BYTES:
+                        current["_text_preview_truncated"] = True
                         return
                     remaining_cap = MAX_TEXT_PREVIEW_BYTES - current_len
                     text_bytes = delta_to_emit.encode("utf-8")
                     if len(text_bytes) > remaining_cap:
                         delta_to_emit = text_bytes[:remaining_cap].decode("utf-8", errors="ignore")
+                        current["_text_preview_truncated"] = True
+                    if not delta_to_emit:
+                        return
 
                     current["_text_preview"] = current_preview + delta_to_emit
                     self._append_event_locked(
@@ -918,7 +955,7 @@ class LongTaskCoordinator:
                         event_type="delta",
                         phase=current["phase"],
                         status=current["status"],
-                        data={"delta": delta_to_emit, "text": current["_text_preview"]},
+                        data={"delta": delta_to_emit},
                     )
                     self._condition.notify_all()
 

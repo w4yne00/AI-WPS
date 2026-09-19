@@ -2,19 +2,14 @@
 
 ## 当前功能实现：Issue #205 智能编写文本流式增量渲染与只读预览（2026-09-18）
 
+- **PR #217 审查修复（2026-09-19）**：流式正文改为 64 KiB 有界读取，每次读取前把底层 socket timeout 收缩至剩余 deadline，并在读取后再次校验总时限；按 SSE 空事件边界组装多 `data:` 字段，同时保留脱敏 usage。非 SSE 响应在关闭首连接、累计任务与 trace 诊断中的 Provider attempt 后回退阻塞调用。增量事件只保留 `delta`，完整正文仅保留单份 512 KiB 快照；不足 4 KiB 的首段正文通过独立定时器在 50ms 内发布，UTF-8 上限截断不再产生空事件。任务窗格把首次连接和缺口恢复快照作为对应序号的权威正文，不再重复或遗漏事件环外文本。
 - **直连模型流式调用与解析**：遵循 ADR-0132 Task 3 与 Issue #205 规格，新增独立流式解析服务 `direct_text_stream.py`。严格只在 `AI_WPS_ENABLE_DIRECT_STREAMING=1` 且所选直连服务具备已冻结的 `streamingCapability == "validated"` 时向模型服务发起 `stream: true` 请求。在产生任何可见文本前，若模型返回 400/404/415/422/501 或非 SSE 响应，平滑回退至阻塞调用；一旦产生首个可见文本增量，绝不再发起阻塞重试。
 - **SSE 增量解析与推理内容过滤**：流式解析器具备跨网络块缓冲与 UTF-8 多字节边界安全拼接能力，兼容多行 `data:` 事件、空事件与 `[DONE]` 终止符。严格过滤并剥离跨分片 `<think>...</think>` 标签及 `reasoning_content` / `reasoning` 字段，确保思考过程绝不进入正文预览与最终交付内容。
 - **Adapter 节流聚合与单调发布**：`LongTaskCoordinator` 提供 `publish_text()` 与 `flush()`，以最多每 50ms 或累计 4 KiB 的节流窗口聚合文本增量；维护单调自增 `sequence`、增量内容 `delta`、已消费总字节数 `offset`、首包耗时 `firstVisibleMs`，并将正文快照严格限制在 512 KiB 有界缓冲区内。
-- **任务窗格只读纯文本增量渲染**：前端长轮询在接收到 `text_delta` 事件或携带 `resetRequired` 的 `previewSnapshot` 时，以 `requestAnimationFrame` 驱动只读纯文本更新；严格保持 `white-space: pre-wrap` 的纯文本视图，生成中不解析 Markdown、不进行差分比对、不执行写作规范校验，杜绝卡顿与不完整语义误判。
+- **任务窗格只读纯文本增量渲染**：前端长轮询在接收到 `delta` 事件或 `previewSnapshot` 时，以 `requestAnimationFrame` 驱动只读纯文本更新；严格保持 `white-space: pre-wrap` 的纯文本视图，生成中不解析 Markdown、不进行差分比对、不执行写作规范校验，杜绝卡顿与不完整语义误判。
 - **智能跟随滚动与状态恢复**：前端实现距离底部 30px 阈值的智能滚动跟随：生成过程中用户向上滚动查看时锁定当前位置，滚动回底部时自动恢复跟随。窗格关闭重开、模式切换（如切换至文档审查再切回）及文档切换时，从本地状态和最新快照精确恢复当前文档会话的未完结预览。
 - **终态平滑交接与边界隔离**：后台任务终态后无缝切换至既有权威结果处理管线（受限 Markdown 渲染、差分展示、写作规范合规检查、活跃结果及历史归档）；严格不增加运行中任务取消 UI 或端点（保留由 Issue #206 独立实现）。
-- **全量跨平台验证**：
-  - 本地后端 pytest：`1454 passed / 54 skipped` 全部通过；
-  - 麒麟 V10 ARM64 / Python 3.8：全量后端 `1453 passed / 55 skipped` 全部通过；
-  - 插件 Node 契约测试：本地与麒麟 V10 均为 `233/233 passed`；
-  - `wps-addon` vitest：`12/12 passed` 且生产构建通过；
-  - 交付审计与打包：`packaging/delivery-sources-v0260-preview1.json` 正确补入 `direct_text_stream.py`；
-  - 静态检查：`python3 packaging/check_python38_compatibility.py adapter_service packaging` 196 文件全过，`git diff --check` 无格式异常。
+- **审查修复验证**：本地后端 `1461 passed / 54 skipped / 1 deselected`，被排除的组装插件浏览器门禁在沙箱外单独通过，因此合计 `1462` 项通过；正式插件 `233/233`（含沙箱外真实 Chrome 视口）通过，`wps-addon` `12/12` 且生产构建通过，Python 3.8 兼容扫描 196 文件及 `git diff --check` 通过。审查修复后未重跑麒麟 V10 ARM64、真实 WPS 或真实模型服务验收。
 
 ## 当前功能实现：Issue #204 直连模型流式能力探针验证与任务快照冻结（2026-09-18）
 

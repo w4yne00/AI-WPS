@@ -8497,7 +8497,11 @@
         startedAt: (state && state.writingJobStartedAt) || Date.now()
       });
 
-      if (payload.resetRequired && payload.previewSnapshot) {
+      var snapshotSequence = -1;
+      if (payload.previewSnapshot) {
+        snapshotSequence = (typeof payload.previewSnapshot.latestSequence === "number")
+          ? payload.previewSnapshot.latestSequence
+          : nextSequence;
         if (typeof setWritingJobPreviewSnapshot === "function") {
           setWritingJobPreviewSnapshot(consumerKey, payload.previewSnapshot, taskType, jobId, targetDocSession, mode);
         }
@@ -8508,6 +8512,9 @@
 
       for (var i = 0; i < events.length; i++) {
         var evt = events[i];
+        if (typeof evt.sequence === "number" && evt.sequence <= snapshotSequence) {
+          continue;
+        }
         if (typeof evt.sequence === "number" && evt.sequence > nextSequence) {
           nextSequence = evt.sequence;
         }

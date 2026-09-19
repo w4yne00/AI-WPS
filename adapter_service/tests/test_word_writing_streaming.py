@@ -93,6 +93,43 @@ class LongTaskTextPublishingTests(unittest.TestCase):
         expected = "".join(f"chunk{i} " for i in range(10))
         self.assertEqual(combined_deltas, expected)
 
+    def test_publish_text_flushes_after_50ms_without_another_delta(self):
+        coordinator = LongTaskCoordinator(max_running=1, max_queued=1)
+        buffered_event = threading.Event()
+        finish_event = threading.Event()
+
+        def paused_runner(_snapshot, control):
+            control("streaming")
+            control.publish_text("first visible text")
+            buffered_event.set()
+            finish_event.wait(timeout=2)
+            return {"result": "done"}
+
+        coordinator.submit(
+            job_id="paused-stream-1",
+            trace_id="trace-paused-stream-1",
+            task_type="word.smart_write",
+            runner=paused_runner,
+            snapshot={},
+            failure_code="FAILED",
+            failure_message="failed",
+        )
+
+        self.assertTrue(buffered_event.wait(timeout=1))
+        time.sleep(0.12)
+        events_resp = coordinator.wait_events(
+            "paused-stream-1",
+            task_type="word.smart_write",
+            after_sequence=0,
+        )
+        self.assertEqual(
+            events_resp["previewSnapshot"]["text"],
+            "first visible text",
+        )
+
+        finish_event.set()
+        coordinator.wait("paused-stream-1", task_type="word.smart_write")
+
     def test_publish_text_flushes_at_4kib(self):
         coordinator = LongTaskCoordinator(max_running=1, max_queued=1)
 
@@ -152,6 +189,69 @@ class LongTaskTextPublishingTests(unittest.TestCase):
         snapshot = events_resp["previewSnapshot"]
         # Preview text length must be capped at 512 KiB (524288 bytes)
         self.assertLessEqual(len(snapshot["text"].encode("utf-8")), 512 * 1024)
+
+    def test_delta_event_response_does_not_repeat_accumulated_preview(self):
+        coordinator = LongTaskCoordinator(max_running=1, max_queued=1)
+
+        def stream_runner(_snapshot, control):
+            control("streaming")
+            for _ in range(32):
+                control.publish_text("x" * 4096)
+            return {"result": "done"}
+
+        coordinator.submit(
+            job_id="bounded-events-1",
+            trace_id="trace-bounded-events-1",
+            task_type="word.smart_write",
+            runner=stream_runner,
+            snapshot={},
+            failure_code="FAILED",
+            failure_message="failed",
+        )
+        coordinator.wait("bounded-events-1", task_type="word.smart_write")
+
+        events_resp = coordinator.wait_events(
+            "bounded-events-1",
+            task_type="word.smart_write",
+            after_sequence=0,
+        )
+        serialized_events = json.dumps(events_resp["events"]).encode("utf-8")
+        self.assertLess(len(serialized_events), 160 * 1024)
+
+    def test_preview_limit_does_not_emit_empty_utf8_delta_events(self):
+        coordinator = LongTaskCoordinator(max_running=1, max_queued=1)
+
+        def boundary_runner(_snapshot, control):
+            control("streaming")
+            control.publish_text("x" * ((512 * 1024) - 2))
+            control.flush()
+            control.publish_text("你")
+            control.flush()
+            control.publish_text("好")
+            control.flush()
+            return {"result": "done"}
+
+        coordinator.submit(
+            job_id="utf8-limit-1",
+            trace_id="trace-utf8-limit-1",
+            task_type="word.smart_write",
+            runner=boundary_runner,
+            snapshot={},
+            failure_code="FAILED",
+            failure_message="failed",
+        )
+        coordinator.wait("utf8-limit-1", task_type="word.smart_write")
+
+        events_resp = coordinator.wait_events(
+            "utf8-limit-1",
+            task_type="word.smart_write",
+            after_sequence=0,
+        )
+        delta_events = [
+            event for event in events_resp["events"] if event.get("type") == "delta"
+        ]
+        self.assertTrue(delta_events)
+        self.assertTrue(all(event.get("delta") for event in delta_events))
 
     def test_wait_events_condition_wakes_up_on_publish_text(self):
         coordinator = LongTaskCoordinator(max_running=1, max_queued=1)
@@ -324,6 +424,86 @@ class ProviderClientDirectStreamingIntegrationTests(unittest.TestCase):
         req2_body = json.loads(sent_requests[1].data.decode("utf-8"))
         self.assertFalse(req2_body.get("stream"))
 
+    def test_post_direct_task_falls_back_when_stream_response_is_not_sse(self):
+        from unittest.mock import patch
+        from app.services.provider_client import (
+            ProviderClient,
+            get_last_provider_debug,
+            reset_provider_debug,
+        )
+        from tests.test_direct_text_stream import FakeHTTPResponse
+
+        client = ProviderClient()
+        reset_provider_debug()
+        task_auth = {
+            "accessMethod": "direct_model",
+            "providerBaseUrl": "https://api.openai.com/v1",
+            "apiKey": "sk-test12345",
+            "modelName": "gpt-4o",
+            "streamingCapability": "validated",
+            "contextWindowTokens": 100000,
+            "maxOutputTokens": 4096,
+        }
+        sent_requests = []
+        first_response = None
+        provider_attempts = []
+        blocking_response_json = json.dumps({
+            "choices": [{
+                "message": {"role": "assistant", "content": "阻塞回退结果"},
+                "finish_reason": "stop",
+            }]
+        }).encode("utf-8")
+
+        def fake_urlopen(req, timeout=None):
+            nonlocal first_response
+            sent_requests.append(req)
+            if first_response is not None:
+                self.assertTrue(first_response.closed)
+            response = FakeHTTPResponse(
+                [blocking_response_json],
+                headers={"Content-Type": "application/json"},
+            )
+            if first_response is None:
+                first_response = response
+            return response
+
+        class MockControl:
+            def __call__(self, phase):
+                pass
+
+            def publish_text(self, text):
+                pass
+
+            def record_metric(self, name, value):
+                pass
+
+            def record_provider_attempt(self, metrics):
+                provider_attempts.append(metrics)
+
+            def cancel_requested(self):
+                return False
+
+        with patch.dict(
+            "os.environ",
+            {"AI_WPS_ENABLE_DIRECT_STREAMING": "1"},
+        ), patch("urllib.request.urlopen", fake_urlopen):
+            result = client._post_direct_task(
+                task_type="word.smart_write",
+                trace_id="trace-stream-fallback-content-type",
+                query="改写以下内容",
+                resolved_task_auth=task_auth,
+                timeout=30,
+                progress_callback=MockControl(),
+            )
+
+        self.assertEqual(result["answer"], "阻塞回退结果")
+        self.assertEqual(len(sent_requests), 2)
+        self.assertEqual(len(provider_attempts), 2)
+        debug = get_last_provider_debug("trace-stream-fallback-content-type")
+        self.assertEqual(debug["performance"]["providerAttempts"], 2)
+        self.assertTrue(json.loads(sent_requests[0].data.decode("utf-8"))["stream"])
+        self.assertFalse(json.loads(sent_requests[1].data.decode("utf-8"))["stream"])
+
     def test_post_direct_task_uses_blocking_when_feature_flag_disabled(self):
         from unittest.mock import patch
         from app.services.provider_client import ProviderClient
@@ -423,4 +603,3 @@ class ProviderClientDirectStreamingIntegrationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
