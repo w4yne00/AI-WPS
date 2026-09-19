@@ -1,5 +1,21 @@
 # Codex Handoff - AI-WPS
 
+## 当前功能实现：Issue #208 扩展 Word 审查任务性能诊断（2026-09-20）
+
+- **Word 三类审查任务毫秒性能诊断扩展**：遵循 ADR-0132 Task 6 与 Issue #208 规格，将既有写作任务性能诊断能力扩展至 Word 三类核心审查任务（受限文档审查 `word.document_review`、全文审查 `word.document_review.full`、确定性格式审查 `word.format_review.deterministic`）。
+- **秒级与毫秒级耗时指标严格并存**：保持现有秒级字段（`elapsedSeconds`、`phaseElapsedSeconds`、`phaseDurations`）完全向后兼容；同步在长任务轮询接口与终态诊断公开毫秒级指标（`elapsedMs`、`phaseElapsedMs`、`phaseDurationsMs`、`queueWaitMs`、`metrics`）。阶段耗时字典准确记录 `extracting`、`provider_processing`、`parsing`、`chunking`、`aggregating` 等各阶段实际消耗时长，彻底消除估算或伪百分比。
+- **阻塞调用首包时间严格置空**：所有阻塞性 Provider 调用（包含受限审查、全文分块与聚合、格式审查语义增强调用）在协调器中显式记录 `providerFirstVisibleMs = None`（JSON 序列化为 `null`），杜绝伪造首包可见时间。
+- **受限审查真实上游结果与错误码记录**：受限文档审查（`word.document_review`）在发生上游 Provider 超时、连接失败或受控降级时，准确捕获并记录真实 `providerOutcome`（`provider_timeout` 或 `provider_error`）及标准 `errorCode`（如 `PROVIDER_TIMEOUT`、`PROVIDER_HTTP_ERROR`），终态诊断与轮询响应忠实反映真实 Provider 执行结果。
+- **零数据与内容泄露规范**：性能度量指标严格局限于时长、计数（`aiCallCount`、`aiAcceptedCount`、`chunkCount`）、阶段标识与状态码；绝不包含、传输或日志记录任何中间审查问题、合规结论、原始正文、提示词或模型应答内容。
+- **前端全链路性能记录与高级诊断展示**：Word 任务窗格在 `state.lastTaskPerformance` 记录三类审查任务全生命周期耗时（点击到本地反馈 `clickToFeedbackMs`、点击到 Adapter 接受请求 `clickToAdapterAcceptedMs`、完成到首渲染 `completionToFirstRenderMs`）。高级诊断卡片展示 `providerOutcome`（如 `success`、`provider_timeout`）及任务性能摘要，完全兼容既有报告展示、历史归档与会话恢复逻辑。
+- **全量验证结论**：
+  - 本地 Docker Python 3.8 全量后端测试：`1484 passed / 55 skipped`；审查性能专项 `5/5 passed`。
+  - 麒麟 V10 SP1 ARM64 虚拟机（`cloud@192.168.64.3`）全量后端测试：`1473 passed / 55 skipped`（`PATH` 包含 Node.js）；
+  - 正式插件 Node 契约测试（全量 50 文件 / 234 测试项）：`234 passed / 0 failed`（本地与麒麟 VM 均全量通过）；
+  - `wps-addon` vitest 单元测试 `12/12 passed` 且生产构建通过（本地与麒麟 VM 均通过）；
+  - Python 3.8 兼容性编译扫描（`compileall`）全部通过；
+  - `node --check` 与 `git diff --check` 全部通过。
+
 ## 当前功能实现：Issue #207 将增量文本预览扩展到智能仿写（2026-09-19）
 
 - **PR #219 审查修复（2026-09-19）**：前端在提交写作任务时按任务与文档会话冻结文档负载，后台乱序完成、模式切换、历史返回及最终写回均恢复并使用所属智能编写结果的提交快照，不再读取可能已被智能仿写覆盖的全局负载；后台完成也不再向当前仿写视图泄漏写回资格。Standalone 写作取消响应的顶层 `message` 改为返回权威任务状态，与 FastAPI 在 `running`、`cancelled`、`completed` 竞态下保持一致。

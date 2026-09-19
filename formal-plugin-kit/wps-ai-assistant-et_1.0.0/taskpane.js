@@ -7327,7 +7327,8 @@
           "：" + (job.status || "未记录") +
           "，耗时 " + elapsedDesc +
           queueDesc +
-          (job.errorCode ? "，错误码 " + job.errorCode : "")
+          (job.errorCode ? "，错误码 " + job.errorCode : "") +
+          (job.providerOutcome ? "，模型结果 " + job.providerOutcome : "")
         );
       });
     }
@@ -7335,6 +7336,9 @@
     if (debug.performance) {
       lines.push("");
       lines.push("## 模型服务耗时");
+      if (debug.performance.providerOutcome) {
+        lines.push("- 模型调用结果：" + debug.performance.providerOutcome);
+      }
       if (typeof debug.performance.providerAttempts === "number") {
         lines.push("- 模型调用次数：" + debug.performance.providerAttempts);
       }

@@ -3980,6 +3980,7 @@ class ProviderClient:
         task_auth: Dict,
         correction: bool = False,
         blocks: Optional[List[Dict]] = None,
+        progress_callback=None,
     ) -> object:
         if str(task_auth.get("accessMethod", "")) != ACCESS_DIRECT_MODEL:
             raise AdapterError(
@@ -4022,6 +4023,7 @@ class ProviderClient:
             max(self.settings.timeout_seconds, DOCUMENT_REVIEW_TIMEOUT_SECONDS),
             prompt_asset=prompt_asset,
             response_format=_full_document_review_chunk_response_format(),
+            progress_callback=progress_callback,
         )
         return FullDocumentReviewAnswer(
             str(body.get("answer", "")),
@@ -4034,6 +4036,7 @@ class ProviderClient:
         trace_id: str,
         task_auth: Dict,
         correction: bool = False,
+        progress_callback=None,
     ) -> object:
         if str(task_auth.get("accessMethod", "")) != ACCESS_DIRECT_MODEL:
             raise AdapterError(
@@ -4062,6 +4065,7 @@ class ProviderClient:
             max(self.settings.timeout_seconds, DOCUMENT_REVIEW_TIMEOUT_SECONDS),
             prompt_asset=prompt_asset,
             response_format=_full_document_review_aggregate_response_format(),
+            progress_callback=progress_callback,
         )
         return FullDocumentReviewAnswer(
             str(body.get("answer", "")),
@@ -5856,6 +5860,7 @@ class ProviderClient:
         prompt: str,
         task_auth: Optional[Dict] = None,
         output_token_budget: Optional[int] = None,
+        progress_callback=None,
     ) -> Dict:
         """Call the versioned format-semantics contract with hard budgets."""
         from copy import deepcopy
@@ -5937,6 +5942,7 @@ class ProviderClient:
                 input_data,
                 auth,
                 timeout_seconds=60,
+                progress_callback=progress_callback,
             )
         prompt = _format_semantic_prompt_with_schema(prompt, operation)
         FormatSemanticContract.require_input_budget(prompt)
@@ -5951,6 +5957,7 @@ class ProviderClient:
             image_files=input_data.get("image_files"),
             response_format=_format_semantic_response_format(operation),
             allow_response_format_fallback=True,
+            progress_callback=progress_callback,
         )
 
     def _post_workflow_format_semantics(
@@ -5960,6 +5967,7 @@ class ProviderClient:
         input_data: Dict,
         task_auth: Dict,
         timeout_seconds: int,
+        progress_callback=None,
     ) -> Dict:
         """Call Dify with only the fixed semantic inputs and read result_json."""
         provider_base_url = str(task_auth.get("providerBaseUrl", "")).rstrip("/")

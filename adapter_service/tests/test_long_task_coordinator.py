@@ -848,6 +848,34 @@ class LongTaskCoordinatorTests(unittest.TestCase):
         self.assertIn("metrics", recent)
         self.assertEqual(recent["metrics"].get("providerHeadersMs"), 150)
 
+    def test_execution_control_set_diagnostic_error_code_and_provider_outcome(self):
+        coordinator = LongTaskCoordinator()
+
+        def fallback_runner(_snapshot, control):
+            control.set_diagnostic_error_code("PROVIDER_TIMEOUT")
+            control.record_metric("providerOutcome", "provider_timeout")
+            return {"summary": "timeout fallback"}
+
+        coordinator.submit(
+            job_id="outcome-job",
+            trace_id="trace-outcome-job",
+            task_type="word.document_review",
+            runner=fallback_runner,
+            snapshot={},
+            failure_code="FAILED",
+            failure_message="failed",
+        )
+        completed = coordinator.wait("outcome-job")
+        self.assertEqual(completed["status"], "completed")
+        self.assertEqual(completed["metrics"].get("providerOutcome"), "provider_timeout")
+
+        diagnostics = coordinator.diagnostics()
+        recent = diagnostics["recentTerminalJobs"][0]
+        self.assertEqual(recent["status"], "completed")
+        self.assertEqual(recent["errorCode"], "PROVIDER_TIMEOUT")
+        self.assertEqual(recent["metrics"].get("providerOutcome"), "provider_timeout")
+        self.assertEqual(recent.get("providerOutcome"), "provider_timeout")
+
     def test_execution_control_disables_running_cancel_before_blocking_fallback(self):
         coordinator = LongTaskCoordinator(max_running=1, max_queued=1)
         fallback_started = threading.Event()
