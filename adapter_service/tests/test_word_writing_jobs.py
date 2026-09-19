@@ -120,6 +120,37 @@ class WritingJobStoreTests(unittest.TestCase):
         self.assertEqual(completed["status"], "completed")
         self.assertEqual(completed["result"]["rewrittenText"], "处理完成。")
 
+    def test_model_response_size_limit_remains_public_failure_code(self):
+        class SizeLimitWorker:
+            def snapshot_task_auth(self):
+                return {"configurationId": "size-limit-config"}
+
+            def smart_write(self, _request, **_kwargs):
+                raise AdapterError(
+                    "MODEL_RESPONSE_SIZE_LIMIT",
+                    "模型流式响应超过 5 MiB 上限。",
+                    status_code=502,
+                )
+
+        store = SmartWriteJobStore(
+            worker=SizeLimitWorker(),
+            coordinator=LongTaskCoordinator(max_running=1, max_queued=1),
+        )
+        store.start(make_request("client-size-limit-error"), "trace-size-limit-error")
+
+        terminal = None
+        for _ in range(100):
+            terminal = store.get("client-size-limit-error")
+            if terminal and terminal["status"] == "failed":
+                break
+            time.sleep(0.01)
+
+        self.assertEqual(terminal["status"], "failed")
+        self.assertEqual(terminal["error"]["code"], "MODEL_RESPONSE_SIZE_LIMIT")
+        self.assertEqual(
+            terminal["error"]["message"], "模型流式响应超过 5 MiB 上限。"
+        )
+
     def test_job_store_rejects_concurrent_submission_in_same_document_session(self):
         worker = BlockingWritingWorker()
         coordinator = LongTaskCoordinator(max_running=2, max_queued=4)

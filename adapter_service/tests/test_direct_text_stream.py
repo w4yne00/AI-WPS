@@ -1,5 +1,8 @@
 import io
+import http.client
 import json
+import socket
+import threading
 import time
 import unittest
 
@@ -439,6 +442,46 @@ class DirectTextStreamTests(unittest.TestCase):
         self.assertEqual(partial_res.get("plainText"), "Chunk 1 Chunk 2 ")
         # No more deltas should have been emitted
         self.assertEqual(emitted, ["Chunk 1 ", "Chunk 2 "])
+
+    def test_stream_allows_a_normal_gap_between_network_chunks(self):
+        client_socket, server_socket = socket.socketpair()
+        payload = (
+            b'data: {"choices":[{"delta":{"content":"delayed text"}}]}\n\n'
+            b'data: [DONE]\n\n'
+        )
+
+        def send_response():
+            try:
+                server_socket.sendall(
+                    b"HTTP/1.1 200 OK\r\n"
+                    b"Content-Type: text/event-stream\r\n"
+                    b"Transfer-Encoding: chunked\r\n\r\n"
+                )
+                time.sleep(0.2)
+                server_socket.sendall(
+                    "{0:x}\r\n".format(len(payload)).encode("ascii")
+                    + payload
+                    + b"\r\n0\r\n\r\n"
+                )
+            finally:
+                server_socket.close()
+
+        sender = threading.Thread(target=send_response)
+        sender.start()
+        response = http.client.HTTPResponse(client_socket)
+        response.begin()
+
+        try:
+            result = read_direct_text_stream(
+                response=response,
+                publish_callback=lambda _text: None,
+                timeout=1.0,
+            )
+        finally:
+            sender.join(timeout=1)
+            client_socket.close()
+
+        self.assertEqual(result["rewrittenText"], "delayed text")
 
 
 if __name__ == "__main__":

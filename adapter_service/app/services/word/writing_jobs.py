@@ -127,6 +127,7 @@ class WritingJobStore:
                 safe_failure_codes={
                     "MODEL_CONFIG_INCOMPLETE",
                     "MODEL_INPUT_OVER_BUDGET",
+                    "MODEL_RESPONSE_SIZE_LIMIT",
                     "MODEL_FINAL_CONTENT_MISSING",
                     "PROVIDER_AUTH_FAILED",
                     "PROVIDER_TIMEOUT",
@@ -175,6 +176,7 @@ class WritingJobStore:
             safe_error_statuses={
                 "MODEL_CONFIG_INCOMPLETE": 400,
                 "MODEL_INPUT_OVER_BUDGET": 413,
+                "MODEL_RESPONSE_SIZE_LIMIT": 502,
                 "PROVIDER_AUTH_FAILED": 401,
                 "MODEL_RATE_LIMITED": 429,
                 "PROVIDER_TIMEOUT": 504,

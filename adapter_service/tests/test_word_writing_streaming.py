@@ -189,6 +189,16 @@ class LongTaskTextPublishingTests(unittest.TestCase):
         snapshot = events_resp["previewSnapshot"]
         # Preview text length must be capped at 512 KiB (524288 bytes)
         self.assertLessEqual(len(snapshot["text"].encode("utf-8")), 512 * 1024)
+        self.assertTrue(snapshot["previewTruncated"])
+        self.assertTrue(events_resp["previewTruncated"])
+
+        follow_up = coordinator.wait_events(
+            "limit-job-1",
+            task_type="word.smart_write",
+            after_sequence=events_resp["latestSequence"],
+        )
+        self.assertIsNone(follow_up["previewSnapshot"])
+        self.assertTrue(follow_up["previewTruncated"])
 
     def test_delta_event_response_does_not_repeat_accumulated_preview(self):
         coordinator = LongTaskCoordinator(max_running=1, max_queued=1)
@@ -304,6 +314,88 @@ class LongTaskTextPublishingTests(unittest.TestCase):
 
 
 class ProviderClientDirectStreamingIntegrationTests(unittest.TestCase):
+    def test_running_cancel_interrupts_silent_upstream_read(self):
+        from unittest.mock import patch
+        from app.services.provider_client import ProviderClient
+
+        client = ProviderClient()
+        coordinator = LongTaskCoordinator(max_running=1, max_queued=1)
+        read_started = threading.Event()
+        read_released = threading.Event()
+
+        class SilentSseResponse:
+            status = 200
+            headers = {"Content-Type": "text/event-stream"}
+
+            def __init__(self):
+                self.closed = False
+
+            def read1(self, _amount):
+                read_started.set()
+                read_released.wait(timeout=1.0)
+                return b""
+
+            def close(self):
+                self.closed = True
+                read_released.set()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, _exc_type, _exc, _traceback):
+                self.close()
+
+        response = SilentSseResponse()
+        task_auth = {
+            "providerBaseUrl": "https://api.openai.com/v1",
+            "apiKey": "sk-test12345",
+            "modelName": "gpt-4o",
+            "streamingCapability": "validated",
+            "contextWindowTokens": 100000,
+            "maxOutputTokens": 4096,
+        }
+
+        def runner(_snapshot, control):
+            return client._post_direct_task(
+                task_type="word.smart_write",
+                trace_id="trace-silent-cancel",
+                query="改写以下内容",
+                resolved_task_auth=task_auth,
+                timeout=30,
+                prompt_asset={
+                    "content": "system prompt",
+                    "version": "test-v1",
+                    "hashPrefix": "testhash",
+                },
+                progress_callback=control,
+            )
+
+        with patch.dict(
+            "os.environ", {"AI_WPS_ENABLE_DIRECT_STREAMING": "1"}
+        ), patch("urllib.request.urlopen", return_value=response):
+            coordinator.submit(
+                job_id="silent-cancel-job",
+                trace_id="trace-silent-cancel",
+                task_type="word.smart_write",
+                runner=runner,
+                snapshot={},
+                failure_code="WRITING_JOB_FAILED",
+                failure_message="智能编写失败。",
+                allow_running_cancel=True,
+            )
+            self.assertTrue(read_started.wait(timeout=1))
+            cancel_started = time.monotonic()
+            coordinator.request_cancel(
+                "silent-cancel-job", task_type="word.smart_write"
+            )
+            terminal = coordinator.wait(
+                "silent-cancel-job", task_type="word.smart_write"
+            )
+
+        self.assertEqual(terminal["status"], "cancelled")
+        self.assertLess(time.monotonic() - cancel_started, 0.5)
+        self.assertTrue(response.closed)
+
     def test_post_direct_task_uses_streaming_when_feature_enabled_and_validated(self):
         from unittest.mock import patch
         from urllib.error import HTTPError
@@ -394,6 +486,21 @@ class ProviderClientDirectStreamingIntegrationTests(unittest.TestCase):
         sent_requests = []
         call_count = 0
 
+        class MockControl:
+            def __init__(self):
+                self.running_cancel_disabled = False
+
+            def __call__(self, _phase):
+                pass
+
+            def record_provider_attempt(self, _metrics):
+                pass
+
+            def disable_running_cancel(self):
+                self.running_cancel_disabled = True
+
+        control = MockControl()
+
         blocking_response_json = json.dumps({
             "choices": [{"message": {"role": "assistant", "content": "阻塞回退结果"}, "finish_reason": "stop"}]
         }).encode("utf-8")
@@ -414,6 +521,7 @@ class ProviderClientDirectStreamingIntegrationTests(unittest.TestCase):
                 query="改写以下内容",
                 resolved_task_auth=task_auth,
                 timeout=30,
+                progress_callback=control,
             )
 
         self.assertEqual(len(sent_requests), 2)
@@ -423,6 +531,7 @@ class ProviderClientDirectStreamingIntegrationTests(unittest.TestCase):
         # Second request was blocking fallback
         req2_body = json.loads(sent_requests[1].data.decode("utf-8"))
         self.assertFalse(req2_body.get("stream"))
+        self.assertTrue(control.running_cancel_disabled)
 
     def test_post_direct_task_falls_back_when_stream_response_is_not_sse(self):
         from unittest.mock import patch
@@ -468,6 +577,9 @@ class ProviderClientDirectStreamingIntegrationTests(unittest.TestCase):
             return response
 
         class MockControl:
+            def __init__(self):
+                self.running_cancel_disabled = False
+
             def __call__(self, phase):
                 pass
 
@@ -483,6 +595,11 @@ class ProviderClientDirectStreamingIntegrationTests(unittest.TestCase):
             def cancel_requested(self):
                 return False
 
+            def disable_running_cancel(self):
+                self.running_cancel_disabled = True
+
+        control = MockControl()
+
         with patch.dict(
             "os.environ",
             {"AI_WPS_ENABLE_DIRECT_STREAMING": "1"},
@@ -493,7 +610,7 @@ class ProviderClientDirectStreamingIntegrationTests(unittest.TestCase):
                 query="改写以下内容",
                 resolved_task_auth=task_auth,
                 timeout=30,
-                progress_callback=MockControl(),
+                progress_callback=control,
             )
 
         self.assertEqual(result["answer"], "阻塞回退结果")
@@ -503,6 +620,7 @@ class ProviderClientDirectStreamingIntegrationTests(unittest.TestCase):
         self.assertEqual(debug["performance"]["providerAttempts"], 2)
         self.assertTrue(json.loads(sent_requests[0].data.decode("utf-8"))["stream"])
         self.assertFalse(json.loads(sent_requests[1].data.decode("utf-8"))["stream"])
+        self.assertTrue(control.running_cancel_disabled)
 
     def test_post_direct_task_uses_blocking_when_feature_flag_disabled(self):
         from unittest.mock import patch

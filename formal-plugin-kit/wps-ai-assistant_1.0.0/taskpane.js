@@ -7790,9 +7790,6 @@
       if (typeof setStatus === "function") {
         setStatus("模型后台仍在响应中，请继续等待...");
       }
-      if (typeof setDocumentReviewCancelVisible === "function") {
-        setDocumentReviewCancelVisible(true, false, "停止生成");
-      }
     }, 30000));
 
     return function () {
@@ -7927,6 +7924,9 @@
     }
     var targetJobId = jobId || "";
     var targetDocSession = docSessionId || state.documentSessionId || "default";
+    var previewKey = [taskType, targetDocSession, targetJobId].join("::");
+    var preview = state.writingJobPreviews && state.writingJobPreviews[previewKey];
+    var partialText = (preview && preview.text) || "";
 
     if (targetJobId) {
       releaseTaskSlotsForJob(targetJobId);
@@ -7934,6 +7934,12 @@
         helpers.releaseTaskSlot(state.activeTaskSlots, "wps", taskType, targetDocSession, targetJobId);
       }
       clearWritingActiveJob(targetJobId, taskType, targetDocSession);
+      if (preview) {
+        if (preview.renderTimer) {
+          clearTimeout(preview.renderTimer);
+        }
+        delete state.writingJobPreviews[previewKey];
+      }
     }
     setActiveWritingJobRecord(taskType, targetDocSession, null);
     setActiveResultRecord(taskType, targetDocSession, null);
@@ -7950,8 +7956,14 @@
     }
     var errorMsg = (error && error.message) || describeFetchError(error) || "后台任务执行失败。";
     if (isCurrentView) {
-      setStatus(writingTaskLabel(taskType) + "失败：" + errorMsg);
-      setResult(errorMsg);
+      if (partialText) {
+        setPlainResult(partialText, partialText);
+        setApplyEnabled(false);
+        setStatus(writingTaskLabel(taskType) + "失败：" + errorMsg + "，已保留已接收内容部分预览（只读，不可写回）。");
+      } else {
+        setStatus(writingTaskLabel(taskType) + "失败：" + errorMsg);
+        setResult(errorMsg);
+      }
     }
   }
 
@@ -8344,14 +8356,29 @@
         var targetMode = mode || (taskType === "word.smart_imitation" ? "smartImitation" : "smartWrite");
         var currentDoc = (helpers.getDocumentSessionId && getActiveDocument) ? helpers.getDocumentSessionId(getActiveDocument()) : state.documentSessionId;
         var isCurrentView = (state.currentMode === targetMode) && (!targetDocSession || targetDocSession === currentDoc || !currentDoc);
+        var previewKey = [taskType, targetDocSession, jobId].join("::");
+        var preview = state.writingJobPreviews && state.writingJobPreviews[previewKey];
+        var partialText = (preview && preview.text) || "";
+        if (preview) {
+          if (preview.renderTimer) {
+            clearTimeout(preview.renderTimer);
+          }
+          delete state.writingJobPreviews[previewKey];
+        }
 
         if (isCurrentView || state.writingJobId === jobId) {
           setWritingJob("", "", "");
           setModelTaskBusy(false);
         }
         if (isCurrentView) {
-          setStatus("排队中的" + writingTaskLabel(taskType) + "任务已取消。");
-          setPlainResult("排队任务已取消，未调用模型后台。\n任务编号：" + jobId);
+          if (partialText) {
+            setPlainResult(partialText, partialText);
+            setApplyEnabled(false);
+            setStatus(writingTaskLabel(taskType) + "已停止生成，保留已生成部分预览（只读，不可写回）。");
+          } else {
+            setStatus("排队中的" + writingTaskLabel(taskType) + "任务已取消。");
+            setPlainResult("排队任务已取消，未调用模型后台。\n任务编号：" + jobId);
+          }
         }
         return;
       }
@@ -8597,6 +8624,10 @@
         } else if (isCurrentWritingView()) {
           renderWritingJobProgress(evt, taskType, jobId);
         }
+      }
+
+      if (payload.previewTruncated && !isTerminal && isCurrentWritingView()) {
+        setStatus("正文预览已达到 512 KiB 上限，后台仍在生成完整结果。");
       }
 
       if (isTerminal || terminalStatus === "completed" || terminalStatus === "cancelled" || terminalStatus === "failed") {

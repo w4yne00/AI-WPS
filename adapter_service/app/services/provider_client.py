@@ -3216,6 +3216,10 @@ class ProviderClient:
                             perf_metrics,
                         )
                         response.close()
+                        if progress_callback and hasattr(
+                            progress_callback, "disable_running_cancel"
+                        ):
+                            progress_callback.disable_running_cancel()
                         return self._post_direct_task(
                             task_type,
                             trace_id,
@@ -3256,6 +3260,29 @@ class ProviderClient:
                         else None
                     )
 
+                    def interrupt_stream_read() -> None:
+                        fp = getattr(response, "fp", None)
+                        raw = getattr(fp, "raw", None)
+                        response_socket = getattr(raw, "_sock", None)
+                        if response_socket is not None:
+                            try:
+                                response_socket.shutdown(socket.SHUT_RDWR)
+                            except OSError:
+                                pass
+                            try:
+                                response_socket.close()
+                            except OSError:
+                                pass
+                        else:
+                            response.close()
+
+                    cancel_callback = None
+                    if progress_callback and hasattr(
+                        progress_callback, "set_cancel_callback"
+                    ):
+                        cancel_callback = interrupt_stream_read
+                        progress_callback.set_cancel_callback(cancel_callback)
+
                     try:
                         stream_result = read_direct_text_stream(
                             response,
@@ -3266,6 +3293,11 @@ class ProviderClient:
                             cancel_checker=cancel_checker,
                         )
                     finally:
+                        if (
+                            cancel_callback is not None
+                            and hasattr(progress_callback, "clear_cancel_callback")
+                        ):
+                            progress_callback.clear_cancel_callback(cancel_callback)
                         if progress_callback and hasattr(progress_callback, "flush"):
                             try:
                                 progress_callback.flush()
@@ -3472,6 +3504,10 @@ class ProviderClient:
                 and not first_delta_seen
                 and status in (400, 404, 415, 422, 501)
             ):
+                if progress_callback and hasattr(
+                    progress_callback, "disable_running_cancel"
+                ):
+                    progress_callback.disable_running_cancel()
                 return self._post_direct_task(
                     task_type,
                     trace_id,

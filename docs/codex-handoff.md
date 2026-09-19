@@ -2,6 +2,7 @@
 
 ## 当前功能实现：Issue #206 运行中流式任务取消、上游中断与长等待边界（2026-09-19）
 
+- **PR #218 审查修复（2026-09-19）**：协调器为当前流式响应登记一次性取消回调，停止请求会主动 `shutdown` 上游 socket，不再依赖正文继续到达，也不采用会破坏 Python `BufferedReader` 的短 socket timeout 轮询；取消先接受时普通 runner 返回仍收敛为 `cancelled`，且待 50ms flush 的正文在取消后不再发布。streaming→blocking 回退会原子撤销运行中取消能力，30 秒等待提示不再越权显示停止按钮；事件接口降级为状态轮询后仍保留取消/失败的只读部分预览。事件响应新增稳定的 `previewTruncated` 标志并提示 512 KiB 预览上限，5 MiB 响应上限继续公开 `MODEL_RESPONSE_SIZE_LIMIT`。
 - **流式任务运行中取消与按需按钮状态**：遵循 ADR-0132 Task 4 与 Issue #206 规格，长任务协调器 `LongTaskCoordinator` 与 `writing_jobs.py` 支持直连流式任务（`streamingCapability == "validated"` 且 `AI_WPS_ENABLE_DIRECT_STREAMING=1`）的运行中取消（`allow_running_cancel=True`）；阻塞任务严格保持排队阶段后不可取消，绝不显示虚假取消按钮。
 - **UI 快速响应与上游连接立即切断**：前端任务窗格点击“停止生成”后，在 <100ms 内同步更新为“正在停止”（disabled=true）及“正在停止生成，请稍候...”；协调器立即将任务阶段标记为 `stopping`，`direct_text_stream.py` 在读取循环与行切分循环中通过 `cancel_checker()` 检测中断，抛出 `LongTaskCancelled`，并在 `finally` 块中立即关闭上游 HTTP 响应 socket，立即停止向客户端推送 delta 增量。
 - **权威状态竞态裁决与幂等终态**：协调器通过互斥锁严格仲裁停止请求与正常完成提交：若取消请求先被协调器接受，任务终态收敛为 `cancelled`；若模型完整响应已先行提交完成，终态锁定为 `completed`，后续停止请求幂等返回完成状态。同一任务终态仅产生唯一的终态事件和历史记录。
@@ -9,7 +10,7 @@
 - **非 SSE/不支持响应的安全单次回退**：仅在首个可见文本 delta 产生之前，若上游返回 400/404/415/422/非 SSE 响应，允许平滑回退至阻塞调用最多一次；一旦产生首个可见 delta，任何后续错误均作为终态 `failed` 处理，杜绝二次调用与双份计费。
 - **资源与耗时边界守护**：事件环形缓冲区最大 256 项，预览文本快照最大 512 KiB，模型总响应体最大 5 MiB（超限抛出 `MODEL_RESPONSE_SIZE_LIMIT` 稳定错误码）。Delta 停止延迟 p95 ≤ 500ms，任务槽位本地释放 ≤ 2s。
 - **渐进式等待反馈（10s / 30s）与零伪百分比**：10 秒内未收到可见文本时展示“模型响应较慢，请稍候...”，30 秒未收到可见文本时展示“模型后台仍在响应中，请继续等待...”并提供“停止生成”入口；全过程杜绝虚假百分比进度条。首个 delta 到达或终态发生时立即清理等待定时器。
-- **全量验证结论**：本地 Docker Python 3.8 全量后端测试 `1465 passed / 55 skipped`；麒麟 V10 ARM64 / Python 3.8 后端测试 `44 passed`（流式/任务专项）；正式插件 Node 契约测试 `233/233 passed`；`wps-addon` vitest `12/12 passed` 且生产构建通过；Python 3.8 兼容性扫描 96 文件全部通过；`git diff --check` 无格式或空白异常。
+- **审查修复验证结论**：本地 Docker Python 3.8 全量后端测试 `1471 passed / 54 skipped`，取消与流式专项 `69/69 passed`；正式插件 Node 契约测试 `233/233 passed`（真实 Chrome 视口门禁在沙箱外补跑）；`wps-addon` vitest `12/12 passed` 且生产构建通过；Python 3.8 兼容性扫描 196 文件全部通过；`node --check` 与 `git diff --check` 通过。审查修复后未重跑麒麟 V10 ARM64、真实 WPS 或真实模型服务验收。
 
 ## 当前功能实现：Issue #205 智能编写文本流式增量渲染与只读预览（2026-09-18）
 
