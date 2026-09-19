@@ -1,5 +1,8 @@
 import io
+import http.client
 import json
+import socket
+import threading
 import time
 import unittest
 
@@ -400,6 +403,85 @@ class DirectTextStreamTests(unittest.TestCase):
 
         self.assertIn("providerFirstVisibleMs", metrics)
         self.assertGreaterEqual(metrics["providerFirstVisibleMs"], 90)
+
+    def test_read_direct_text_stream_cancellation_closes_response_and_raises_long_task_cancelled(self):
+        from app.services.long_task_coordinator import LongTaskCancelled
+
+        payloads = [
+            b'data: {"choices":[{"delta":{"content":"Chunk 1 "}}]}\n\n',
+            b'data: {"choices":[{"delta":{"content":"Chunk 2 "}}]}\n\n',
+            b'data: {"choices":[{"delta":{"content":"Chunk 3 "}}]}\n\n',
+            b'data: [DONE]\n\n',
+        ]
+        response = FakeHTTPResponse(payloads)
+        emitted = []
+        cancel_after_chunks = 2
+
+        def cancel_checker():
+            return len(emitted) >= cancel_after_chunks
+
+        t_start = time.monotonic()
+        with self.assertRaises(LongTaskCancelled) as ctx:
+            read_direct_text_stream(
+                response=response,
+                publish_callback=lambda text: emitted.append(text),
+                cancel_checker=cancel_checker,
+                timeout=5.0,
+            )
+        t_stop = time.monotonic()
+
+        # Latency of stopping publication must be under 500ms
+        self.assertLess(t_stop - t_start, 0.5)
+        # Response must be closed immediately
+        self.assertTrue(response.closed)
+        # Partial result must be attached to exception
+        partial_res = ctx.exception.partial_result
+        self.assertIsNotNone(partial_res)
+        self.assertTrue(partial_res.get("partial"))
+        self.assertEqual(partial_res.get("stopReason"), "cancelled")
+        self.assertEqual(partial_res.get("plainText"), "Chunk 1 Chunk 2 ")
+        # No more deltas should have been emitted
+        self.assertEqual(emitted, ["Chunk 1 ", "Chunk 2 "])
+
+    def test_stream_allows_a_normal_gap_between_network_chunks(self):
+        client_socket, server_socket = socket.socketpair()
+        payload = (
+            b'data: {"choices":[{"delta":{"content":"delayed text"}}]}\n\n'
+            b'data: [DONE]\n\n'
+        )
+
+        def send_response():
+            try:
+                server_socket.sendall(
+                    b"HTTP/1.1 200 OK\r\n"
+                    b"Content-Type: text/event-stream\r\n"
+                    b"Transfer-Encoding: chunked\r\n\r\n"
+                )
+                time.sleep(0.2)
+                server_socket.sendall(
+                    "{0:x}\r\n".format(len(payload)).encode("ascii")
+                    + payload
+                    + b"\r\n0\r\n\r\n"
+                )
+            finally:
+                server_socket.close()
+
+        sender = threading.Thread(target=send_response)
+        sender.start()
+        response = http.client.HTTPResponse(client_socket)
+        response.begin()
+
+        try:
+            result = read_direct_text_stream(
+                response=response,
+                publish_callback=lambda _text: None,
+                timeout=1.0,
+            )
+        finally:
+            sender.join(timeout=1)
+            client_socket.close()
+
+        self.assertEqual(result["rewrittenText"], "delayed text")
 
 
 if __name__ == "__main__":

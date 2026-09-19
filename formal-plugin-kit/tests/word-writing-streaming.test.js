@@ -29,6 +29,7 @@ function createMockElement(id) {
   const el = {
     id,
     hidden: false,
+    disabled: false,
     classList: {
       _classes: new Set(),
       add(cls) { this._classes.add(cls); },
@@ -221,6 +222,74 @@ async function testSnapshotRecoveryUsesAuthoritativeText() {
     },
     "缺口后的完整正文"
   );
+}
+
+async function testPreviewTruncationShowsStableNotice() {
+  let statusMsg = "";
+  const state = {
+    activeTaskSlots: {},
+    currentMode: "smartWrite",
+    documentSessionId: "doc-1",
+    writingJobId: "job-preview-limit",
+    writingJobStartedAt: 1000,
+    writingJobPreviews: {}
+  };
+  let requestCount = 0;
+  const context = {
+    state,
+    WRITING_POLL_REQUEST_TIMEOUT_MS: 10000,
+    byId: () => null,
+    setStatus(message) { statusMsg = message; },
+    helpers: {
+      getDocumentSessionId: () => "doc-1",
+      releaseTaskSlot() {}
+    },
+    getActiveDocument: () => ({}),
+    writingJobPath: () => "/word/smart-write/jobs",
+    releaseTaskSlotsForJob() {},
+    clearWritingActiveJob() {},
+    saveWritingActiveJob() {},
+    renderWritingJobProgress() {},
+    clearWritingPolicyUsage() {},
+    hideCompareForSmartImitation() {},
+    completeWritingJob() {},
+    failWritingJob() {},
+    isFatalWritingPollError: () => false,
+    request() {
+      requestCount += 1;
+      if (requestCount === 1) {
+        return Promise.resolve({
+          data: {
+            jobId: "job-preview-limit",
+            status: "running",
+            latestSequence: 8,
+            previewTruncated: true,
+            previewSnapshot: {
+              text: "已保留的预览正文",
+              latestSequence: 8,
+              previewTruncated: true
+            },
+            events: []
+          }
+        });
+      }
+      return new Promise(() => {});
+    }
+  };
+  const fns = loadFunctions([
+    "pollWritingJobEvents",
+    "renderWritingJobPreview",
+    "appendWritingJobPreviewDelta",
+    "setWritingJobPreviewSnapshot",
+    "scheduleWritingJobPreviewRender",
+    "flushWritingJobPreviewRender"
+  ], context);
+
+  fns.pollWritingJobEvents("job-preview-limit", "word.smart_write", "smartWrite", false, "doc-1", 0, 0);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  assert.ok(statusMsg.includes("512 KiB"));
+  assert.ok(statusMsg.includes("后台仍在生成完整结果"));
 }
 
 async function testScrollFollowingLogic() {
@@ -452,13 +521,407 @@ async function testTerminalCompletionHandoff() {
   assert.strictEqual(completedArgs.result.rewrittenText, "终态正式文本");
 }
 
+async function testRunningCancelButtonVisibilityAnd100msTransition() {
+  const cancelButton = createMockElement("btn-cancel-document-review-job");
+  cancelButton.textContent = "取消排队任务";
+  const elements = {
+    "btn-cancel-document-review-job": cancelButton,
+    "result-output": createMockElement("result-output"),
+    "status-line": createMockElement("status-line")
+  };
+
+  let statusMsg = "";
+  const state = {
+    writingJobId: "job-cancel-test",
+    writingJobTaskType: "word.smart_write",
+    writingJobMode: "smartWrite",
+    writingJobPreviews: {},
+    documentSessionId: "doc-1",
+    currentMode: "smartWrite"
+  };
+
+  const context = {
+    state,
+    byId(id) { return elements[id] || null; },
+    setStatus(msg) { statusMsg = msg; },
+    setPlainResult() {},
+    writingTaskLabel: () => "智能编写",
+    DOCUMENT_REVIEW_PHASE_TEXT: {},
+    helpers: { getDocumentSessionId: () => "doc-1", releaseTaskSlot() {} },
+    getActiveDocument: () => ({}),
+    request() { return Promise.resolve({ data: { status: "running", phase: "stopping" } }); },
+    writingJobPath: () => "/word/smart-write/jobs",
+    WRITING_POLL_REQUEST_TIMEOUT_MS: 5000,
+    releaseTaskSlotsForJob() {},
+    clearWritingActiveJob() {},
+    setActiveWritingJobRecord() {},
+    setWritingJob() {},
+    setModelTaskBusy() {}
+  };
+
+  const fns = loadFunctions([
+    "setDocumentReviewCancelVisible",
+    "renderWritingJobProgress",
+    "cancelQueuedWritingJob"
+  ], context);
+
+  // 1. Queued with canCancel -> visible, not disabled, text "取消排队任务"
+  fns.renderWritingJobProgress({ status: "queued", canCancel: true, queuePosition: 1 }, "word.smart_write", "job-cancel-test");
+  assert.strictEqual(cancelButton.hidden, false);
+  assert.strictEqual(cancelButton.disabled, false);
+  assert.strictEqual(cancelButton.textContent, "取消排队任务");
+
+  // 2. Running blocking task (canCancel: false) -> button hidden
+  fns.renderWritingJobProgress({ status: "running", canCancel: false, phase: "provider_processing" }, "word.smart_write", "job-cancel-test");
+  assert.strictEqual(cancelButton.hidden, true);
+
+  // 3. Running streaming task (canCancel: true) -> button visible, not disabled, text "停止生成"
+  fns.renderWritingJobProgress({ status: "running", canCancel: true, phase: "streaming" }, "word.smart_write", "job-cancel-test");
+  assert.strictEqual(cancelButton.hidden, false);
+  assert.strictEqual(cancelButton.disabled, false);
+  assert.strictEqual(cancelButton.textContent, "停止生成");
+
+  // 4. Click "停止生成" -> immediately (< 100ms) shows "正在停止" and disabled
+  const clickStart = Date.now();
+  fns.cancelQueuedWritingJob();
+  const clickElapsed = Date.now() - clickStart;
+
+  assert.ok(clickElapsed < 100, "UI update on cancel must occur in < 100ms");
+  assert.strictEqual(cancelButton.textContent, "正在停止");
+  assert.strictEqual(cancelButton.disabled, true);
+}
+
+async function testCancelledStreamingJobPreservesPartialPreviewAndDisablesWriteback() {
+  const resultOutput = createMockElement("result-output");
+  const applyButton = createMockElement("btn-apply");
+  applyButton.disabled = false;
+  const statusLine = createMockElement("status-line");
+  const elements = {
+    "result-output": resultOutput,
+    "btn-apply": applyButton,
+    "status-line": statusLine,
+    "result-view-switch": createMockElement("result-view-switch"),
+    "btn-cancel-document-review-job": createMockElement("btn-cancel-document-review-job")
+  };
+
+  let statusMsg = "";
+  const state = {
+    activeTaskSlots: {},
+    currentMode: "smartWrite",
+    documentSessionId: "doc-1",
+    writingJobId: "job-cancel-preview-1",
+    writingJobPreviews: {},
+    copyText: ""
+  };
+
+  const context = {
+    state,
+    WRITING_POLL_REQUEST_TIMEOUT_MS: 10000,
+    byId(id) { return elements[id] || null; },
+    setStatus(msg) { statusMsg = msg; },
+    setPlainResult(text, copyText) {
+      resultOutput.textContent = text;
+      state.copyText = copyText || text;
+    },
+    setApplyEnabled(enabled) { applyButton.disabled = !enabled; },
+    writingTaskLabel: () => "智能编写",
+    helpers: { getDocumentSessionId: () => "doc-1", releaseTaskSlot() {} },
+    getActiveDocument: () => ({}),
+    writingJobPath: () => "/word/smart-write/jobs",
+    releaseTaskSlotsForJob() {},
+    clearWritingActiveJob() {},
+    saveWritingActiveJob() {},
+    renderWritingJobProgress() {},
+    clearWritingPolicyUsage() {},
+    hideCompareForSmartImitation() {},
+    completeWritingJob() {},
+    failWritingJob() {},
+    isFatalWritingPollError: () => false,
+    request(url) {
+      return Promise.resolve({
+        data: {
+          jobId: "job-cancel-preview-1",
+          status: "cancelled",
+          terminal: true,
+          previewSnapshot: {
+            text: "取消前已接收到的正文部分",
+            latestSequence: 2
+          },
+          events: [
+            { sequence: 1, type: "delta", delta: "取消前已接收到的正文部分" },
+            { sequence: 2, type: "terminal", phase: "cancelled", status: "cancelled" }
+          ]
+        }
+      });
+    }
+  };
+
+  const fns = loadFunctions([
+    "pollWritingJobEvents",
+    "renderWritingJobPreview",
+    "appendWritingJobPreviewDelta",
+    "scheduleWritingJobPreviewRender",
+    "flushWritingJobPreviewRender",
+    "setWritingJobPreviewSnapshot"
+  ], context);
+
+  fns.pollWritingJobEvents("job-cancel-preview-1", "word.smart_write", "smartWrite", false, "doc-1", 0, 0);
+
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  // Partial preview must be preserved in output and copyText
+  assert.strictEqual(resultOutput.textContent, "取消前已接收到的正文部分");
+  assert.strictEqual(state.copyText, "取消前已接收到的正文部分");
+  // Apply/Writeback button must be disabled
+  assert.strictEqual(applyButton.disabled, true);
+  // Status must communicate stopped generation
+  assert.ok(statusMsg.includes("已停止生成"));
+}
+
+async function testFailedStreamingJobPreservesPartialPreviewAndDisablesWriteback() {
+  const resultOutput = createMockElement("result-output");
+  const applyButton = createMockElement("btn-apply");
+  applyButton.disabled = false;
+  const elements = {
+    "result-output": resultOutput,
+    "btn-apply": applyButton,
+    "status-line": createMockElement("status-line"),
+    "result-view-switch": createMockElement("result-view-switch"),
+    "btn-cancel-document-review-job": createMockElement("btn-cancel-document-review-job")
+  };
+
+  let statusMsg = "";
+  const state = {
+    activeTaskSlots: {},
+    currentMode: "smartWrite",
+    documentSessionId: "doc-1",
+    writingJobId: "job-fail-preview-1",
+    writingJobPreviews: {},
+    copyText: ""
+  };
+
+  const context = {
+    state,
+    WRITING_POLL_REQUEST_TIMEOUT_MS: 10000,
+    byId(id) { return elements[id] || null; },
+    setStatus(msg) { statusMsg = msg; },
+    setPlainResult(text, copyText) {
+      resultOutput.textContent = text;
+      state.copyText = copyText || text;
+    },
+    setApplyEnabled(enabled) { applyButton.disabled = !enabled; },
+    writingTaskLabel: () => "智能编写",
+    helpers: { getDocumentSessionId: () => "doc-1", releaseTaskSlot() {} },
+    getActiveDocument: () => ({}),
+    writingJobPath: () => "/word/smart-write/jobs",
+    releaseTaskSlotsForJob() {},
+    clearWritingActiveJob() {},
+    saveWritingActiveJob() {},
+    renderWritingJobProgress() {},
+    clearWritingPolicyUsage() {},
+    hideCompareForSmartImitation() {},
+    completeWritingJob() {},
+    failWritingJob() {},
+    isFatalWritingPollError: () => false,
+    request(url) {
+      return Promise.resolve({
+        data: {
+          jobId: "job-fail-preview-1",
+          status: "failed",
+          terminal: true,
+          error: { code: "PROVIDER_MID_STREAM_DISCONNECT", message: "连接断开" },
+          previewSnapshot: {
+            text: "网络断开前收到的文本",
+            latestSequence: 1
+          },
+          events: [
+            { sequence: 1, type: "delta", delta: "网络断开前收到的文本" }
+          ]
+        }
+      });
+    }
+  };
+
+  const fns = loadFunctions([
+    "pollWritingJobEvents",
+    "renderWritingJobPreview",
+    "appendWritingJobPreviewDelta",
+    "scheduleWritingJobPreviewRender",
+    "flushWritingJobPreviewRender",
+    "setWritingJobPreviewSnapshot"
+  ], context);
+
+  fns.pollWritingJobEvents("job-fail-preview-1", "word.smart_write", "smartWrite", false, "doc-1", 0, 0);
+
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  // Partial preview must be preserved
+  assert.strictEqual(resultOutput.textContent, "网络断开前收到的文本");
+  assert.strictEqual(state.copyText, "网络断开前收到的文本");
+  // Writeback disabled
+  assert.strictEqual(applyButton.disabled, true);
+  // Status mentions failure and partial preview
+  assert.ok(statusMsg.includes("失败") && statusMsg.includes("部分预览"));
+}
+
+async function testStatusPollingFallbackPreservesPartialPreview() {
+  async function runCase(status) {
+    const resultOutput = createMockElement("result-output");
+    const applyButton = createMockElement("btn-apply");
+    applyButton.disabled = false;
+    const jobId = `job-poll-${status}`;
+    const previewKey = `word.smart_write::doc-1::${jobId}`;
+    let statusMsg = "";
+    const state = {
+      activeTaskSlots: {},
+      currentMode: "smartWrite",
+      documentSessionId: "doc-1",
+      writingJobId: jobId,
+      writingJobPollErrorCount: 0,
+      writingJobPreviews: {
+        [previewKey]: {
+          text: "事件接口降级前收到的正文",
+          renderTimer: null
+        }
+      }
+    };
+    const context = {
+      state,
+      WRITING_POLL_REQUEST_TIMEOUT_MS: 10000,
+      WRITING_POLL_INTERVAL_MS: 3000,
+      WRITING_POLL_RETRY_DELAY_MS: 3000,
+      request() {
+        return Promise.resolve({
+          data: {
+            status,
+            error: status === "failed" ? { message: "连接断开" } : null
+          }
+        });
+      },
+      writingJobPath: () => "/word/smart-write/jobs",
+      writingTaskLabel: () => "智能编写",
+      helpers: {
+        getDocumentSessionId: () => "doc-1",
+        releaseTaskSlot() {}
+      },
+      getActiveDocument: () => ({}),
+      releaseTaskSlotsForJob() {},
+      clearWritingActiveJob() {},
+      saveWritingActiveJob() {},
+      setActiveWritingJobRecord() {},
+      setActiveResultRecord() {},
+      setWritingJob() { state.writingJobId = ""; },
+      setModelTaskBusy() {},
+      setApplyEnabled(enabled) { applyButton.disabled = !enabled; },
+      setStatus(message) { statusMsg = message; },
+      setPlainResult(text) { resultOutput.textContent = text; },
+      setResult(text) { resultOutput.textContent = text; },
+      renderWritingJobProgress() {},
+      completeWritingJob() {},
+      isFatalWritingPollError: () => false,
+      describeFetchError: () => "连接断开"
+    };
+    const fns = loadFunctions(["pollWritingJob", "failWritingJob"], context);
+
+    fns.pollWritingJob(jobId, "word.smart_write", "smartWrite", false, "doc-1");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assert.strictEqual(resultOutput.textContent, "事件接口降级前收到的正文");
+    assert.strictEqual(applyButton.disabled, true);
+    assert.ok(status === "cancelled" ? statusMsg.includes("已停止生成") : statusMsg.includes("部分预览"));
+  }
+
+  await runCase("cancelled");
+  await runCase("failed");
+}
+
+async function testWaitFeedbackTimersDoNotOverrideCancelCapability() {
+  const resultOutput = createMockElement("result-output");
+  const cancelButton = createMockElement("btn-cancel-document-review-job");
+  cancelButton.hidden = true;
+  const elements = {
+    "result-output": resultOutput,
+    "btn-cancel-document-review-job": cancelButton,
+    "status-line": createMockElement("status-line")
+  };
+
+  let statusMsg = "";
+  const state = {
+    writingJobId: "job-wait-1",
+    documentSessionId: "doc-1",
+    writingJobPreviews: {}
+  };
+
+  const context = {
+    state,
+    byId(id) { return elements[id] || null; },
+    setStatus(msg) { statusMsg = msg; },
+    setPlainResult(text) { resultOutput.textContent = text; },
+    writingTaskLabel: () => "智能编写",
+    setDocumentReviewCancelVisible(visible, disabled, text) {
+      cancelButton.hidden = !visible;
+      cancelButton.disabled = Boolean(disabled);
+      if (text) cancelButton.textContent = text;
+    }
+  };
+
+  const fns = loadFunctions([
+    "startWritingWaitFeedback"
+  ], context);
+
+  let capturedTimers = [];
+  const origSetTimeout = setTimeout;
+
+  const fakeContext = Object.assign({}, context, {
+    setTimeout(cb, ms) {
+      capturedTimers.push({ cb, ms });
+      return capturedTimers.length;
+    },
+    clearTimeout(id) {}
+  });
+
+  const customFns = loadFunctions(["startWritingWaitFeedback"], fakeContext);
+  const stopWait = customFns.startWritingWaitFeedback("job-wait-1", "word.smart_write");
+
+  // Should register 10000ms and 30000ms timers
+  assert.strictEqual(capturedTimers.length, 2);
+  const timer10s = capturedTimers.find(t => t.ms === 10000);
+  const timer30s = capturedTimers.find(t => t.ms === 30000);
+  assert.ok(timer10s, "10s timer must be registered");
+  assert.ok(timer30s, "30s timer must be registered");
+
+  // Trigger 10s timer
+  timer10s.cb();
+  assert.ok(statusMsg.includes("模型响应较慢"));
+  assert.ok(!statusMsg.includes("%"), "Must not display fake percentage");
+
+  // Trigger 30s timer
+  timer30s.cb();
+  assert.ok(statusMsg.includes("继续等待"));
+  assert.strictEqual(cancelButton.hidden, true, "blocking task must not gain a stop button at 30s");
+  assert.ok(!statusMsg.includes("%"), "Must not display fake percentage");
+
+  // An authoritative streaming status may already expose the button; the timer must preserve it.
+  cancelButton.hidden = false;
+  cancelButton.textContent = "停止生成";
+  timer30s.cb();
+  assert.strictEqual(cancelButton.hidden, false);
+  assert.strictEqual(cancelButton.textContent, "停止生成");
+}
+
 async function main() {
   await testIncrementalPreviewRenderingAndCopySync();
   await testSnapshotRecoveryUsesAuthoritativeText();
+  await testPreviewTruncationShowsStableNotice();
   await testScrollFollowingLogic();
   await testPreviewIsolationBetweenDocuments();
   await testModeSwitchRestoresPreview();
   await testTerminalCompletionHandoff();
+  await testRunningCancelButtonVisibilityAnd100msTransition();
+  await testCancelledStreamingJobPreservesPartialPreviewAndDisablesWriteback();
+  await testFailedStreamingJobPreservesPartialPreviewAndDisablesWriteback();
+  await testStatusPollingFallbackPreservesPartialPreview();
+  await testWaitFeedbackTimersDoNotOverrideCancelCapability();
   console.log("word-writing-streaming tests passed!");
 }
 

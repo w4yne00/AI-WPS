@@ -324,7 +324,7 @@ class LongTaskCoordinatorTests(unittest.TestCase):
         self.assertEqual(runner.calls, ["first"])
         runner.release.set()
 
-    def test_running_cancel_race_does_not_discard_completed_runner_result(self):
+    def test_running_cancel_accepted_before_commit_wins_over_runner_result(self):
         coordinator = LongTaskCoordinator(max_running=1, max_queued=1)
         started = threading.Event()
         release = threading.Event()
@@ -352,10 +352,57 @@ class LongTaskCoordinatorTests(unittest.TestCase):
         release.set()
 
         terminal = coordinator.wait(accepted["jobId"], task_type="excel.smart_fill")
-        self.assertEqual(terminal["status"], "completed")
-        self.assertEqual(
-            terminal["result"]["value"], "completed-before-cancel-observed"
+        self.assertEqual(terminal["status"], "cancelled")
+        self.assertNotIn("result", terminal)
+
+    def test_running_cancel_discards_text_waiting_for_timer_flush(self):
+        from app.services.long_task_coordinator import LongTaskCancelled
+
+        coordinator = LongTaskCoordinator(max_running=1, max_queued=1)
+        buffered = threading.Event()
+        release = threading.Event()
+
+        def runner(_snapshot, control):
+            control("streaming")
+            control.publish_text("尚未发布的小片段")
+            buffered.set()
+            self.assertTrue(release.wait(timeout=1))
+            raise LongTaskCancelled()
+
+        coordinator.submit(
+            job_id="client-cancel-buffered-delta",
+            trace_id="trace-cancel-buffered-delta",
+            task_type="word.smart_write",
+            runner=runner,
+            snapshot={},
+            failure_code="WRITING_JOB_FAILED",
+            failure_message="智能编写失败。",
+            allow_running_cancel=True,
         )
+        self.assertTrue(buffered.wait(timeout=1))
+
+        try:
+            coordinator.request_cancel(
+                "client-cancel-buffered-delta", task_type="word.smart_write"
+            )
+            time.sleep(0.1)
+            events = coordinator.wait_events(
+                "client-cancel-buffered-delta",
+                task_type="word.smart_write",
+                after_sequence=0,
+            )
+            self.assertEqual(events["previewSnapshot"]["text"], "")
+            self.assertEqual(
+                [event for event in events["events"] if event["type"] == "delta"],
+                [],
+            )
+        finally:
+            release.set()
+
+        terminal = coordinator.wait(
+            "client-cancel-buffered-delta", task_type="word.smart_write"
+        )
+        self.assertEqual(terminal["status"], "cancelled")
 
     def test_only_queued_job_can_be_cancelled(self):
         coordinator = LongTaskCoordinator(max_running=1, max_queued=1)
@@ -800,6 +847,46 @@ class LongTaskCoordinatorTests(unittest.TestCase):
         self.assertIn("phaseDurationsMs", recent)
         self.assertIn("metrics", recent)
         self.assertEqual(recent["metrics"].get("providerHeadersMs"), 150)
+
+    def test_execution_control_disables_running_cancel_before_blocking_fallback(self):
+        coordinator = LongTaskCoordinator(max_running=1, max_queued=1)
+        fallback_started = threading.Event()
+        release = threading.Event()
+
+        def fallback_runner(_snapshot, control):
+            control("provider_waiting")
+            control.disable_running_cancel()
+            fallback_started.set()
+            self.assertTrue(release.wait(timeout=1))
+            return {"status": "success"}
+
+        coordinator.submit(
+            job_id="fallback-cancel-capability",
+            trace_id="trace-fallback-cancel-capability",
+            task_type="word.smart_write",
+            runner=fallback_runner,
+            snapshot={},
+            failure_code="WRITING_JOB_FAILED",
+            failure_message="智能编写失败。",
+            allow_running_cancel=True,
+        )
+
+        self.assertTrue(fallback_started.wait(timeout=1))
+        running = coordinator.get(
+            "fallback-cancel-capability", task_type="word.smart_write"
+        )
+        self.assertFalse(running["canCancel"])
+        with self.assertRaises(AdapterError) as ctx:
+            coordinator.request_cancel(
+                "fallback-cancel-capability", task_type="word.smart_write"
+            )
+        self.assertEqual(ctx.exception.code, "LONG_TASK_NOT_CANCELLABLE")
+
+        release.set()
+        terminal = coordinator.wait(
+            "fallback-cancel-capability", task_type="word.smart_write"
+        )
+        self.assertEqual(terminal["status"], "completed")
 
     def test_wait_events_initial_query_and_monotonic_sequence(self):
         coordinator = LongTaskCoordinator(max_running=1, max_queued=1)

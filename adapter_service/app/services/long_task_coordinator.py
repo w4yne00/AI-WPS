@@ -255,6 +255,7 @@ class LongTaskCoordinator:
                 "_requestFingerprint": request_fingerprint or "",
                 "_allowRunningCancel": bool(allow_running_cancel),
                 "_cancelRequested": False,
+                "_cancelCallback": None,
                 "_occupiesSlot": status == "running",
                 "_authServiceId": auth_service_id,
                 "_authKeyFingerprint": auth_key_fp,
@@ -393,6 +394,7 @@ class LongTaskCoordinator:
             "status": "failed" if job.get("_authInvalidated") else job["status"],
             "phase": "failed" if job.get("_authInvalidated") else job["phase"],
             "text": str(job.get("_text_preview") or ""),
+            "previewTruncated": bool(job.get("_text_preview_truncated")),
             "latestSequence": job.get("_latest_sequence", 0),
         }
 
@@ -440,6 +442,7 @@ class LongTaskCoordinator:
                 error = deepcopy(
                     job.get("_authInvalidatedError") or job.get("error")
                 )
+                preview_truncated = bool(job.get("_text_preview_truncated"))
 
                 reset_required = False
                 if after_seq < 0:
@@ -457,6 +460,7 @@ class LongTaskCoordinator:
                         "status": effective_status,
                         "phase": effective_phase,
                         "latestSequence": latest_seq,
+                        "previewTruncated": preview_truncated,
                         "events": [deepcopy(e) for e in events_ring],
                         "previewSnapshot": self._build_preview_snapshot_locked(job),
                         "resetRequired": True,
@@ -472,6 +476,7 @@ class LongTaskCoordinator:
                         "status": effective_status,
                         "phase": effective_phase,
                         "latestSequence": latest_seq,
+                        "previewTruncated": preview_truncated,
                         "events": [deepcopy(e) for e in events_ring],
                         "previewSnapshot": self._build_preview_snapshot_locked(job),
                         "resetRequired": False,
@@ -490,6 +495,7 @@ class LongTaskCoordinator:
                         "status": effective_status,
                         "phase": effective_phase,
                         "latestSequence": latest_seq,
+                        "previewTruncated": preview_truncated,
                         "events": new_events,
                         "previewSnapshot": None,
                         "resetRequired": False,
@@ -505,6 +511,7 @@ class LongTaskCoordinator:
                         "status": effective_status,
                         "phase": effective_phase,
                         "latestSequence": latest_seq,
+                        "previewTruncated": preview_truncated,
                         "events": [],
                         "previewSnapshot": None,
                         "resetRequired": False,
@@ -521,6 +528,7 @@ class LongTaskCoordinator:
                         "status": effective_status,
                         "phase": effective_phase,
                         "latestSequence": latest_seq,
+                        "previewTruncated": preview_truncated,
                         "events": [],
                         "previewSnapshot": None,
                         "resetRequired": False,
@@ -565,6 +573,7 @@ class LongTaskCoordinator:
         now_mono = self._monotonic()
         next_job_key: Optional[JobKey] = None
         public_job: Optional[Dict] = None
+        cancel_callback = None
         with self._lock:
             self._cleanup_locked(now_mono)
             job_key = self._find_job_key_locked(job_id, task_type)
@@ -598,6 +607,8 @@ class LongTaskCoordinator:
                     job["_cancelRequested"] = True
                     job["_updatedMonotonic"] = now_mono
                     job["updatedAt"] = self._wall_clock()
+                    self._transition_phase_locked(job, "stopping", now_mono)
+                    cancel_callback = job.get("_cancelCallback")
                 public_job = self._public_job_locked(job, now_mono)
             elif job["status"] in TERMINAL_STATUSES:
                 return self._public_job_locked(job, now_mono)
@@ -609,6 +620,8 @@ class LongTaskCoordinator:
                 )
             self._trim_terminal_locked()
             self._condition.notify_all()
+        if callable(cancel_callback):
+            cancel_callback()
         if next_job_key is not None:
             self._start_worker(next_job_key)
         return public_job
@@ -858,8 +871,41 @@ class LongTaskCoordinator:
                     current = self._jobs.get(job_key)
                     return bool(current and current.get("_cancelRequested"))
 
+            def disable_running_cancel(ctrl_self) -> None:
+                with self._lock:
+                    current = self._jobs.get(job_key)
+                    if (
+                        current is None
+                        or current["status"] != "running"
+                        or current.get("_cancelRequested")
+                    ):
+                        raise LongTaskCancelled()
+                    current["_allowRunningCancel"] = False
+                    self._condition.notify_all()
+
+            def set_cancel_callback(ctrl_self, callback) -> None:
+                should_cancel = False
+                with self._lock:
+                    current = self._jobs.get(job_key)
+                    if current is None or current["status"] != "running":
+                        should_cancel = True
+                    elif current.get("_cancelRequested"):
+                        should_cancel = True
+                    else:
+                        current["_cancelCallback"] = callback
+                if should_cancel:
+                    callback()
+
+            def clear_cancel_callback(ctrl_self, callback) -> None:
+                with self._lock:
+                    current = self._jobs.get(job_key)
+                    if current is not None and current.get("_cancelCallback") is callback:
+                        current["_cancelCallback"] = None
+
             def publish_text(ctrl_self, text: str) -> None:
                 if not text or not isinstance(text, str):
+                    return
+                if ctrl_self.cancel_requested():
                     return
                 chunk_bytes = len(text.encode("utf-8"))
                 with ctrl_self._flush_lock:
@@ -932,7 +978,11 @@ class LongTaskCoordinator:
                     return
                 with self._lock:
                     current = self._jobs.get(job_key)
-                    if current is None or current["status"] != "running":
+                    if (
+                        current is None
+                        or current["status"] != "running"
+                        or current.get("_cancelRequested")
+                    ):
                         return
                     if current.get("_text_preview_truncated"):
                         return
@@ -1020,19 +1070,7 @@ class LongTaskCoordinator:
                     self._start_worker(next_job_key)
                 return
             cancel_requested = bool(job.get("_cancelRequested"))
-            if (
-                not cancelled
-                and cancel_requested
-                and continuation is None
-                and error is None
-                and result is not None
-            ):
-                # The runner completed before the cancellation request was
-                # observed at commit time. Keep the completed result instead
-                # of converting it into a cancelled job with no payload.
-                self._complete_success_locked(job, result, now_mono)
-                self._running_count = max(self._running_count - 1, 0)
-            elif cancelled or cancel_requested:
+            if cancelled or cancel_requested:
                 final_result = cancelled_result
                 if final_result is None:
                     if continuation is not None and isinstance(continuation.snapshot, dict):
@@ -1047,6 +1085,14 @@ class LongTaskCoordinator:
                                 "partial": True,
                                 "stopReason": "cancelled",
                             }
+                    elif job.get("_text_preview"):
+                        preview_text = str(job["_text_preview"])
+                        final_result = {
+                            "plainText": preview_text,
+                            "rewrittenText": preview_text,
+                            "partial": True,
+                            "stopReason": "cancelled",
+                        }
                     elif job.get("result") is not None:
                         final_result = job.get("result")
                 job["result"] = final_result
@@ -1221,6 +1267,7 @@ class LongTaskCoordinator:
         self._transition_phase_locked(job, status, now_mono)
         job["_terminalAtMonotonic"] = now_mono
         job["_runner"] = None
+        job["_cancelCallback"] = None
         job["_successCommitter"] = None
         job["_authInvalidationCommitter"] = None
         job["_snapshot"] = None

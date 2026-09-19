@@ -246,7 +246,16 @@ def read_direct_text_stream(
             if elapsed >= timeout:
                 raise ProviderTimeoutError("模型服务流式响应读取超时。")
             if cancel_checker and cancel_checker():
-                break
+                from app.services.long_task_coordinator import LongTaskCancelled
+
+                raise LongTaskCancelled(
+                    partial_result={
+                        "plainText": "".join(accumulated_chunks),
+                        "rewrittenText": "".join(accumulated_chunks),
+                        "partial": True,
+                        "stopReason": "cancelled",
+                    }
+                )
 
             remaining_bytes = max_bytes - received_bytes
             read_size = min(DIRECT_STREAM_READ_BYTES, max(1, remaining_bytes + 1))
@@ -272,6 +281,17 @@ def read_direct_text_stream(
 
             line_buffer += chunk_str
             while "\n" in line_buffer and not terminated:
+                if cancel_checker and cancel_checker():
+                    from app.services.long_task_coordinator import LongTaskCancelled
+
+                    raise LongTaskCancelled(
+                        partial_result={
+                            "plainText": "".join(accumulated_chunks),
+                            "rewrittenText": "".join(accumulated_chunks),
+                            "partial": True,
+                            "stopReason": "cancelled",
+                        }
+                    )
                 raw_line, line_buffer = line_buffer.split("\n", 1)
                 process_line(raw_line)
 

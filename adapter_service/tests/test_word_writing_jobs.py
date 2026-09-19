@@ -120,6 +120,37 @@ class WritingJobStoreTests(unittest.TestCase):
         self.assertEqual(completed["status"], "completed")
         self.assertEqual(completed["result"]["rewrittenText"], "处理完成。")
 
+    def test_model_response_size_limit_remains_public_failure_code(self):
+        class SizeLimitWorker:
+            def snapshot_task_auth(self):
+                return {"configurationId": "size-limit-config"}
+
+            def smart_write(self, _request, **_kwargs):
+                raise AdapterError(
+                    "MODEL_RESPONSE_SIZE_LIMIT",
+                    "模型流式响应超过 5 MiB 上限。",
+                    status_code=502,
+                )
+
+        store = SmartWriteJobStore(
+            worker=SizeLimitWorker(),
+            coordinator=LongTaskCoordinator(max_running=1, max_queued=1),
+        )
+        store.start(make_request("client-size-limit-error"), "trace-size-limit-error")
+
+        terminal = None
+        for _ in range(100):
+            terminal = store.get("client-size-limit-error")
+            if terminal and terminal["status"] == "failed":
+                break
+            time.sleep(0.01)
+
+        self.assertEqual(terminal["status"], "failed")
+        self.assertEqual(terminal["error"]["code"], "MODEL_RESPONSE_SIZE_LIMIT")
+        self.assertEqual(
+            terminal["error"]["message"], "模型流式响应超过 5 MiB 上限。"
+        )
+
     def test_job_store_rejects_concurrent_submission_in_same_document_session(self):
         worker = BlockingWritingWorker()
         coordinator = LongTaskCoordinator(max_running=2, max_queued=4)
@@ -334,6 +365,93 @@ class WritingJobStoreTests(unittest.TestCase):
         self.assertGreaterEqual(len(deltas), 1)
         self.assertEqual("".join(d["delta"] for d in deltas), "全链路流式正文")
         self.assertEqual(events_resp["previewSnapshot"]["text"], "全链路流式正文")
+
+    def test_streaming_job_allows_running_cancel_while_blocking_does_not(self):
+        blocking_worker = BlockingWritingWorker()
+        coordinator = LongTaskCoordinator(max_running=1, max_queued=2)
+        blocking_store = SmartWriteJobStore(worker=blocking_worker, coordinator=coordinator)
+
+        req_blocking = make_request("client-block-cancel-1")
+        blocking_store.start(req_blocking, "trace-block-1")
+        self.assertTrue(blocking_worker.started.wait(timeout=2))
+
+        # While running, blocking job should reject cancellation with LONG_TASK_NOT_CANCELLABLE
+        with self.assertRaises(AdapterError) as ctx:
+            blocking_store.cancel("client-block-cancel-1")
+        self.assertEqual(ctx.exception.code, "LONG_TASK_NOT_CANCELLABLE")
+        self.assertEqual(ctx.exception.status_code, 409)
+        blocking_worker.release.set()
+        self.wait_completed(blocking_store, "client-block-cancel-1")
+
+        # Now test streaming job with validated streaming capability
+        class StreamingWorker:
+            def __init__(self):
+                self.started = threading.Event()
+                self.cancelled_observed = threading.Event()
+                self.release = threading.Event()
+
+            def snapshot_task_auth(self):
+                return {
+                    "accessMethod": "direct_model",
+                    "providerBaseUrl": "http://127.0.0.1:19999",
+                    "apiKey": "test-key",
+                    "modelName": "test-model",
+                    "streamingCapability": "validated",
+                }
+
+            def smart_write(self, request, trace_id, progress_callback=None, **kwargs):
+                progress_callback("streaming")
+                if hasattr(progress_callback, "publish_text"):
+                    progress_callback.publish_text("流式首段文本。")
+                    progress_callback.flush()
+                self.started.set()
+                # Wait until cancel requested or release
+                for _ in range(50):
+                    if hasattr(progress_callback, "cancel_requested") and progress_callback.cancel_requested():
+                        self.cancelled_observed.set()
+                        from app.services.long_task_coordinator import LongTaskCancelled
+                        raise LongTaskCancelled(partial_result={
+                            "plainText": "流式首段文本。",
+                            "rewrittenText": "流式首段文本。",
+                            "partial": True,
+                            "stopReason": "cancelled",
+                        })
+                    time.sleep(0.02)
+                return {"rewrittenText": "最终文本", "plainText": "最终文本"}
+
+        streaming_worker = StreamingWorker()
+        streaming_store = SmartWriteJobStore(worker=streaming_worker, coordinator=coordinator)
+        req_streaming = make_request("client-stream-cancel-1")
+
+        with patch.dict("os.environ", {"AI_WPS_ENABLE_DIRECT_STREAMING": "1"}):
+            streaming_store.start(req_streaming, "trace-stream-cancel-1")
+            self.assertTrue(streaming_worker.started.wait(timeout=2))
+
+            # Calling cancel while running MUST be accepted for streaming job
+            cancel_resp = streaming_store.cancel("client-stream-cancel-1")
+            self.assertEqual(cancel_resp["status"], "running")
+            self.assertEqual(cancel_resp["phase"], "stopping")
+
+            self.assertTrue(streaming_worker.cancelled_observed.wait(timeout=2))
+
+            # Wait for job to settle into terminal state
+            terminal_job = None
+            for _ in range(50):
+                terminal_job = streaming_store.get("client-stream-cancel-1")
+                if terminal_job and terminal_job["status"] == "cancelled":
+                    break
+                time.sleep(0.02)
+
+            self.assertIsNotNone(terminal_job)
+            self.assertEqual(terminal_job["status"], "cancelled")
+            self.assertIsNotNone(terminal_job.get("result"))
+            self.assertTrue(terminal_job["result"].get("partial"))
+            self.assertEqual(terminal_job["result"].get("plainText"), "流式首段文本。")
+
+            # Check history: cancelled jobs MUST NOT be written to task history
+            history_entries = self.history_store.list_history("word.smart_write")
+            self.assertEqual(len(history_entries), 1)  # only the blocking completed one
+            self.assertEqual(history_entries[0]["jobId"], "client-block-cancel-1")
 
 
 if __name__ == "__main__":
