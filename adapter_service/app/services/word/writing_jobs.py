@@ -4,6 +4,7 @@ from copy import deepcopy
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.core.errors import AdapterError
+from app.core.features import direct_streaming_enabled
 from app.core.models import WordDocumentRequest
 from app.services.long_task_coordinator import (
     MAX_EVENT_WAIT_MS,
@@ -95,9 +96,15 @@ class WritingJobStore:
                     else:
                         self._active_doc_sessions.pop(slot_key, None)
 
+            task_auth = self.worker.snapshot_task_auth() if hasattr(self.worker, "snapshot_task_auth") else None
+            is_streaming = bool(
+                direct_streaming_enabled()
+                and isinstance(task_auth, dict)
+                and task_auth.get("streamingCapability") == "validated"
+            )
             snapshot = {
                 "request": _copy_request(request),
-                "taskAuth": self.worker.snapshot_task_auth(),
+                "taskAuth": task_auth,
                 "jobId": job_id,
                 "host": host,
                 "documentSessionId": doc_session,
@@ -130,6 +137,7 @@ class WritingJobStore:
                     "SYSTEM_PROMPT_DAMAGED",
                 },
                 priority_class=PRIORITY_INTERACTIVE,
+                allow_running_cancel=is_streaming,
             )
             if doc_session:
                 self._active_doc_sessions[(host, self.task_type, doc_session)] = job_id
@@ -152,7 +160,7 @@ class WritingJobStore:
         )
 
     def cancel(self, job_id: str) -> Optional[Dict]:
-        return self.coordinator.cancel(job_id, task_type=self.task_type)
+        return self.coordinator.request_cancel(job_id, task_type=self.task_type)
 
     def run_sync(self, request: WordDocumentRequest, trace_id: str) -> Dict:
         job = self.start(request, trace_id)

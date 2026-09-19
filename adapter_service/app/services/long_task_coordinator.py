@@ -598,6 +598,7 @@ class LongTaskCoordinator:
                     job["_cancelRequested"] = True
                     job["_updatedMonotonic"] = now_mono
                     job["updatedAt"] = self._wall_clock()
+                    self._transition_phase_locked(job, "stopping", now_mono)
                 public_job = self._public_job_locked(job, now_mono)
             elif job["status"] in TERMINAL_STATUSES:
                 return self._public_job_locked(job, now_mono)
@@ -1047,6 +1048,14 @@ class LongTaskCoordinator:
                                 "partial": True,
                                 "stopReason": "cancelled",
                             }
+                    elif job.get("_text_preview"):
+                        preview_text = str(job["_text_preview"])
+                        final_result = {
+                            "plainText": preview_text,
+                            "rewrittenText": preview_text,
+                            "partial": True,
+                            "stopReason": "cancelled",
+                        }
                     elif job.get("result") is not None:
                         final_result = job.get("result")
                 job["result"] = final_result

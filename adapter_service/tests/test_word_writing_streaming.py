@@ -600,6 +600,132 @@ class ProviderClientDirectStreamingIntegrationTests(unittest.TestCase):
         self.assertEqual(len(sent_requests), 1)
         self.assertIn("部分文本", "".join(published))
 
+    def test_cancel_and_completion_race_first_committed_wins(self):
+        coordinator = LongTaskCoordinator(max_running=2, max_queued=2)
+        step_event = threading.Event()
+        finish_event = threading.Event()
+
+        # Job A: Cancelled before completion
+        def runner_a(_snapshot, control):
+            control("streaming")
+            control.publish_text("部分文本A")
+            control.flush()
+            step_event.set()
+            for _ in range(50):
+                if control.cancel_requested():
+                    from app.services.long_task_coordinator import LongTaskCancelled
+                    raise LongTaskCancelled()
+                time.sleep(0.01)
+            return {"result": "A done"}
+
+        coordinator.submit(
+            job_id="race-job-a",
+            trace_id="trace-race-a",
+            task_type="word.smart_write",
+            runner=runner_a,
+            snapshot={},
+            failure_code="FAILED",
+            failure_message="failed",
+            allow_running_cancel=True,
+        )
+
+        self.assertTrue(step_event.wait(timeout=2))
+        cancel_res = coordinator.request_cancel("race-job-a", task_type="word.smart_write")
+        self.assertEqual(cancel_res["status"], "running")
+        self.assertEqual(cancel_res["phase"], "stopping")
+
+        final_a = coordinator.wait("race-job-a", task_type="word.smart_write")
+        self.assertEqual(final_a["status"], "cancelled")
+        self.assertIsNotNone(final_a["result"])
+        self.assertEqual(final_a["result"]["plainText"], "部分文本A")
+        self.assertTrue(final_a["result"]["partial"])
+
+        # Job B: Completion committed before cancel requested
+        def runner_b(_snapshot, control):
+            control("streaming")
+            control.publish_text("完整文本B")
+            control.flush()
+            return {"rewrittenText": "完整文本B", "plainText": "完整文本B"}
+
+        coordinator.submit(
+            job_id="race-job-b",
+            trace_id="trace-race-b",
+            task_type="word.smart_write",
+            runner=runner_b,
+            snapshot={},
+            failure_code="FAILED",
+            failure_message="failed",
+            allow_running_cancel=True,
+        )
+
+        final_b = coordinator.wait("race-job-b", task_type="word.smart_write")
+        self.assertEqual(final_b["status"], "completed")
+
+        # Now late cancel arrives after job has completed
+        late_cancel = coordinator.request_cancel("race-job-b", task_type="word.smart_write")
+        self.assertEqual(late_cancel["status"], "completed")
+        self.assertEqual(late_cancel["result"]["plainText"], "完整文本B")
+
+    def test_cancellation_delta_stop_p95_under_500ms_and_slot_release_under_2s(self):
+        # 20 samples to calculate p95
+        delta_stop_latencies = []
+        slot_release_latencies = []
+
+        for i in range(20):
+            coordinator = LongTaskCoordinator(max_running=1, max_queued=2)
+            started_event = threading.Event()
+            last_delta_mono = [0.0]
+
+            def streaming_runner(_snapshot, control):
+                control("streaming")
+                started_event.set()
+                while not control.cancel_requested():
+                    control.publish_text(f"iter-{i}-chunk ")
+                    control.flush()
+                    last_delta_mono[0] = time.monotonic()
+                    time.sleep(0.01)
+                from app.services.long_task_coordinator import LongTaskCancelled
+                raise LongTaskCancelled(partial_result={"plainText": "partial", "partial": True})
+
+            job_id = f"perf-cancel-job-{i}"
+            coordinator.submit(
+                job_id=job_id,
+                trace_id=f"trace-perf-{i}",
+                task_type="word.smart_write",
+                runner=streaming_runner,
+                snapshot={},
+                failure_code="FAILED",
+                failure_message="failed",
+                allow_running_cancel=True,
+            )
+
+            self.assertTrue(started_event.wait(timeout=2))
+            time.sleep(0.02)  # allow at least one delta to be emitted
+
+            t_cancel_called = time.monotonic()
+            coordinator.request_cancel(job_id, task_type="word.smart_write")
+
+            # Wait for job to reach terminal cancelled
+            terminal_job = coordinator.wait(job_id, task_type="word.smart_write")
+            t_slot_released = time.monotonic()
+
+            self.assertEqual(terminal_job["status"], "cancelled")
+
+            # The time deltas stopped is bounded by last_delta_mono or immediately
+            t_last_delta = max(last_delta_mono[0], t_cancel_called)
+            delta_stop_latencies.append(t_last_delta - t_cancel_called)
+            slot_release_latencies.append(t_slot_released - t_cancel_called)
+
+        # Sort to find p95 (19th element of 20 samples)
+        delta_stop_latencies.sort()
+        slot_release_latencies.sort()
+        p95_delta_stop = delta_stop_latencies[int(0.95 * len(delta_stop_latencies))]
+        max_slot_release = max(slot_release_latencies)
+
+        # Verify acceptance criteria: p95 <= 500ms (0.5s), slot release <= 2s
+        self.assertLessEqual(p95_delta_stop, 0.5)
+        self.assertLessEqual(max_slot_release, 2.0)
+
 
 if __name__ == "__main__":
     unittest.main()
