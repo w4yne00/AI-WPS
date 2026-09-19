@@ -3,6 +3,7 @@ import threading
 import time
 import unittest
 from io import BytesIO
+from unittest.mock import patch
 
 from app.core.models import WordDocumentRequest
 from app.services.long_task_coordinator import LongTaskCoordinator
@@ -31,6 +32,9 @@ class BlockingWritingWorker:
             "rewrittenText": "处理完成结果。",
             "rewriteMode": "rewrite",
         }
+
+    imitate = smart_write
+
 
 
 def make_request_dict(client_job_id):
@@ -224,6 +228,128 @@ class WordWritingEventsApiTests(unittest.TestCase):
             # waitMs clamping: 99999 waitMs does not fail
             fa_clamp = self._invoke_fastapi("GET", "/word/smart-imitation/jobs/missing-im-id/events?afterSequence=0&waitMs=99999")
             self.assertEqual(fa_clamp["status"], 404)
+        finally:
+            word_api.smart_imitation_jobs = orig_im_fa
+            standalone_adapter.SMART_IMITATION_JOB_STORE = orig_im_sa
+
+    def test_smart_imitation_events_long_polling_and_delete_cancellation_parity(self):
+        import app.api.word as word_api
+        import standalone_adapter
+        from app.services.word.writing_jobs import SmartImitationJobStore
+
+        class ImitationStreamingWorker:
+            def __init__(self):
+                self.started = threading.Event()
+                self.cancelled = threading.Event()
+
+            def snapshot_task_auth(self):
+                return {
+                    "accessMethod": "direct_model",
+                    "providerBaseUrl": "http://127.0.0.1:19999",
+                    "apiKey": "test-key",
+                    "modelName": "test-model",
+                    "streamingCapability": "validated",
+                }
+
+            def imitate(self, request, trace_id, progress_callback=None, **kwargs):
+                progress_callback("streaming")
+                if hasattr(progress_callback, "publish_text"):
+                    progress_callback.publish_text("仿写增量内容。")
+                    progress_callback.flush()
+                self.started.set()
+                for _ in range(50):
+                    if hasattr(progress_callback, "cancel_requested") and progress_callback.cancel_requested():
+                        self.cancelled.set()
+                        from app.services.long_task_coordinator import LongTaskCancelled
+                        raise LongTaskCancelled(partial_result={
+                            "plainText": "仿写增量内容。",
+                            "rewrittenText": "仿写增量内容。",
+                            "partial": True,
+                        })
+                    time.sleep(0.02)
+                return {"rewrittenText": "完整仿写", "plainText": "完整仿写"}
+
+        coordinator = LongTaskCoordinator(max_running=2, max_queued=4)
+        im_worker = ImitationStreamingWorker()
+        im_store = SmartImitationJobStore(worker=im_worker, coordinator=coordinator)
+
+        orig_im_fa = word_api.smart_imitation_jobs
+        orig_im_sa = standalone_adapter.SMART_IMITATION_JOB_STORE
+        try:
+            word_api.smart_imitation_jobs = im_store
+            standalone_adapter.SMART_IMITATION_JOB_STORE = im_store
+
+            job_req = make_request_dict("imitation-events-job-001")
+            req_obj = WordDocumentRequest(**job_req)
+            with patch.dict("os.environ", {"AI_WPS_ENABLE_DIRECT_STREAMING": "1"}):
+                im_store.start(req_obj, "trace-im-events-001")
+            self.assertTrue(im_worker.started.wait(timeout=2))
+
+            # Query events on FastAPI
+            fa_events = self._invoke_fastapi("GET", "/word/smart-imitation/jobs/imitation-events-job-001/events?afterSequence=0")
+            self.assertEqual(fa_events["status"], 200)
+            self.assertEqual(fa_events["body"]["data"]["taskType"], "word.smart_imitation")
+            self.assertEqual(fa_events["body"]["data"]["previewSnapshot"]["text"], "仿写增量内容。")
+
+            # Query events on Standalone
+            sa_events = self._invoke_standalone("do_GET", "/word/smart-imitation/jobs/imitation-events-job-001/events?afterSequence=0")
+            self.assertEqual(sa_events["status"], 200)
+            self.assertEqual(sa_events["body"]["data"]["taskType"], "word.smart_imitation")
+            self.assertEqual(sa_events["body"]["data"]["previewSnapshot"]["text"], "仿写增量内容。")
+
+            # Standalone and FastAPI event payloads match structure
+            self.assertEqual(sa_events["body"]["data"]["latestSequence"], fa_events["body"]["data"]["latestSequence"])
+
+            # Cancel via FastAPI DELETE
+            fa_del = self._invoke_fastapi("DELETE", "/word/smart-imitation/jobs/imitation-events-job-001")
+            self.assertEqual(fa_del["status"], 200)
+            self.assertIn(fa_del["body"]["data"]["status"], {"running", "cancelled"})
+
+            self.assertTrue(im_worker.cancelled.wait(timeout=2))
+            final_job = coordinator.wait("imitation-events-job-001", task_type="word.smart_imitation")
+            self.assertEqual(final_job["status"], "cancelled")
+
+            # Test Standalone DELETE on a second running streaming job
+            im_worker_2 = ImitationStreamingWorker()
+            im_store_2 = SmartImitationJobStore(worker=im_worker_2, coordinator=coordinator)
+            word_api.smart_imitation_jobs = im_store_2
+            standalone_adapter.SMART_IMITATION_JOB_STORE = im_store_2
+
+            job_req_2 = make_request_dict("imitation-events-job-002")
+            req_obj_2 = WordDocumentRequest(**job_req_2)
+            with patch.dict("os.environ", {"AI_WPS_ENABLE_DIRECT_STREAMING": "1"}):
+                im_store_2.start(req_obj_2, "trace-im-events-002")
+            self.assertTrue(im_worker_2.started.wait(timeout=2))
+
+            sa_del = self._invoke_standalone("do_DELETE", "/word/smart-imitation/jobs/imitation-events-job-002")
+            self.assertEqual(sa_del["status"], 200)
+            self.assertIn(sa_del["body"]["data"]["status"], {"running", "cancelled"})
+
+            self.assertTrue(im_worker_2.cancelled.wait(timeout=2))
+            final_job_2 = coordinator.wait("imitation-events-job-002", task_type="word.smart_imitation")
+            self.assertEqual(final_job_2["status"], "cancelled")
+
+            # Blocking job cancel returns 409 LONG_TASK_NOT_CANCELLABLE on both
+            blocking_worker = BlockingWritingWorker()
+            blocking_store = SmartImitationJobStore(worker=blocking_worker, coordinator=coordinator)
+            word_api.smart_imitation_jobs = blocking_store
+            standalone_adapter.SMART_IMITATION_JOB_STORE = blocking_store
+
+            job_req_block = make_request_dict("imitation-block-job-003")
+            req_obj_block = WordDocumentRequest(**job_req_block)
+            blocking_store.start(req_obj_block, "trace-im-block-003")
+            self.assertTrue(blocking_worker.started.wait(timeout=2))
+
+            fa_block_del = self._invoke_fastapi("DELETE", "/word/smart-imitation/jobs/imitation-block-job-003")
+            self.assertEqual(fa_block_del["status"], 409)
+            self.assertEqual(fa_block_del["body"]["errors"][0]["code"], "LONG_TASK_NOT_CANCELLABLE")
+
+            sa_block_del = self._invoke_standalone("do_DELETE", "/word/smart-imitation/jobs/imitation-block-job-003")
+            self.assertEqual(sa_block_del["status"], 409)
+            self.assertEqual(sa_block_del["body"]["errors"][0]["code"], "LONG_TASK_NOT_CANCELLABLE")
+
+            blocking_worker.release_event.set()
+            coordinator.wait("imitation-block-job-003", task_type="word.smart_imitation")
         finally:
             word_api.smart_imitation_jobs = orig_im_fa
             standalone_adapter.SMART_IMITATION_JOB_STORE = orig_im_sa

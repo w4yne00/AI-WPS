@@ -3597,49 +3597,6 @@ class Handler(BaseHTTPRequestHandler):
             self._write(200, envelope("standalone-provider-api-key", "provider.api_key", {"configured": client.is_configured(), "authSource": client.get_auth_source()}, message="saved"))
             return
 
-        writing_job_routes = (
-            ("/word/smart-write/jobs/", "word.smart_write", SMART_WRITE_JOB_STORE),
-            ("/word/smart-imitation/jobs/", "word.smart_imitation", SMART_IMITATION_JOB_STORE),
-        )
-        for prefix, task_type, store in writing_job_routes:
-            if path.startswith(prefix):
-                job_id = unquote(path[len(prefix) :]).strip("/")
-                try:
-                    job = store.cancel(job_id)
-                except AdapterError as error:
-                    self._write(
-                        error.status_code,
-                        envelope(
-                            job_id,
-                            task_type,
-                            success=False,
-                            message=error.message,
-                            errors=[{"code": error.code, "message": error.message}],
-                        ),
-                    )
-                    return
-                interrupted = str(
-                    parse_qs(parsed.query).get("resume", [""])[0]
-                ).lower() in {"1", "true", "yes"}
-                if not job:
-                    self._write(
-                        404,
-                        writing_job_missing_envelope(
-                            job_id, task_type, interrupted=interrupted
-                        ),
-                    )
-                    return
-                self._write(
-                    200,
-                    envelope(
-                        job.get("traceId", job_id),
-                        task_type,
-                        writing_job_payload(job),
-                        message="cancelled",
-                    ),
-                )
-                return
-
         if path == "/provider/task-api-key":
             task_type = str(payload.get("taskType", "")).strip()
             api_key_ref = str(payload.get("apiKeyRef") or normalize_task_api_key_ref(task_type)).strip()
@@ -4222,6 +4179,49 @@ class Handler(BaseHTTPRequestHandler):
                 ),
             )
             return
+
+        writing_job_routes = (
+            ("/word/smart-write/jobs/", "word.smart_write", SMART_WRITE_JOB_STORE),
+            ("/word/smart-imitation/jobs/", "word.smart_imitation", SMART_IMITATION_JOB_STORE),
+        )
+        for prefix, task_type, store in writing_job_routes:
+            if path.startswith(prefix):
+                job_id = unquote(path[len(prefix) :]).strip("/")
+                try:
+                    job = store.cancel(job_id)
+                except AdapterError as error:
+                    self._write(
+                        error.status_code,
+                        envelope(
+                            job_id,
+                            task_type,
+                            success=False,
+                            message=error.message,
+                            errors=[{"code": error.code, "message": error.message}],
+                        ),
+                    )
+                    return
+                interrupted = str(
+                    parse_qs(parsed.query).get("resume", [""])[0]
+                ).lower() in {"1", "true", "yes"}
+                if not job:
+                    self._write(
+                        404,
+                        writing_job_missing_envelope(
+                            job_id, task_type, interrupted=interrupted
+                        ),
+                    )
+                    return
+                self._write(
+                    200,
+                    envelope(
+                        job.get("traceId", job_id),
+                        task_type,
+                        writing_job_payload(job),
+                        message="cancelled",
+                    ),
+                )
+                return
 
         document_review_prefix = "/word/document-review/jobs/"
         if path.startswith(document_review_prefix):

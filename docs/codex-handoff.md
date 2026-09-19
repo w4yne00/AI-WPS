@@ -1,6 +1,16 @@
 # Codex Handoff - AI-WPS
 
+## 当前功能实现：Issue #207 将增量文本预览扩展到智能仿写（2026-09-19）
+
+- **增量文本流式与只读预览扩展至智能仿写**：遵循 ADR-0132 Task 5 与 Issue #207 规格，智能仿写（`word.smart_imitation`）全量复用 `direct_text_stream.py` 直连模型流式调用与解析能力。在直连模型具备 `streamingCapability == "validated"` 且 `AI_WPS_ENABLE_DIRECT_STREAMING=1` 时，发起 `stream: true` 增量生成。
+- **只读不可写回不变量全生命周期保持**：智能仿写全程保持纯只读无写回语义。任务窗格在排队、连接中、等待首包、增量流式生成、取消中、已取消、失败以及完成的所有状态下，严格保持 `applyEnabled = false`（“应用”按钮禁用与隐藏），且强制隐藏“修改比对”视图（`hideCompareForSmartImitation()`），杜绝向 Word 文档写回。
+- **取消与失败残缺正文保留及零历史归档**：智能仿写被取消或异常中断时，任务窗格保留已接收的只读正文快照供查看与复制；取消与失败任务严格不写入历史记录（`history_store` 零条目），只有成功完成的仿写任务按 `word.smart_imitation` 任务类型归档历史。
+- **任务槽位与预览严格会话隔离**：长任务协调器按 `(host, taskType, documentSessionId)` 独立管理任务槽位；`writingJobPreviews` 预览缓存与 `activeWritingJob` 状态按 `taskType::documentSessionId::jobId`（`consumerKey`）严格隔离，智能编写与智能仿写互不干扰、互不抢占槽位与覆盖预览。
+- **FastAPI 与 Standalone 接口对等与修复**：修复 Standalone Adapter 缺失取消路由问题，双运行时对等支持 `GET /word/smart-imitation/jobs/{job_id}/events`（长轮询、序号恢复与 snapshot 重置）及 `DELETE /word/smart-imitation/jobs/{job_id}`（直连流式支持 running 取消，阻塞回退保持 queued-only 取消返回 409 `LONG_TASK_NOT_CANCELLABLE`）。
+- **全量验证结论**：本地 Docker Python 3.8 全量后端测试 `1478 passed / 55 skipped`，流式、任务与取消专项 `36/36 passed`；正式插件 Node 契约测试 `233/233 passed`；`wps-addon` vitest `12/12 passed` 且生产构建通过；Python 3.8 兼容性扫描 196 文件全部通过；`git diff --check` 通过。
+
 ## 当前功能实现：Issue #206 运行中流式任务取消、上游中断与长等待边界（2026-09-19）
+
 
 - **PR #218 审查修复（2026-09-19）**：协调器为当前流式响应登记一次性取消回调，停止请求会主动 `shutdown` 上游 socket，不再依赖正文继续到达，也不采用会破坏 Python `BufferedReader` 的短 socket timeout 轮询；取消先接受时普通 runner 返回仍收敛为 `cancelled`，且待 50ms flush 的正文在取消后不再发布。streaming→blocking 回退会原子撤销运行中取消能力，30 秒等待提示不再越权显示停止按钮；事件接口降级为状态轮询后仍保留取消/失败的只读部分预览。事件响应新增稳定的 `previewTruncated` 标志并提示 512 KiB 预览上限，5 MiB 响应上限继续公开 `MODEL_RESPONSE_SIZE_LIMIT`。
 - **流式任务运行中取消与按需按钮状态**：遵循 ADR-0132 Task 4 与 Issue #206 规格，长任务协调器 `LongTaskCoordinator` 与 `writing_jobs.py` 支持直连流式任务（`streamingCapability == "validated"` 且 `AI_WPS_ENABLE_DIRECT_STREAMING=1`）的运行中取消（`allow_running_cancel=True`）；阻塞任务严格保持排队阶段后不可取消，绝不显示虚假取消按钮。
