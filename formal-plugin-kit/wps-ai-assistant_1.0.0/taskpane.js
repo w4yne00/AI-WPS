@@ -1867,6 +1867,12 @@
         state.writingJobTaskType = currentTaskType;
         state.writingJobMode = requestedMode;
         setModelTaskBusy(true);
+        var previewKey = [currentTaskType, currentDoc, activeJob.jobId].join("::");
+        var preview = state && state.writingJobPreviews && state.writingJobPreviews[previewKey];
+        if (preview && preview.text) {
+          renderWritingJobPreview(previewKey);
+          setStatus(writingTaskLabel(currentTaskType) + "正在生成内容...");
+        }
       } else {
         state.writingJobId = "";
         state.writingJobTaskType = "";
@@ -7760,6 +7766,15 @@
     }
     lines.push("总耗时：" + Number(job.elapsedSeconds || 0) + " 秒", "任务编号：" + jobId);
     setDocumentReviewCancelVisible(job.status === "queued" && job.canCancel, false);
+
+    var currentDoc = (helpers && helpers.getDocumentSessionId && typeof getActiveDocument === "function")
+      ? helpers.getDocumentSessionId(getActiveDocument())
+      : (state && state.documentSessionId);
+    var previewKey = [taskType, currentDoc, jobId].join("::");
+    var preview = state && state.writingJobPreviews && state.writingJobPreviews[previewKey];
+    if (preview && preview.text) {
+      return;
+    }
     setPlainResult(lines.join("\n"));
   }
 
@@ -7775,6 +7790,13 @@
         helpers.releaseTaskSlot(state.activeTaskSlots, "wps", taskType, targetDocSession, targetJobId);
       }
       clearWritingActiveJob(targetJobId, taskType, targetDocSession);
+      var previewKey = [taskType, targetDocSession, targetJobId].join("::");
+      if (state && state.writingJobPreviews && state.writingJobPreviews[previewKey]) {
+        if (state.writingJobPreviews[previewKey].renderTimer) {
+          clearTimeout(state.writingJobPreviews[previewKey].renderTimer);
+        }
+        delete state.writingJobPreviews[previewKey];
+      }
     }
     setActiveWritingJobRecord(taskType, targetDocSession, null);
 
@@ -8288,6 +8310,135 @@
     });
   }
 
+  function appendWritingJobPreviewDelta(consumerKey, delta, taskType, jobId, targetDocSession, mode) {
+    if (!delta || typeof delta !== "string") {
+      return;
+    }
+    state.writingJobPreviews = state.writingJobPreviews || {};
+    var preview = state.writingJobPreviews[consumerKey];
+    if (!preview) {
+      preview = {
+        jobId: jobId,
+        taskType: taskType,
+        documentSessionId: targetDocSession,
+        mode: mode,
+        text: "",
+        lastRenderAt: 0,
+        renderTimer: null
+      };
+      state.writingJobPreviews[consumerKey] = preview;
+    }
+    preview.text += delta;
+    scheduleWritingJobPreviewRender(consumerKey);
+  }
+
+  function setWritingJobPreviewSnapshot(consumerKey, snapshot, taskType, jobId, targetDocSession, mode) {
+    if (!snapshot || typeof snapshot.text !== "string") {
+      return;
+    }
+    state.writingJobPreviews = state.writingJobPreviews || {};
+    var preview = state.writingJobPreviews[consumerKey];
+    if (!preview) {
+      preview = {
+        jobId: jobId,
+        taskType: taskType,
+        documentSessionId: targetDocSession,
+        mode: mode,
+        text: "",
+        lastRenderAt: 0,
+        renderTimer: null
+      };
+      state.writingJobPreviews[consumerKey] = preview;
+    }
+    preview.text = snapshot.text;
+    scheduleWritingJobPreviewRender(consumerKey);
+  }
+
+  function scheduleWritingJobPreviewRender(consumerKey) {
+    var preview = state && state.writingJobPreviews && state.writingJobPreviews[consumerKey];
+    if (!preview) {
+      return;
+    }
+    var now = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+    var elapsed = now - (preview.lastRenderAt || 0);
+
+    function renderNow() {
+      if (preview.renderTimer) {
+        clearTimeout(preview.renderTimer);
+        preview.renderTimer = null;
+      }
+      preview.lastRenderAt = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+      renderWritingJobPreview(consumerKey);
+    }
+
+    if (elapsed >= 50) {
+      renderNow();
+    } else if (!preview.renderTimer) {
+      var remaining = Math.max(0, 50 - elapsed);
+      preview.renderTimer = setTimeout(function () {
+        renderNow();
+      }, remaining);
+    }
+  }
+
+  function flushWritingJobPreviewRender(consumerKey) {
+    var preview = state && state.writingJobPreviews && state.writingJobPreviews[consumerKey];
+    if (!preview) {
+      return;
+    }
+    if (preview.renderTimer) {
+      clearTimeout(preview.renderTimer);
+      preview.renderTimer = null;
+    }
+    preview.lastRenderAt = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+    renderWritingJobPreview(consumerKey);
+  }
+
+  function renderWritingJobPreview(consumerKey) {
+    var preview = state && state.writingJobPreviews && state.writingJobPreviews[consumerKey];
+    if (!preview) {
+      return;
+    }
+    var currentDoc = (helpers && helpers.getDocumentSessionId && typeof getActiveDocument === "function")
+      ? helpers.getDocumentSessionId(getActiveDocument())
+      : (state && state.documentSessionId);
+    var targetMode = preview.mode || (preview.taskType === "word.smart_imitation" ? "smartImitation" : "smartWrite");
+    var isCurrent = (state && state.currentMode === targetMode) &&
+      (state && state.writingJobId === preview.jobId) &&
+      (!preview.documentSessionId || preview.documentSessionId === currentDoc || !currentDoc);
+
+    if (!isCurrent) {
+      return;
+    }
+
+    var output = byId("result-output");
+    if (!output) {
+      return;
+    }
+    output.hidden = false;
+    output.classList.remove("markdown-body");
+    output.classList.add("plain-output");
+
+    var viewSwitch = byId("result-view-switch");
+    if (viewSwitch) {
+      viewSwitch.hidden = true;
+    }
+    if (typeof clearWritingPolicyUsage === "function") {
+      clearWritingPolicyUsage();
+    }
+    if (typeof hideCompareForSmartImitation === "function") {
+      hideCompareForSmartImitation();
+    }
+
+    var isAtBottom = (output.scrollHeight - output.scrollTop - output.clientHeight) <= 30;
+    output.textContent = preview.text;
+    state.copyText = preview.text;
+
+    if (isAtBottom) {
+      output.scrollTop = output.scrollHeight;
+    }
+  }
+
   function pollWritingJobEvents(jobId, taskType, mode, resumed, docSessionId, afterSequence, consecutiveErrors, consumerVersion) {
     if (!jobId) {
       return;
@@ -8346,7 +8497,14 @@
         startedAt: (state && state.writingJobStartedAt) || Date.now()
       });
 
-      if (payload.resetRequired && payload.previewSnapshot) {
+      var snapshotSequence = -1;
+      if (payload.previewSnapshot) {
+        snapshotSequence = (typeof payload.previewSnapshot.latestSequence === "number")
+          ? payload.previewSnapshot.latestSequence
+          : nextSequence;
+        if (typeof setWritingJobPreviewSnapshot === "function") {
+          setWritingJobPreviewSnapshot(consumerKey, payload.previewSnapshot, taskType, jobId, targetDocSession, mode);
+        }
         if (isCurrentWritingView()) {
           renderWritingJobProgress(payload.previewSnapshot, taskType, jobId);
         }
@@ -8354,10 +8512,17 @@
 
       for (var i = 0; i < events.length; i++) {
         var evt = events[i];
+        if (typeof evt.sequence === "number" && evt.sequence <= snapshotSequence) {
+          continue;
+        }
         if (typeof evt.sequence === "number" && evt.sequence > nextSequence) {
           nextSequence = evt.sequence;
         }
-        if (isCurrentWritingView()) {
+        if (evt.type === "delta" && typeof evt.delta === "string") {
+          if (typeof appendWritingJobPreviewDelta === "function") {
+            appendWritingJobPreviewDelta(consumerKey, evt.delta, taskType, jobId, targetDocSession, mode);
+          }
+        } else if (isCurrentWritingView()) {
           renderWritingJobProgress(evt, taskType, jobId);
         }
       }
@@ -8365,11 +8530,20 @@
       if (isTerminal || terminalStatus === "completed" || terminalStatus === "cancelled" || terminalStatus === "failed") {
         if (terminalStatus === "completed") {
           stopCurrentConsumer();
+          if (typeof flushWritingJobPreviewRender === "function") {
+            flushWritingJobPreviewRender(consumerKey);
+          }
           pollWritingJob(jobId, taskType, mode, resumed, targetDocSession);
           return;
         }
         if (terminalStatus === "cancelled") {
           stopCurrentConsumer();
+          if (state.writingJobPreviews && state.writingJobPreviews[consumerKey]) {
+            if (state.writingJobPreviews[consumerKey].renderTimer) {
+              clearTimeout(state.writingJobPreviews[consumerKey].renderTimer);
+            }
+            delete state.writingJobPreviews[consumerKey];
+          }
           if (typeof releaseTaskSlotsForJob === "function") {
             releaseTaskSlotsForJob(jobId);
           }
@@ -8410,6 +8584,12 @@
         }
         if (terminalStatus === "failed") {
           stopCurrentConsumer();
+          if (state.writingJobPreviews && state.writingJobPreviews[consumerKey]) {
+            if (state.writingJobPreviews[consumerKey].renderTimer) {
+              clearTimeout(state.writingJobPreviews[consumerKey].renderTimer);
+            }
+            delete state.writingJobPreviews[consumerKey];
+          }
           failWritingJob(jobId, taskType, mode, payload.error, targetDocSession);
           return;
         }
@@ -8574,7 +8754,13 @@
     setTrace(active.traceId || active.jobId);
     setApplyEnabled(false);
     setStatus("已恢复未完成的" + writingTaskLabel(active.taskType) + "任务，正在查询结果...");
-    setPlainResult("检测到未完成的写作任务，将继续查询 adapter 后台状态。\n任务编号：" + active.jobId);
+    var previewKey = [active.taskType, docSession, active.jobId].join("::");
+    var preview = state && state.writingJobPreviews && state.writingJobPreviews[previewKey];
+    if (preview && preview.text) {
+      renderWritingJobPreview(previewKey);
+    } else {
+      setPlainResult("检测到未完成的写作任务，将继续查询 adapter 后台状态。\n任务编号：" + active.jobId);
+    }
     if (typeof pollWritingJobEvents === "function") {
       pollWritingJobEvents(active.jobId, active.taskType, active.mode, true, docSession, 0, 0);
     } else {

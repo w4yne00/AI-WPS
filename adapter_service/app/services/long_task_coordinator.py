@@ -15,6 +15,9 @@ DEFAULT_TERMINAL_TTL_SECONDS = 2 * 60 * 60
 DEFAULT_MAX_TERMINAL_JOBS = 50
 DEFAULT_MAX_EVENTS = 256
 MAX_EVENT_WAIT_MS = 25000
+MAX_TEXT_PREVIEW_BYTES = 512 * 1024
+MAX_TEXT_BATCH_BYTES = 4096
+MAX_TEXT_BATCH_INTERVAL_SECONDS = 0.050
 PUBLIC_PHASES = {
     "queued",
     "preparing",
@@ -265,6 +268,7 @@ class LongTaskCoordinator:
                 "_latest_sequence": 0,
                 "_oldest_sequence": 0,
                 "_text_preview": "",
+                "_text_preview_truncated": False,
                 "result": None,
                 "error": deepcopy(invalidated_error),
             }
@@ -798,6 +802,13 @@ class LongTaskCoordinator:
             snapshot = job["_snapshot"]
 
         class ExecutionControl:
+            def __init__(ctrl_self) -> None:
+                ctrl_self._pending_chunks = []
+                ctrl_self._pending_bytes = 0
+                ctrl_self._last_flush_mono = self._monotonic()
+                ctrl_self._flush_lock = threading.Lock()
+                ctrl_self._flush_timer = None
+
             def __call__(ctrl_self, phase: str) -> None:
                 if phase not in PUBLIC_PHASES or phase in {"queued", "completed", "failed", "cancelled"}:
                     return
@@ -848,7 +859,105 @@ class LongTaskCoordinator:
                     return bool(current and current.get("_cancelRequested"))
 
             def publish_text(ctrl_self, text: str) -> None:
-                pass
+                if not text or not isinstance(text, str):
+                    return
+                chunk_bytes = len(text.encode("utf-8"))
+                with ctrl_self._flush_lock:
+                    ctrl_self._pending_chunks.append(text)
+                    ctrl_self._pending_bytes += chunk_bytes
+                    now_mono = self._monotonic()
+                    if (
+                        ctrl_self._pending_bytes >= MAX_TEXT_BATCH_BYTES
+                        or (now_mono - ctrl_self._last_flush_mono) >= MAX_TEXT_BATCH_INTERVAL_SECONDS
+                    ):
+                        ctrl_self._cancel_flush_timer_locked()
+                        ctrl_self._flush_locked(now_mono, force=False)
+                    if ctrl_self._pending_chunks:
+                        ctrl_self._schedule_flush_locked(now_mono)
+
+            def flush(ctrl_self) -> None:
+                with ctrl_self._flush_lock:
+                    ctrl_self._cancel_flush_timer_locked()
+                    ctrl_self._flush_locked(self._monotonic(), force=True)
+
+            def _cancel_flush_timer_locked(ctrl_self) -> None:
+                timer = ctrl_self._flush_timer
+                ctrl_self._flush_timer = None
+                if timer is not None:
+                    timer.cancel()
+
+            def _schedule_flush_locked(ctrl_self, now_mono: float) -> None:
+                if ctrl_self._flush_timer is not None or not ctrl_self._pending_chunks:
+                    return
+                delay = max(
+                    0.0,
+                    MAX_TEXT_BATCH_INTERVAL_SECONDS
+                    - (now_mono - ctrl_self._last_flush_mono),
+                )
+
+                def flush_pending() -> None:
+                    with ctrl_self._flush_lock:
+                        ctrl_self._flush_timer = None
+                        ctrl_self._flush_locked(self._monotonic(), force=True)
+
+                timer = threading.Timer(delay, flush_pending)
+                timer.daemon = True
+                ctrl_self._flush_timer = timer
+                timer.start()
+
+            def _flush_locked(ctrl_self, now_mono: float, force: bool = False) -> None:
+                while ctrl_self._pending_chunks:
+                    all_pending = "".join(ctrl_self._pending_chunks)
+                    all_bytes = all_pending.encode("utf-8")
+                    if len(all_bytes) >= MAX_TEXT_BATCH_BYTES:
+                        slice_bytes = all_bytes[:MAX_TEXT_BATCH_BYTES]
+                        slice_text = slice_bytes.decode("utf-8", errors="ignore")
+                        actual_slice_len = len(slice_text.encode("utf-8"))
+                        rem_text = all_bytes[actual_slice_len:].decode("utf-8", errors="ignore")
+                        ctrl_self._pending_chunks = [rem_text] if rem_text else []
+                        ctrl_self._pending_bytes = len(rem_text.encode("utf-8"))
+                        ctrl_self._last_flush_mono = now_mono
+                        ctrl_self._emit_delta_locked(slice_text)
+                    elif force or (now_mono - ctrl_self._last_flush_mono) >= MAX_TEXT_BATCH_INTERVAL_SECONDS:
+                        ctrl_self._pending_chunks = []
+                        ctrl_self._pending_bytes = 0
+                        ctrl_self._last_flush_mono = now_mono
+                        ctrl_self._emit_delta_locked(all_pending)
+                        break
+                    else:
+                        break
+
+            def _emit_delta_locked(ctrl_self, delta_to_emit: str) -> None:
+                if not delta_to_emit:
+                    return
+                with self._lock:
+                    current = self._jobs.get(job_key)
+                    if current is None or current["status"] != "running":
+                        return
+                    if current.get("_text_preview_truncated"):
+                        return
+                    current_preview = str(current.get("_text_preview") or "")
+                    current_len = len(current_preview.encode("utf-8"))
+                    if current_len >= MAX_TEXT_PREVIEW_BYTES:
+                        current["_text_preview_truncated"] = True
+                        return
+                    remaining_cap = MAX_TEXT_PREVIEW_BYTES - current_len
+                    text_bytes = delta_to_emit.encode("utf-8")
+                    if len(text_bytes) > remaining_cap:
+                        delta_to_emit = text_bytes[:remaining_cap].decode("utf-8", errors="ignore")
+                        current["_text_preview_truncated"] = True
+                    if not delta_to_emit:
+                        return
+
+                    current["_text_preview"] = current_preview + delta_to_emit
+                    self._append_event_locked(
+                        current,
+                        event_type="delta",
+                        phase=current["phase"],
+                        status=current["status"],
+                        data={"delta": delta_to_emit},
+                    )
+                    self._condition.notify_all()
 
         control = ExecutionControl()
 
@@ -884,6 +993,7 @@ class LongTaskCoordinator:
             if diagnostic_error_code:
                 error["_diagnosticCode"] = diagnostic_error_code
         finally:
+            control.flush()
             snapshot = None
             runner = None
 

@@ -20,6 +20,11 @@
     },
     {
       "type": "file",
+      "source": "adapter_service/app/services/direct_text_stream.py",
+      "target": "packages/adapter-start-kit/adapter_service/app/services/direct_text_stream.py"
+    },
+    {
+      "type": "file",
       "source": "adapter_service/app/services/excel/smart_fill_jobs.py",
       "target": "packages/adapter-start-kit/adapter_service/app/services/excel/smart_fill_jobs.py"
     },
