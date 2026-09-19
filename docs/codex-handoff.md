@@ -2,6 +2,7 @@
 
 ## 当前功能实现：Issue #207 将增量文本预览扩展到智能仿写（2026-09-19）
 
+- **PR #219 审查修复（2026-09-19）**：前端在提交写作任务时按任务与文档会话冻结文档负载，后台乱序完成、模式切换、历史返回及最终写回均恢复并使用所属智能编写结果的提交快照，不再读取可能已被智能仿写覆盖的全局负载；后台完成也不再向当前仿写视图泄漏写回资格。Standalone 写作取消响应的顶层 `message` 改为返回权威任务状态，与 FastAPI 在 `running`、`cancelled`、`completed` 竞态下保持一致。
 - **增量文本流式与只读预览扩展至智能仿写**：遵循 ADR-0132 Task 5 与 Issue #207 规格，智能仿写（`word.smart_imitation`）全量复用 `direct_text_stream.py` 直连模型流式调用与解析能力。在直连模型具备 `streamingCapability == "validated"` 且 `AI_WPS_ENABLE_DIRECT_STREAMING=1` 时，发起 `stream: true` 增量生成。
 - **只读不可写回不变量全生命周期保持**：智能仿写全程保持纯只读无写回语义。任务窗格在排队、连接中、等待首包、增量流式生成、取消中、已取消、失败以及完成的所有状态下，严格保持 `applyEnabled = false`（“应用”按钮禁用与隐藏），且强制隐藏“修改比对”视图（`hideCompareForSmartImitation()`），杜绝向 Word 文档写回。
 - **取消与失败残缺正文保留及零历史归档**：智能仿写被取消或异常中断时，任务窗格保留已接收的只读正文快照供查看与复制；取消与失败任务严格不写入历史记录（`history_store` 零条目），只有成功完成的仿写任务按 `word.smart_imitation` 任务类型归档历史。

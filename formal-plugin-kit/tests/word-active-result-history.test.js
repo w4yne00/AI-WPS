@@ -151,7 +151,6 @@ function createBaseContext(initialOverrides = {}) {
       byId("result-output").textContent = activeRes.rewrittenText || activeRes.plainText || "";
       return activeRes;
     },
-    applyRewrite: () => {},
     pollWritingJob: () => {},
     helpers: {
       ...helpers,
@@ -195,6 +194,7 @@ function createBaseContext(initialOverrides = {}) {
     "getActiveResultRecord",
     "setActiveResultRecord",
     "releaseTaskSlotsForJob",
+    "startWritingJob",
     "updateHistoryBadge",
     "failWritingJob",
     "completeWritingJob",
@@ -205,6 +205,7 @@ function createBaseContext(initialOverrides = {}) {
     "handleWritingHistoryCopyItem",
     "resumeWritingActiveJob",
     "switchMode",
+    "applyRewrite",
     "applyPreview"
   ];
 
@@ -640,6 +641,121 @@ function testPreciseSlotReleaseAndIsolation() {
   assert.strictEqual(state.writingJobId, "", "Global active job should now be cleared");
 }
 
+function testBackgroundSmartWriteCompletionUsesSubmissionSnapshot() {
+  const smartWritePayload = {
+    selectionMode: "selection",
+    content: { plainText: "智能编写提交时的原选区" },
+    options: {}
+  };
+  const imitationPayload = {
+    selectionMode: "selection",
+    content: { plainText: "随后启动的智能仿写模板" },
+    options: { imitationRequirement: "保持风格" }
+  };
+  const { ctx, state } = createBaseContext({
+    state: {
+      currentMode: "smartWrite",
+      documentSessionId: "doc_shared",
+      latestDocumentPayload: smartWritePayload
+    },
+    ctx: {
+      WRITING_POLL_REQUEST_TIMEOUT_MS: 10000,
+      buildWritingClientJobId: () => "job-write-snapshot",
+      beginTaskPerformance: () => ({ clickTimestamp: Date.now() }),
+      writingJobPath: () => "/word/smart-write/jobs",
+      request: () => new Promise(() => {})
+    }
+  });
+
+  ctx.startWritingJob(
+    smartWritePayload,
+    "word.smart_write",
+    "smartWrite",
+    "doc_shared",
+    "测试文档.docx"
+  );
+
+  state.currentMode = "smartImitation";
+  state.writingJobId = "job-imitation-current";
+  state.latestDocumentPayload = imitationPayload;
+
+  ctx.completeWritingJob(
+    { rewrittenText: "智能编写完成结果" },
+    "trace-write-snapshot",
+    "word.smart_write",
+    false,
+    "smartWrite",
+    "job-write-snapshot",
+    "doc_shared"
+  );
+
+  const resultRecord = ctx.getActiveResultRecord("word.smart_write", "doc_shared");
+  assert.strictEqual(
+    resultRecord.documentPayload.content.plainText,
+    "智能编写提交时的原选区",
+    "Background completion must bind the document snapshot captured by its own submission"
+  );
+  assert.strictEqual(
+    state.pendingApplyAction,
+    "",
+    "Background smart-write completion must not grant apply permission to the imitation view"
+  );
+
+  ctx.switchMode("smartWrite");
+  assert.strictEqual(
+    state.latestDocumentPayload.content.plainText,
+    "智能编写提交时的原选区",
+    "Returning to smart write must restore its own submission snapshot"
+  );
+  assert.strictEqual(state.pendingApplyAction, "rewrite");
+}
+
+function testApplyRewriteUsesActiveResultSnapshot() {
+  const writeTarget = { Text: "" };
+  const { ctx, state } = createBaseContext({
+    state: {
+      currentMode: "smartWrite",
+      documentSessionId: "doc_shared",
+      latestSelectionMode: "selection",
+      latestDocumentPayload: {
+        selectionMode: "selection",
+        content: { plainText: "智能仿写模板" }
+      },
+      rewriteResult: { rewrittenText: "智能编写完成结果" },
+      pendingApplyAction: "rewrite"
+    },
+    ctx: {
+      getActiveDocument: () => ({ Name: "doc_shared", FullName: "doc_shared" }),
+      getWritableSelection: () => writeTarget,
+      getSelectionText: () => "智能编写提交时的原选区",
+      shouldUseStructuredSmartWriteResult: () => false,
+      applyRewriteText: (target, text) => {
+        target.Text = text;
+        return { ok: true, formatted: false, reason: "test" };
+      }
+    }
+  });
+
+  ctx.setActiveResultRecord("word.smart_write", "doc_shared", {
+    result: state.rewriteResult,
+    taskType: "word.smart_write",
+    documentSessionId: "doc_shared",
+    pendingApplyAction: "rewrite",
+    documentPayload: {
+      selectionMode: "selection",
+      content: { plainText: "智能编写提交时的原选区" }
+    }
+  });
+
+  ctx.applyRewrite();
+
+  assert.strictEqual(
+    writeTarget.Text,
+    "智能编写完成结果",
+    "Writeback must validate and write against the active result's submission snapshot"
+  );
+}
+
 // Test 12: Review Item 3 - Document Session Dimension Isolation
 function testDocumentSessionDimensionIsolation() {
   const { ctx } = createBaseContext();
@@ -803,6 +919,10 @@ function testHistoryReturnRestoresResultAndWriteback() {
     result: { rewrittenText: "改写后的专业文本", rewriteMode: "rewrite" },
     traceId: "tr_ret",
     pendingApplyAction: "rewrite",
+    documentPayload: {
+      selectionMode: "selection",
+      content: { plainText: "选中的原文" }
+    },
     documentSessionId: "doc_1",
     resumed: false
   });
@@ -862,6 +982,10 @@ function testRealSwitchModePathAndWritebackEligibility() {
     result: { rewrittenText: "准备写回的内容" },
     traceId: "tr_sw",
     pendingApplyAction: "rewrite",
+    documentPayload: {
+      selectionMode: "selection",
+      content: { plainText: "选中的原文" }
+    },
     documentSessionId: "doc_1",
     resumed: false
   });
@@ -895,6 +1019,8 @@ async function runAll() {
   testHistoryNoticeOnLargeResult();
   testModeSwitchingResultIsolation();
   testPreciseSlotReleaseAndIsolation();
+  testBackgroundSmartWriteCompletionUsesSubmissionSnapshot();
+  testApplyRewriteUsesActiveResultSnapshot();
   testDocumentSessionDimensionIsolation();
   testBackgroundFailureDoesNotOverwriteForeground();
   testHistoryReturnRestoresResultAndWriteback();

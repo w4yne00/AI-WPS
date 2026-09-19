@@ -167,7 +167,7 @@ assert.strictEqual(scheduledSearchLoads, 1);
 
 [
   "state.rewriteResult = setSmartWriteResult",
-  "state.pendingApplyAction = taskType === \"word.smart_write\"",
+  "var pendingApplyAction = taskType === \"word.smart_write\"",
   "setApplyEnabled(state.pendingApplyAction === \"rewrite\")",
   "applyRewrite()",
   "buildDocumentReviewRecord",

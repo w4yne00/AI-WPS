@@ -4218,7 +4218,7 @@ class Handler(BaseHTTPRequestHandler):
                         job.get("traceId", job_id),
                         task_type,
                         writing_job_payload(job),
-                        message="cancelled",
+                        message=job.get("status", "cancelled"),
                     ),
                 )
                 return

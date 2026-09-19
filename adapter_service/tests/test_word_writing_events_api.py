@@ -324,6 +324,9 @@ class WordWritingEventsApiTests(unittest.TestCase):
             sa_del = self._invoke_standalone("do_DELETE", "/word/smart-imitation/jobs/imitation-events-job-002")
             self.assertEqual(sa_del["status"], 200)
             self.assertIn(sa_del["body"]["data"]["status"], {"running", "cancelled"})
+            self.assertEqual(
+                sa_del["body"]["message"], sa_del["body"]["data"]["status"]
+            )
 
             self.assertTrue(im_worker_2.cancelled.wait(timeout=2))
             final_job_2 = coordinator.wait("imitation-events-job-002", task_type="word.smart_imitation")
