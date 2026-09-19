@@ -1,3 +1,4 @@
+import inspect
 from copy import deepcopy
 from typing import Callable, Dict, Optional, Tuple
 
@@ -143,11 +144,25 @@ class WordDocumentReviewer:
             if task_auth is not None:
                 provider_kwargs["task_auth"] = task_auth
             if progress_callback is not None:
-                provider_kwargs["progress_callback"] = progress_callback
+                try:
+                    import inspect
+                    sig = inspect.signature(self.provider_client.document_review)
+                    if "progress_callback" in sig.parameters or any(
+                        p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+                    ):
+                        provider_kwargs["progress_callback"] = progress_callback
+                except Exception:
+                    provider_kwargs["progress_callback"] = progress_callback
             provider_result = self.provider_client.document_review(
                 source_text, trace_id, **provider_kwargs
             )
+            if hasattr(progress_callback, "record_metric"):
+                progress_callback.record_metric("providerOutcome", "success")
         except ProviderTimeoutError:
+            if hasattr(progress_callback, "set_diagnostic_error_code"):
+                progress_callback.set_diagnostic_error_code("PROVIDER_TIMEOUT")
+            if hasattr(progress_callback, "record_metric"):
+                progress_callback.record_metric("providerOutcome", "provider_timeout")
             provider_result = self._provider_fallback(
                 "模型后台文档审查未按时返回，adapter 已停止等待。",
                 "请缩小审查范围后重试，或到“设置 - 最近一次任务诊断”查看 trace、provider 状态和模型后台返回情况。",
@@ -155,6 +170,10 @@ class WordDocumentReviewer:
                 "enterprise-dify-chat/timeout",
             )
         except AdapterError as exc:
+            if hasattr(progress_callback, "set_diagnostic_error_code"):
+                progress_callback.set_diagnostic_error_code(exc.code)
+            if hasattr(progress_callback, "record_metric"):
+                progress_callback.record_metric("providerOutcome", "provider_error")
             provider_result = self._provider_fallback(
                 "模型后台文档审查请求失败，adapter 已返回诊断信息。",
                 exc.message,
@@ -181,6 +200,8 @@ class WordDocumentReviewer:
                 "expressionSuggestions": [],
             }
         policy_issues = _policy_audit_issues(writing_policy_audit)
+        if progress_callback:
+            progress_callback("aggregating")
         issues, appended_policy_issue_count = _merge_review_issues(
             provider_result.get("issues", []),
             policy_issues,

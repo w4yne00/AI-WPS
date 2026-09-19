@@ -250,6 +250,39 @@ class WordFormatReviewer:
         except Exception as exc:
             return {"authSnapshotStatus": "unavailable", "authSnapshotError": type(exc).__name__}
 
+    def _call_format_semantics(
+        self,
+        action: str,
+        trace_id: str,
+        input_data: Dict[str, Any],
+        query: str,
+        *,
+        task_auth: Optional[Dict[str, Any]] = None,
+        output_token_budget: Optional[int] = None,
+        progress_callback: Optional[Any] = None,
+    ) -> Any:
+        kwargs: Dict[str, Any] = {
+            "task_auth": task_auth,
+            "output_token_budget": output_token_budget,
+        }
+        if progress_callback is not None and hasattr(self.provider_client, "format_semantics"):
+            try:
+                import inspect
+                sig = inspect.signature(self.provider_client.format_semantics)
+                if "progress_callback" in sig.parameters or any(
+                    p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+                ):
+                    kwargs["progress_callback"] = progress_callback
+            except Exception:
+                pass
+        return self.provider_client.format_semantics(
+            action,
+            trace_id,
+            input_data,
+            query,
+            **kwargs,
+        )
+
     def review(
         self,
         request: WordDocumentRequest,
@@ -259,6 +292,7 @@ class WordFormatReviewer:
         max_semantic_batches: Optional[int] = None,
         image_assets: Optional[List[Dict]] = None,
         image_asset_cleanup=None,
+        progress_callback=None,
     ) -> Dict:
         if trace_id and task_auth is None:
             task_auth = self.snapshot_task_auth()
@@ -277,6 +311,7 @@ class WordFormatReviewer:
                 task_auth=task_auth,
                 semantic_state=semantic_state,
                 max_semantic_batches=max_semantic_batches,
+                progress_callback=progress_callback,
             )
         else:
             ai_roles, ai_batch_count = {}, 0
@@ -295,6 +330,7 @@ class WordFormatReviewer:
                 trace_id,
                 task_auth=task_auth,
                 used_calls=int(ai_diagnostics.get("aiCallCount", 0) or 0),
+                progress_callback=progress_callback,
             )
             role_accepted_count = int(ai_diagnostics.get("aiAcceptedCount", 0) or 0)
             ai_diagnostics.update(table_caption_diagnostics)
@@ -306,6 +342,7 @@ class WordFormatReviewer:
                 used_calls=int(ai_diagnostics.get("aiCallCount", 0) or 0),
                 image_assets=image_assets,
                 image_asset_cleanup=image_asset_cleanup,
+                progress_callback=progress_callback,
             )
             ai_diagnostics.update(figure_caption_diagnostics)
             table_call_count = int(table_caption_diagnostics.get("tableCaptionCallCount", 0) or 0)
@@ -733,6 +770,7 @@ class WordFormatReviewer:
         trace_id: str,
         task_auth: Optional[Dict] = None,
         used_calls: int = 0,
+        progress_callback=None,
     ) -> Tuple[Dict[str, Dict], Dict]:
         candidates = self._table_caption_candidates(request)
         diagnostics = {
@@ -796,14 +834,21 @@ class WordFormatReviewer:
                 )
 
             def semantic_call(query, output_budget):
-                return self.provider_client.format_semantics(
-                    "suggest_table_caption",
-                    trace_id,
-                    input_data,
-                    query,
-                    task_auth=task_auth,
-                    output_token_budget=output_budget,
-                )
+                if progress_callback:
+                    progress_callback("provider_processing")
+                try:
+                    return self._call_format_semantics(
+                        "suggest_table_caption",
+                        trace_id,
+                        input_data,
+                        query,
+                        task_auth=task_auth,
+                        output_token_budget=output_budget,
+                        progress_callback=progress_callback,
+                    )
+                finally:
+                    if progress_callback:
+                        progress_callback("parsing")
 
             executor = FormatSemanticExecutor(
                 semantic_call,
@@ -917,6 +962,7 @@ class WordFormatReviewer:
         used_calls: int = 0,
         image_assets: Optional[List[Dict]] = None,
         image_asset_cleanup=None,
+        progress_callback=None,
     ) -> Tuple[Dict[str, Dict], Dict]:
         candidates = self._figure_caption_candidates(request)
         policy = self._image_semantic_policy(task_auth)
@@ -1007,10 +1053,21 @@ class WordFormatReviewer:
                 input_data = self.provider_client.build_task_input_data("word.format_review", trace_id, input_data)
 
             def semantic_call(query, output_budget):
-                return self.provider_client.format_semantics(
-                    "suggest_figure_caption", trace_id, input_data, query,
-                    task_auth=task_auth, output_token_budget=output_budget,
-                )
+                if progress_callback:
+                    progress_callback("provider_processing")
+                try:
+                    return self._call_format_semantics(
+                        "suggest_figure_caption",
+                        trace_id,
+                        input_data,
+                        query,
+                        task_auth=task_auth,
+                        output_token_budget=output_budget,
+                        progress_callback=progress_callback,
+                    )
+                finally:
+                    if progress_callback:
+                        progress_callback("parsing")
 
             executor = FormatSemanticExecutor(
                 semantic_call,
@@ -1719,6 +1776,7 @@ class WordFormatReviewer:
         task_auth: Optional[Dict] = None,
         semantic_state: Optional[Dict] = None,
         max_semantic_batches: Optional[int] = None,
+        progress_callback=None,
     ) -> Tuple[Dict[int, Dict], int, Dict]:
         task_type = "word.format_review"
         diagnostics = self._empty_ai_diagnostics()
@@ -1861,14 +1919,21 @@ class WordFormatReviewer:
             try:
                 if hasattr(self.provider_client, "format_semantics"):
                     def semantic_call(query, output_budget):
-                        return self.provider_client.format_semantics(
-                            "classify_role",
-                            trace_id,
-                            input_data,
-                            query,
-                            task_auth=task_auth,
-                            output_token_budget=output_budget,
-                        )
+                        if progress_callback:
+                            progress_callback("provider_processing")
+                        try:
+                            return self._call_format_semantics(
+                                "classify_role",
+                                trace_id,
+                                input_data,
+                                query,
+                                task_auth=task_auth,
+                                output_token_budget=output_budget,
+                                progress_callback=progress_callback,
+                            )
+                        finally:
+                            if progress_callback:
+                                progress_callback("parsing")
 
                     executor = FormatSemanticExecutor(
                         semantic_call,
