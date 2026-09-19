@@ -909,6 +909,357 @@ async function testWaitFeedbackTimersDoNotOverrideCancelCapability() {
   assert.strictEqual(cancelButton.textContent, "停止生成");
 }
 
+async function testSmartImitationStreamingPreviewAndReadOnlyNoApply() {
+  const resultOutput = createMockElement("result-output");
+  const viewSwitch = createMockElement("result-view-switch");
+  const applyButton = createMockElement("btn-apply");
+  applyButton.hidden = true;
+  applyButton.disabled = true;
+  const compareButton = createMockElement("btn-result-compare");
+  compareButton.hidden = true;
+
+  const elements = {
+    "result-output": resultOutput,
+    "result-view-switch": viewSwitch,
+    "btn-apply": applyButton,
+    "btn-result-compare": compareButton
+  };
+
+  const state = {
+    activeTaskSlots: {},
+    currentMode: "smartImitation",
+    documentSessionId: "doc-1",
+    writingJobId: "job-im-stream-1",
+    writingJobStartedAt: 1000,
+    writingJobPreviews: {},
+    copyText: ""
+  };
+
+  const context = {
+    state,
+    WRITING_POLL_REQUEST_TIMEOUT_MS: 10000,
+    byId(id) { return elements[id] || null; },
+    helpers: {
+      getDocumentSessionId: () => "doc-1",
+      releaseTaskSlot() {}
+    },
+    getActiveDocument: () => ({}),
+    writingJobPath: () => "/word/smart-imitation/jobs",
+    releaseTaskSlotsForJob() {},
+    clearWritingActiveJob() {},
+    saveWritingActiveJob() {},
+    renderWritingJobProgress() {},
+    clearWritingPolicyUsage() {},
+    hideCompareForSmartImitation() {
+      compareButton.hidden = true;
+    },
+    completeWritingJob() {},
+    failWritingJob() {},
+    isFatalWritingPollError: () => false,
+    request(url) {
+      if (url.includes("afterSequence=0")) {
+        return Promise.resolve({
+          data: {
+            jobId: "job-im-stream-1",
+            latestSequence: 2,
+            previewSnapshot: {
+              text: "仿写增量第一段。",
+              latestSequence: 1
+            },
+            events: [
+              {
+                sequence: 2,
+                type: "delta",
+                delta: "仿写增量第二段。"
+              }
+            ]
+          }
+        });
+      }
+      return new Promise(() => {});
+    }
+  };
+
+  const fns = loadFunctions([
+    "pollWritingJobEvents",
+    "renderWritingJobPreview",
+    "appendWritingJobPreviewDelta",
+    "setWritingJobPreviewSnapshot",
+    "scheduleWritingJobPreviewRender",
+    "flushWritingJobPreviewRender"
+  ], context);
+
+  fns.pollWritingJobEvents("job-im-stream-1", "word.smart_imitation", "smartImitation", false, "doc-1", 0, 0);
+
+  // Allow timers / RAF to flush
+  await new Promise((resolve) => setTimeout(resolve, 60));
+
+  assert.strictEqual(
+    resultOutput.textContent,
+    "仿写增量第一段。仿写增量第二段。",
+    "Streaming text must be rendered incrementally for smart imitation"
+  );
+  assert.strictEqual(
+    state.copyText,
+    "仿写增量第一段。仿写增量第二段。",
+    "Copy text must be in sync with incremental preview text"
+  );
+  assert.ok(resultOutput.classList.contains("plain-output"), "Must use plain-output style");
+  assert.strictEqual(viewSwitch.hidden, true, "Result view switch must remain hidden during generation");
+  assert.strictEqual(compareButton.hidden, true, "Compare button must remain hidden for smart imitation");
+  assert.strictEqual(applyButton.hidden, true, "Apply button must remain hidden for smart imitation");
+  assert.strictEqual(applyButton.disabled, true, "Apply button must remain disabled for smart imitation");
+}
+
+async function testSmartImitationCancellationPreservesPartialPreviewAndZeroApply() {
+  const resultOutput = createMockElement("result-output");
+  const applyButton = createMockElement("btn-apply");
+  applyButton.hidden = true;
+  applyButton.disabled = true;
+  const statusLine = createMockElement("status-line");
+  const elements = {
+    "result-output": resultOutput,
+    "btn-apply": applyButton,
+    "status-line": statusLine,
+    "result-view-switch": createMockElement("result-view-switch"),
+    "btn-cancel-document-review-job": createMockElement("btn-cancel-document-review-job")
+  };
+
+  let statusMsg = "";
+  let slotReleased = false;
+  let activeJobCleared = false;
+
+  const state = {
+    activeTaskSlots: {},
+    currentMode: "smartImitation",
+    documentSessionId: "doc-1",
+    writingJobId: "job-im-cancel-1",
+    writingJobPreviews: {},
+    copyText: ""
+  };
+
+  const context = {
+    state,
+    WRITING_POLL_REQUEST_TIMEOUT_MS: 10000,
+    byId(id) { return elements[id] || null; },
+    setStatus(msg) { statusMsg = msg; },
+    setPlainResult(text, copyText) {
+      resultOutput.textContent = text;
+      state.copyText = copyText || text;
+    },
+    setApplyEnabled(enabled) { applyButton.disabled = !enabled; },
+    writingTaskLabel: (tt) => tt === "word.smart_imitation" ? "智能仿写" : "智能编写",
+    helpers: {
+      getDocumentSessionId: () => "doc-1",
+      releaseTaskSlot() { slotReleased = true; }
+    },
+    getActiveDocument: () => ({}),
+    writingJobPath: () => "/word/smart-imitation/jobs",
+    releaseTaskSlotsForJob() {},
+    clearWritingActiveJob() { activeJobCleared = true; },
+    saveWritingActiveJob() {},
+    renderWritingJobProgress() {},
+    clearWritingPolicyUsage() {},
+    hideCompareForSmartImitation() {},
+    completeWritingJob() {},
+    failWritingJob() {},
+    isFatalWritingPollError: () => false,
+    request(url) {
+      return Promise.resolve({
+        data: {
+          jobId: "job-im-cancel-1",
+          status: "cancelled",
+          terminal: true,
+          previewSnapshot: {
+            text: "仿写取消前已接收部分",
+            latestSequence: 2
+          },
+          events: [
+            {
+              sequence: 3,
+              type: "status",
+              status: "cancelled",
+              phase: "stopping"
+            }
+          ]
+        }
+      });
+    }
+  };
+
+  const fns = loadFunctions([
+    "pollWritingJobEvents",
+    "renderWritingJobPreview",
+    "appendWritingJobPreviewDelta",
+    "setWritingJobPreviewSnapshot",
+    "scheduleWritingJobPreviewRender",
+    "flushWritingJobPreviewRender"
+  ], context);
+
+  fns.pollWritingJobEvents("job-im-cancel-1", "word.smart_imitation", "smartImitation", false, "doc-1", 0, 0);
+
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  assert.ok(
+    statusMsg.includes("智能仿写已停止生成，保留已生成部分预览（只读，不可写回）。"),
+    `Unexpected status message: ${statusMsg}`
+  );
+  assert.strictEqual(
+    resultOutput.textContent,
+    "仿写取消前已接收部分",
+    "Cancelled job must preserve partial text"
+  );
+  assert.strictEqual(applyButton.disabled, true, "Apply button must remain disabled on cancellation");
+  assert.strictEqual(slotReleased, true, "Task slot must be released");
+  assert.strictEqual(activeJobCleared, true, "Active writing job must be cleared");
+}
+
+async function testSmartImitationFailurePreservesPartialPreviewAndZeroApply() {
+  const resultOutput = createMockElement("result-output");
+  const applyButton = createMockElement("btn-apply");
+  applyButton.hidden = true;
+  applyButton.disabled = true;
+  const elements = {
+    "result-output": resultOutput,
+    "btn-apply": applyButton,
+    "result-view-switch": createMockElement("result-view-switch"),
+    "btn-cancel-document-review-job": createMockElement("btn-cancel-document-review-job")
+  };
+
+  let statusMsg = "";
+  const state = {
+    activeTaskSlots: {},
+    currentMode: "smartImitation",
+    documentSessionId: "doc-1",
+    writingJobId: "job-im-fail-1",
+    writingJobPreviews: {},
+    copyText: ""
+  };
+
+  const context = {
+    state,
+    WRITING_POLL_REQUEST_TIMEOUT_MS: 10000,
+    byId(id) { return elements[id] || null; },
+    setStatus(msg) { statusMsg = msg; },
+    setPlainResult(text, copyText) {
+      resultOutput.textContent = text;
+      state.copyText = copyText || text;
+    },
+    setApplyEnabled(enabled) { applyButton.disabled = !enabled; },
+    writingTaskLabel: (tt) => tt === "word.smart_imitation" ? "智能仿写" : "智能编写",
+    helpers: { getDocumentSessionId: () => "doc-1", releaseTaskSlot() {} },
+    getActiveDocument: () => ({}),
+    writingJobPath: () => "/word/smart-imitation/jobs",
+    releaseTaskSlotsForJob() {},
+    clearWritingActiveJob() {},
+    saveWritingActiveJob() {},
+    renderWritingJobProgress() {},
+    clearWritingPolicyUsage() {},
+    hideCompareForSmartImitation() {},
+    completeWritingJob() {},
+    failWritingJob() {},
+    isFatalWritingPollError: () => false,
+    request() {
+      return Promise.resolve({
+        data: {
+          jobId: "job-im-fail-1",
+          status: "failed",
+          terminal: true,
+          error: { code: "PROVIDER_DISCONNECT", message: "上游连接中断" },
+          previewSnapshot: {
+            text: "仿写中断前收到的文字",
+            latestSequence: 1
+          },
+          events: [
+            { sequence: 2, type: "status", status: "failed" }
+          ]
+        }
+      });
+    }
+  };
+
+  const fns = loadFunctions([
+    "pollWritingJobEvents",
+    "renderWritingJobPreview",
+    "appendWritingJobPreviewDelta",
+    "setWritingJobPreviewSnapshot",
+    "scheduleWritingJobPreviewRender",
+    "flushWritingJobPreviewRender"
+  ], context);
+
+  fns.pollWritingJobEvents("job-im-fail-1", "word.smart_imitation", "smartImitation", false, "doc-1", 0, 0);
+
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  assert.ok(
+    statusMsg.includes("智能仿写失败：上游连接中断，已保留已接收内容部分预览（只读，不可写回）。"),
+    `Unexpected failure status message: ${statusMsg}`
+  );
+  assert.strictEqual(resultOutput.textContent, "仿写中断前收到的文字");
+  assert.strictEqual(applyButton.disabled, true);
+}
+
+async function testSmartWriteAndSmartImitationIsolation() {
+  const resultOutput = createMockElement("result-output");
+  const elements = {
+    "result-output": resultOutput,
+    "result-view-switch": createMockElement("result-view-switch")
+  };
+
+  const state = {
+    currentMode: "smartWrite",
+    documentSessionId: "doc-1",
+    writingJobId: "job-write-1",
+    writingJobPreviews: {
+      "word.smart_write::doc-1::job-write-1": {
+        jobId: "job-write-1",
+        taskType: "word.smart_write",
+        documentSessionId: "doc-1",
+        mode: "smartWrite",
+        text: "智能编写独立文本",
+        lastRenderAt: 0,
+        renderTimer: null
+      },
+      "word.smart_imitation::doc-1::job-im-1": {
+        jobId: "job-im-1",
+        taskType: "word.smart_imitation",
+        documentSessionId: "doc-1",
+        mode: "smartImitation",
+        text: "智能仿写独立文本",
+        lastRenderAt: 0,
+        renderTimer: null
+      }
+    }
+  };
+
+  const context = {
+    state,
+    byId(id) { return elements[id] || null; },
+    helpers: { getDocumentSessionId: () => "doc-1" },
+    getActiveDocument: () => ({}),
+    writingTaskLabel: (tt) => tt === "word.smart_imitation" ? "智能仿写" : "智能编写",
+    clearWritingPolicyUsage() {},
+    hideCompareForSmartImitation() {}
+  };
+
+  const fns = loadFunctions(["renderWritingJobPreview"], context);
+
+  // 1. When currentMode is smartWrite, job-write-1 renders
+  fns.renderWritingJobPreview("word.smart_write::doc-1::job-write-1");
+  assert.strictEqual(resultOutput.textContent, "智能编写独立文本");
+
+  // If wrong consumerKey is called (imitation consumer key while in smartWrite), preview must NOT render
+  resultOutput.textContent = "";
+  fns.renderWritingJobPreview("word.smart_imitation::doc-1::job-im-1");
+  assert.strictEqual(resultOutput.textContent, "", "Cross-mode preview must not render into wrong view");
+
+  // 2. Switch mode to smartImitation
+  state.currentMode = "smartImitation";
+  state.writingJobId = "job-im-1";
+  fns.renderWritingJobPreview("word.smart_imitation::doc-1::job-im-1");
+  assert.strictEqual(resultOutput.textContent, "智能仿写独立文本");
+}
+
 async function main() {
   await testIncrementalPreviewRenderingAndCopySync();
   await testSnapshotRecoveryUsesAuthoritativeText();
@@ -922,6 +1273,10 @@ async function main() {
   await testFailedStreamingJobPreservesPartialPreviewAndDisablesWriteback();
   await testStatusPollingFallbackPreservesPartialPreview();
   await testWaitFeedbackTimersDoNotOverrideCancelCapability();
+  await testSmartImitationStreamingPreviewAndReadOnlyNoApply();
+  await testSmartImitationCancellationPreservesPartialPreviewAndZeroApply();
+  await testSmartImitationFailurePreservesPartialPreviewAndZeroApply();
+  await testSmartWriteAndSmartImitationIsolation();
   console.log("word-writing-streaming tests passed!");
 }
 

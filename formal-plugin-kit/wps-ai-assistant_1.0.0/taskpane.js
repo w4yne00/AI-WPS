@@ -1884,8 +1884,15 @@
         var activeRecord = getActiveResultRecord(currentTaskType, currentDoc);
         if (activeRecord) {
           var activeRes = activeRecord.result || activeRecord;
+          if (activeRecord.documentPayload) {
+            state.latestDocumentPayload = activeRecord.documentPayload;
+            state.latestSelectionMode = activeRecord.documentPayload.selectionMode || state.latestSelectionMode;
+          }
           state.rewriteResult = setSmartWriteResult(activeRes, currentTaskType);
-          var canApply = state.currentMode === "smartWrite" && !activeRecord.resumed && (activeRecord.pendingApplyAction === "rewrite" || (!activeRecord.resumed && state.latestDocumentPayload));
+          var canApply = state.currentMode === "smartWrite" &&
+            !activeRecord.resumed &&
+            activeRecord.pendingApplyAction === "rewrite" &&
+            Boolean(activeRecord.documentPayload);
           state.pendingApplyAction = canApply ? "rewrite" : "";
           setApplyEnabled(canApply);
           setTrace(activeRecord.traceId || "");
@@ -7678,10 +7685,20 @@
   function applyRewrite() {
     var document = getActiveDocument();
     var applyResult = null;
+    var currentDocSession;
+    var activeResultRecord;
     var rewrittenText;
     var preferPlainText;
     if (!document || !state.rewriteResult) {
       return;
+    }
+    currentDocSession = helpers.getDocumentSessionId
+      ? helpers.getDocumentSessionId(document)
+      : state.documentSessionId;
+    activeResultRecord = getActiveResultRecord("word.smart_write", currentDocSession);
+    if (activeResultRecord && activeResultRecord.documentPayload) {
+      state.latestDocumentPayload = activeResultRecord.documentPayload;
+      state.latestSelectionMode = activeResultRecord.documentPayload.selectionMode || state.latestSelectionMode;
     }
     rewrittenText = state.rewriteResult.rewrittenText || "";
     preferPlainText = !shouldUseStructuredSmartWriteResult(rewrittenText);
@@ -7849,6 +7866,11 @@
     var label = writingTaskLabel(taskType);
     var targetJobId = jobId || traceId || state.writingJobId || "";
     var targetDocSession = docSessionId || state.documentSessionId || "default";
+    var activeJobRecord = getActiveWritingJobRecord(taskType, targetDocSession);
+    var submittedDocumentPayload = activeJobRecord &&
+      (!targetJobId || activeJobRecord.jobId === targetJobId)
+      ? activeJobRecord.documentPayload
+      : null;
 
     if (targetJobId) {
       releaseTaskSlotsForJob(targetJobId);
@@ -7874,16 +7896,16 @@
       setModelTaskBusy(false);
     }
 
-    var canApply = (taskType === "word.smart_write") && !resumed && Boolean(state.latestDocumentPayload);
-    state.pendingApplyAction = taskType === "word.smart_write" && canApply ? "rewrite" : "";
+    var canApply = (taskType === "word.smart_write") && !resumed && Boolean(submittedDocumentPayload);
+    var pendingApplyAction = taskType === "word.smart_write" && canApply ? "rewrite" : "";
     var resultRecord = {
       result: result || {},
       traceId: traceId || targetJobId || "",
       taskType: taskType,
       documentSessionId: targetDocSession,
       resumed: Boolean(resumed),
-      pendingApplyAction: state.pendingApplyAction,
-      documentPayload: canApply ? state.latestDocumentPayload : null,
+      pendingApplyAction: pendingApplyAction,
+      documentPayload: canApply ? submittedDocumentPayload : null,
       completedAt: Date.now()
     };
     setActiveResultRecord(taskType, targetDocSession, resultRecord);
@@ -7902,6 +7924,10 @@
     var isCurrentView = (state.currentMode === targetMode) && (!targetDocSession || targetDocSession === currentDoc || !currentDoc);
 
     if (isCurrentView) {
+      if (resultRecord.documentPayload) {
+        state.latestDocumentPayload = resultRecord.documentPayload;
+        state.latestSelectionMode = resultRecord.documentPayload.selectionMode || state.latestSelectionMode;
+      }
       state.pendingApplyAction = resultRecord.pendingApplyAction;
       state.rewriteResult = setSmartWriteResult(result || {}, taskType);
       setApplyEnabled(state.pendingApplyAction === "rewrite");
@@ -8029,8 +8055,15 @@
         var activeRecord = getActiveResultRecord(taskType, currentDoc);
         if (activeRecord) {
           var res = activeRecord.result || activeRecord;
+          if (activeRecord.documentPayload) {
+            state.latestDocumentPayload = activeRecord.documentPayload;
+            state.latestSelectionMode = activeRecord.documentPayload.selectionMode || state.latestSelectionMode;
+          }
           state.rewriteResult = setSmartWriteResult(res, taskType);
-          var canApply = state.currentMode === "smartWrite" && !activeRecord.resumed && (activeRecord.pendingApplyAction === "rewrite" || (!activeRecord.resumed && state.latestDocumentPayload));
+          var canApply = state.currentMode === "smartWrite" &&
+            !activeRecord.resumed &&
+            activeRecord.pendingApplyAction === "rewrite" &&
+            Boolean(activeRecord.documentPayload);
           state.pendingApplyAction = canApply ? "rewrite" : "";
           setApplyEnabled(canApply);
           setTrace(activeRecord.traceId || "");
@@ -8839,6 +8872,7 @@
       taskType: taskType,
       mode: mode,
       documentSessionId: docSession,
+      documentPayload: JSON.parse(JSON.stringify(payload)),
       startedAt: startedAt
     };
     setActiveWritingJobRecord(taskType, docSession, jobRecord);

@@ -171,6 +171,7 @@ async function testEventsDoNotRenderIntoAnotherDocument() {
     },
     releaseTaskSlotsForJob() {},
     clearWritingActiveJob() {},
+    getActiveWritingJobRecord() { return null; },
     setActiveWritingJobRecord() {},
     setWritingJob() {
       assert.fail("another document's task must not clear the current job");
@@ -286,6 +287,7 @@ function testBackgroundCompletionDoesNotClearAnotherCurrentJob() {
     helpers: { releaseTaskSlot() {} },
     releaseTaskSlotsForJob() {},
     clearWritingActiveJob() {},
+    getActiveWritingJobRecord() { return null; },
     setActiveWritingJobRecord() {},
     setWritingJob() {
       globalClears += 1;
