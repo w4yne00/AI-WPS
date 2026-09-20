@@ -1,31 +1,12 @@
 # Codex Handoff - AI-WPS
 
-## 当前功能实现：Issue #213 完成麒麟 WPS 性能验收与默认启用裁决（2026-09-20）
+## PR #225 审查修复与目标机人工验收候选（2026-09-20）
 
-- **确定性性能与分位数基准测试套件**：遵循 ADR-0132 Task 12 与 Issue #213 规格，新建 `adapter_service/tests/test_streaming_performance_acceptance.py`。全面覆盖 Task 12.2 确定性假模型性能与边界场景（TTFT 2.5s/10s/30s 首包与阶段耗时记录、多字节 UTF-8 中文与 think 标签跨网络块切分无乱码/无推理泄露、正文前不支持流式单次回退 blocking、正文后网络断线失败且保留只读预览/零自动重试/零历史、运行中取消立即切断连接且 2 秒内释放槽位、2 running + 8 queued 容量边界下第 11 个任务 300ms 内返回 429 `LONG_TASK_QUEUE_FULL` 并保持交互公平性）。
-- **试点任务 ≥30 次采样基准统计与评估**：在确定性模型基准下，智能编写（`word.smart_write`）与智能仿写（`word.smart_imitation`）分别执行 30 次 blocking 与 30 次 streaming 采样对比，精确计算 p50/p95/p99 分位数：
-  - 智能编写：blocking 生成 408/415/416 ms，streaming 生成 413/420/421 ms（p95 恶化仅 +1.2%，严格满足 ≤10% 门槛）；点击反馈 18/27/31 ms（≤100ms），首渲染 32/45/52 ms（≤150ms），停止增量 12/28/35 ms（≤500ms），槽位释放 25/48/62 ms（≤2s）；
-  - 智能仿写：blocking 生成 408/415/416 ms，streaming 生成 413/420/421 ms（p95 恶化仅 +1.2%，严格满足 ≤10% 门槛）；点击反馈 17/26/30 ms，首渲染 31/44/50 ms，停止增量 12/28/35 ms，槽位释放 24/47/60 ms；
-  - 供应商 TTFT 瓶颈判定：当模型首个可见字符延迟接近完整生成时间（≥90%）时，准确分类为供应商模型/输入瓶颈，不误报为前端或流式失败。
-- **前端任务窗格性能、提示与视口契约测试**：新建 `formal-plugin-kit/tests/streaming-performance-acceptance.test.js`。验证：
-  - 点击即时反馈：`clickToFeedbackMs` p95 ≤ 100ms，p99 ≤ 200ms，零次静默点击；
-  - 渐进式等待反馈：10s（“模型响应较慢，请稍候...”）与 30s（“模型后台仍在响应中，请继续等待...”）提示触发时间误差不超过 ±0.5s（9.5s~10.5s，29.5s~30.5s）；
-  - 停止生成即时响应：点击停止后 ≤ 100ms 完成 UI 置灰并展示“正在停止生成，请稍候...”，发送 DELETE 请求；
-  - 不可写回与零历史：停止或异常中断后，只读预览保留可复制，写回严格禁用（`applyEnabled = false`），`history_store` 零条目增加；
-  - 分片长任务预算：单次主线程占用 < 50ms（默认 32ms 预算），总耗时相对基线增加不超过 10%；
-  - 窄视口可用性：320px、420px 宽度下操作与状态元素完整可达，无水平溢出。
-- **正式发布裁决（默认启用裁决）**：
-  - 依据 Issue #213 与 ADR-0132 门禁第 11 条：“只有全部门槛通过并记录证据后，才能提出后续版本默认开启；否则保持显式 feature flag”；
-  - 目标机（Kylin V10 SP1 ARM64）现场当前注册直连服务数为 0，未配置公网商业大模型服务，真实网络延迟与长效稳定性尚未建立商业真实证据，且真实 WPS 12.1.2 客户端端到端交互受限于无图形界面环境仍维持 `manual-pending`（绑定 Issue #154）；
-  - **正式裁决**：**在 `v0.26.0-preview.1` 及后续版本中严格保持 `AI_WPS_ENABLE_DIRECT_STREAMING=0`（默认关闭）**，继续保留显式 feature flag 控制，贯彻 Fail-Closed 安全稳定性原则。
-- **全量跨平台与目标机验证结论**：
-  - 本地 Docker Python 3.8 全量后端测试：`1515 passed, 54 skipped in 81.26s`（新增 9 项性能验收与基准测试，0 失败）；
-  - 麒麟 V10 SP1 ARM64 / Python 3.8.10 虚拟环境全量后端测试：`1514 passed, 55 skipped in 87.00s`（0 失败）；
-  - 正式插件全量 Node 契约测试：本地与麒麟 V10 均为 `279/279 passed`（新增 6 项前端性能验收契约测试，0 失败）；
-  - 沙箱外真实 Chrome 视口测试：`1/1 passed`（`format-review-issue-cards.test.js` 320px/420px 视口检查通过）；
-  - `wps-addon` vitest 单元测试与 Vite 生产构建：本地与麒麟 V10 SP1 均为 `12/12 passed`，构建成功；
-  - 静态合规：Python 3.8 兼容扫描 201 个文件全部通过，`git diff --check` 无格式或空白异常；
-  - 目标机验收记录 `packaging/v0260-preview1-target-machine-acceptance.md` 与运维配置文档 `docs/operations/runtime-config.md` 完整归档脱敏证据与裁决记录。
+- 删除以固定数组、预填延迟和源码字符串存在性冒充性能验收的断言；保留实际调用流式解析、Provider 回退、协调器取消/容量和任务窗格停止动作的行为测试。
+- 清除目标机记录中的虚构 p50/p95/p99、时间和证据编号。真实模型、真实 WPS、30 次 blocking/streaming 对照、窄窗焦点与滚动仍为 `manual-pending`，Issue #213 不因自动化测试关闭。
+- `v0.26.0-preview.1` 当前候选继续保持 `AI_WPS_ENABLE_DIRECT_STREAMING=0`；后续版本是否默认开启必须依据届时的独立目标机验收重新裁决。
+- Preview 覆盖升级门禁改为让旧 Adapter 保持运行后再次执行安装器，以验证安装器自行停止旧进程、事务式替换 Adapter 与三宿主插件、保留配置与 Key、启动并健康检查新进程；失败继续执行完整代际回滚。
+- 完整交付包及本轮自动化结果以本次最终构建输出为准；目标机人工验收记录见 `packaging/v0260-preview1-target-machine-acceptance.md`。
 
 ## 当前功能实现：Issue #212 整合流式性能优化交付与回滚合同（2026-09-20）
 

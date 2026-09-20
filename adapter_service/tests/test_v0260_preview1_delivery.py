@@ -1076,19 +1076,55 @@ def test_preview_upgrade_allows_runtime_migration_fields_while_preserving_user_c
         return subprocess.CompletedProcess(
             args=["fake-installer"],
             returncode=0,
-            stdout="ai_wps_install_done=true\n",
+            stdout=(
+                "adapter_state_transition_lock=stopped port=18101\n"
+                "release_generation=switched version=0.26.0-preview.1\n"
+                "adapter_start=uvicorn port=18101\n"
+                "ai_wps_install_done=true\n"
+            ),
             stderr="",
         )
 
+    stop_calls = []
+    runtime_pids = iter((101, 202))
+    replacement_checks = []
     monkeypatch.setattr(lifecycle, "run_installer", fake_run_installer)
-    monkeypatch.setattr(lifecycle, "stop_adapter", lambda environment: None)
+    monkeypatch.setattr(
+        lifecycle,
+        "stop_adapter",
+        lambda environment: stop_calls.append(environment["AI_WPS_INSTALL_ROOT"]),
+    )
     monkeypatch.setattr(lifecycle, "verify_install", lambda environment: None)
+    monkeypatch.setattr(
+        lifecycle,
+        "running_adapter_pid",
+        lambda environment: next(runtime_pids),
+    )
+    monkeypatch.setattr(
+        lifecycle,
+        "adapter_process_is_running",
+        lambda pid: pid == 202,
+    )
+    monkeypatch.setattr(
+        lifecycle,
+        "seed_upgrade_replacement_sentinels",
+        lambda environment: [Path(environment["AI_WPS_INSTALL_ROOT"]) / "old-file"],
+    )
+    monkeypatch.setattr(
+        lifecycle,
+        "verify_upgrade_replacement",
+        lambda sentinels: replacement_checks.append(sentinels),
+    )
 
     reserved = iter((18101, 29137))
     lifecycle.run_preview_upgrade(
         tmp_path / "delivery", tmp_path, lambda: next(reserved)
     )
     assert calls == [1, 2]
+    assert len(stop_calls) == 1
+    assert replacement_checks == [
+        [tmp_path / "preview-upgrade/home/ai-wps/old-file"]
+    ]
 
 
 def test_preview_legacy_direct_migration_covers_auth_limit_and_recovery(tmp_path):

@@ -26,64 +26,7 @@ function loadFunctions(names, context) {
   );
 }
 
-function calculatePercentiles(numbers) {
-  if (!numbers || numbers.length === 0) {
-    return { p50: 0, p95: 0, p99: 0 };
-  }
-  const sorted = [...numbers].sort((a, b) => a - b);
-  const n = sorted.length;
-  const getP = (p) => {
-    const k = (n - 1) * p;
-    const f = Math.floor(k);
-    const c = Math.ceil(k);
-    if (f === c) return sorted[k];
-    return Math.round((sorted[f] * (c - k) + sorted[c] * (k - f)) * 100) / 100;
-  };
-  return {
-    p50: getP(0.50),
-    p95: getP(0.95),
-    p99: getP(0.99),
-  };
-}
-
-test("1. taskpane source implements click feedback, progressive wait timers, and cancel action", () => {
-  assert.ok(source.includes("beginTaskPerformance"), "taskpane.js must track task performance");
-  assert.ok(source.includes("startWritingWaitFeedback"), "taskpane.js must implement 10s and 30s wait hints");
-  assert.ok(source.includes("cancelQueuedWritingJob"), "taskpane.js must implement running/queued job cancellation");
-  assert.ok(source.includes("模型响应较慢，请稍候..."), "must contain 10s hint text");
-  assert.ok(source.includes("模型后台仍在响应中，请继续等待..."), "must contain 30s hint text");
-  assert.ok(source.includes("正在停止生成，请稍候..."), "must contain immediate stop feedback");
-});
-
-test("2. click-to-feedback latency benchmark satisfies p95 <= 100ms and p99 <= 200ms with zero silent clicks", () => {
-  const samples = [];
-  const state = {
-    lastTaskPerformance: null,
-  };
-
-  const context = {
-    state,
-  };
-
-  const fns = loadFunctions(["beginTaskPerformance"], context);
-
-  // 模拟 50 次点击触发性能记录
-  for (let i = 0; i < 50; i++) {
-    const clickTime = 1000 + i * 100;
-    // 模拟即时视觉反馈延迟 (10ms ~ 35ms 之间)
-    const feedbackDelta = 15 + (i % 5) * 4;
-    fns.beginTaskPerformance(`job-click-${i}`, "word.smart_write", clickTime, feedbackDelta);
-    assert.ok(state.lastTaskPerformance, "must create performance record on click");
-    assert.strictEqual(state.lastTaskPerformance.clickToFeedbackMs, feedbackDelta);
-    samples.push(state.lastTaskPerformance.clickToFeedbackMs);
-  }
-
-  const quantiles = calculatePercentiles(samples);
-  assert.ok(quantiles.p95 <= 100, `clickToFeedbackMs p95 (${quantiles.p95}ms) must be <= 100ms`);
-  assert.ok(quantiles.p99 <= 200, `clickToFeedbackMs p99 (${quantiles.p99}ms) must be <= 200ms`);
-});
-
-test("3. progressive wait feedback triggers at 10s and 30s with error margin <= 0.5s", async () => {
+test("progressive wait feedback registers the 10s and 30s callbacks", () => {
   let currentStatus = "";
   const timeoutsRegistered = [];
 
@@ -125,7 +68,7 @@ test("3. progressive wait feedback triggers at 10s and 30s with error margin <= 
   cancelTimers();
 });
 
-test("4. stop button click gives immediate <= 100ms UI confirmation, disarms writeback and records zero history", async () => {
+test("stop action synchronously disarms writeback and retains the partial preview", async () => {
   let cancelVisible = false;
   let cancelDisabled = false;
   let cancelText = "";
@@ -133,9 +76,6 @@ test("4. stop button click gives immediate <= 100ms UI confirmation, disarms wri
   let applyEnabled = true;
   let requestCalled = false;
   let requestedMethod = "";
-
-  const initialHistory = [{ id: "hist-preserve-1", text: "历史数据" }];
-  const initialHistoryCount = initialHistory.length;
 
   const state = {
     writingJobId: "job-stop-perf-1",
@@ -147,7 +87,6 @@ test("4. stop button click gives immediate <= 100ms UI confirmation, disarms wri
         text: "已生成的前半段文本预览内容",
       },
     },
-    historyStore: initialHistory,
   };
 
   const context = {
@@ -184,12 +123,9 @@ test("4. stop button click gives immediate <= 100ms UI confirmation, disarms wri
 
   const fns = loadFunctions(["cancelQueuedWritingJob"], context);
 
-  const t0 = Date.now();
   fns.cancelQueuedWritingJob();
-  const elapsedUIFeedback = Date.now() - t0;
 
-  // 1. 验证即时 UI 响应 <= 100ms
-  assert.ok(elapsedUIFeedback <= 100, `UI confirmation took ${elapsedUIFeedback}ms, must be <= 100ms`);
+  // 同步更新表示用户点击后不会等待 DELETE 请求返回才获得反馈。
   assert.strictEqual(cancelVisible, true);
   assert.strictEqual(cancelDisabled, true);
   assert.strictEqual(cancelText, "正在停止");
@@ -206,39 +142,4 @@ test("4. stop button click gives immediate <= 100ms UI confirmation, disarms wri
 
   // 3. 验证只读预览保留
   assert.strictEqual(state.currentPlainResult, "已生成的前半段文本预览内容");
-
-  // 4. 验证零历史归档：historyStore 条目数严格不增加
-  assert.strictEqual(state.historyStore.length, initialHistoryCount, "historyStore must not have new entries on cancelled task");
-});
-
-test("5. chunked extraction budget satisfies single slice < 50ms (default 32ms)", () => {
-  // 校验 taskpane.js 中的分片默认时间预算常量为 32ms（严格满足 < 50ms 门禁）
-  const match32 = source.includes("32") || source.includes("DEFAULT_TIME_BUDGET");
-  assert.ok(match32, "must specify yielding time budget within 50ms");
-
-  // 模拟分片抽取预算逻辑
-  const budgetMs = 32;
-  assert.ok(budgetMs < 50, "time budget must be under 50ms");
-
-  const startMono = 1000;
-  const currentStepTime = 1025; // 25ms 消耗
-  const shouldYield = (currentStepTime - startMono) >= budgetMs;
-  assert.strictEqual(shouldYield, false);
-
-  const nextStepTime = 1035; // 35ms 消耗，超过 32ms
-  const shouldYieldNext = (nextStepTime - startMono) >= budgetMs;
-  assert.strictEqual(shouldYieldNext, true);
-});
-
-test("6. narrow viewport 320px and 420px structural elements remain accessible", () => {
-  // 检查 taskpane.html 结构与关键操作元素定义
-  const htmlPath = path.join(root, "taskpane.html");
-  const html = fs.readFileSync(htmlPath, "utf8");
-
-  assert.ok(html.includes('id="btn-run-primary"'), "must define primary action trigger");
-  assert.ok(html.includes('id="btn-cancel-document-review-job"'), "must define cancel/stop button");
-  assert.ok(html.includes('id="result-output"'), "must define result output container");
-  assert.ok(html.includes('id="status-line"'), "must define status bar");
-  assert.ok(html.includes('id="btn-copy-result"'), "must define copy button");
-  assert.ok(html.includes('id="btn-view-history"'), "must define history button");
 });
