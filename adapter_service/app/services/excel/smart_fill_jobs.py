@@ -5,7 +5,7 @@ import time
 from copy import deepcopy
 from typing import Dict, Optional
 
-from app.core.errors import AdapterError
+from app.core.errors import AdapterError, ProviderTimeoutError
 from app.core.models import ExcelSmartFillRequest
 from app.services.excel.smart_fill import (
     MAX_ITEMS_PER_BATCH,
@@ -394,6 +394,10 @@ class ExcelSmartFillJobStore:
         now_mono = self.clock()
         remaining_total = max(0.0, TOTAL_TIMEOUT_SECONDS - (now_mono - started))
         if remaining_total <= 0:
+            if hasattr(progress, "set_diagnostic_error_code"):
+                progress.set_diagnostic_error_code("EXCEL_SMART_FILL_DEADLINE_EXCEEDED")
+            if hasattr(progress, "record_metric"):
+                progress.record_metric("providerOutcome", "provider_timeout")
             error = AdapterError(
                 "EXCEL_SMART_FILL_DEADLINE_EXCEEDED",
                 "智能填写任务超过 60 分钟总处理时限。",
@@ -406,6 +410,10 @@ class ExcelSmartFillJobStore:
 
         provider_timeout = min(EXCEL_SMART_FILL_TIMEOUT_SECONDS, remaining_total)
         if provider_timeout <= 0:
+            if hasattr(progress, "set_diagnostic_error_code"):
+                progress.set_diagnostic_error_code("EXCEL_SMART_FILL_DEADLINE_EXCEEDED")
+            if hasattr(progress, "record_metric"):
+                progress.record_metric("providerOutcome", "provider_timeout")
             error = AdapterError(
                 "EXCEL_SMART_FILL_DEADLINE_EXCEEDED",
                 "智能填写任务超过 60 分钟总处理时限。",
@@ -447,11 +455,20 @@ class ExcelSmartFillJobStore:
                 else:
                     raise
         except Exception as error:
+            is_timeout = (
+                isinstance(error, ProviderTimeoutError)
+                or "TIMEOUT" in getattr(error, "code", "").upper()
+                or getattr(error, "status_code", None) == 504
+            )
+            if hasattr(progress, "record_metric"):
+                progress.record_metric("providerOutcome", "provider_timeout" if is_timeout else "provider_error")
+            if hasattr(progress, "set_diagnostic_error_code"):
+                diag_code = getattr(error, "code", None) or ("PROVIDER_TIMEOUT" if is_timeout else "EXCEL_SMART_FILL_JOB_FAILED")
+                progress.set_diagnostic_error_code(diag_code)
             if isinstance(error, AdapterError) and getattr(error, "partial_result", None) is None:
                 stop_reason = (
                     "timeout"
-                    if "TIMEOUT" in getattr(error, "code", "").upper()
-                    or getattr(error, "status_code", None) == 504
+                    if is_timeout
                     else "failed"
                 )
                 error.partial_result = self._partial_result(
@@ -492,6 +509,10 @@ class ExcelSmartFillJobStore:
         self._raise_if_deadline_exceeded(
             {**snapshot, "results": combined, "batchCount": batch_count}
         )
+        if progress:
+            progress("aggregating")
+        if hasattr(progress, "record_metric"):
+            progress.record_metric("providerOutcome", "success")
         processed_result = {
             "schemaVersion": "excel.smart_fill.v2",
             "items": combined,

@@ -471,7 +471,7 @@ function testSmartFillWriteSummaryIsAbsentInOutputOnlyMode() {
   assert.ok(!html.includes('id="smart-fill-write-summary"'));
 }
 
-function testGeneratePreflightFailureIsVisibleInResultPreview() {
+async function testGeneratePreflightFailureIsVisibleInResultPreview() {
   const cells = [makeCell("姓名"), makeCell("张三")];
   cells.forEach(function (cell) {
     cell.EntireRow = { Hidden: false };
@@ -497,7 +497,7 @@ function testGeneratePreflightFailureIsVisibleInResultPreview() {
   exported.application.ActiveWorkbook = { Name: "wb-1" };
   exported.state.smartFillRetryItemId = "";
   exported.setInstruction("生成标签");
-  exported.runExcelSmartFillAction();
+  await exported.runExcelSmartFillAction();
   assert.match(exported.status(), /无法安全读取来源单元格状态/);
   assert.match(exported.result(), /无法安全读取来源单元格状态/);
 }
@@ -676,10 +676,10 @@ testLifecycleControlsMatchNarrowWindowContract();
 testRebindClearsTransientWriteConflict();
 testSuccessfulTargetBindClearsTargetError();
 testReturnToEditRebindsLiveTargetWhenUnchanged();
-testGeneratePreflightFailureIsVisibleInResultPreview();
 testSmartFillWriteSummaryIsAbsentInOutputOnlyMode();
 
 (async function main() {
+  await testGeneratePreflightFailureIsVisibleInResultPreview();
   await testWriteReservesBeforeHostWrite();
   await testDuplicateReserveDoesNotWriteHost();
   await testConfirmFailureKeepsSuccessfulHostWrite();

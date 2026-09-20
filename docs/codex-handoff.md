@@ -1,5 +1,20 @@
 # Codex Handoff - AI-WPS
 
+## 当前功能实现：Issue #210 优化 Excel 任务反馈、诊断与智能填写抽取（2026-09-20）
+
+- **PR #222 审查修复**：智能填写 yielding 抽取由整行步进下沉为单元格游标步进，50 列宽表不再等整行完成后才检查 32ms 预算；来源抽取、取消或会话切换失败时保留既有只读预览；可恢复活动任务只在来源冻结与会话复核成功、即将提交 Adapter 时落盘，分片准备期重载不再轮询不存在的后台任务。同步修复测试文件末尾空行门禁。
+- **Excel 三类任务毫秒性能诊断扩展**：遵循 ADR-0132 Task 2 与 Issue #210 规格，将既有写作与审查性能诊断扩展至 Excel 三类核心任务（`excel.analysis` 智能分析、`excel.formula_assistant` 公式助手、`excel.smart_fill` 智能填写）。长任务轮询接口与协调器终态诊断对外暴露统一单调毫秒指标（`elapsedMs`、`phaseElapsedMs`、`phaseDurationsMs`、`queueWaitMs`、`metrics`），并保留现有秒级兼容字段；阻塞调用首包耗时严格为 `null`。
+- **智能填写即时反馈（杜绝静默点击与白屏等待）**：重构 `runExcelSmartFillAction`，点击后立即同步设置 busy 状态、状态栏和结果卡提示，展示取消按钮，并记录 `clickToFeedbackMs`（<100ms），随后才进入异步分片单元格抽取，杜绝 WPS COM/JSAPI 同步阻塞导致界面无响应。
+- **单调时钟分片让出事件循环**：来源抽取（最多 25,000 单元格）由 `extractExcelSmartFillSourcePayloadYielding` 和 `analyzeExcelSmartFillSourceRangeYielding` 驱动，按单调时钟时间预算（默认 32ms，目标 <50ms）分片执行，片段间通过宏任务 `setTimeout(0)` 真正让出事件循环并递增上报进度。公式单元格严格剔除正文与表达式（`displayed = ""`），隐藏/合并单元格严格 fail-closed 拦截。
+- **准备期取消响应与工作簿会话核验**：分片循环在每次恢复前核验用户取消标记（`state.smartFillCancelRequested`）和活动工作簿会话一致性。用户取消或切换工作簿时立即抛出安全异常并中止，清理任务槽位与状态，严禁提交后台任务，不调用模型服务，不归档历史，杜绝将旧工作簿数据提交至新工作簿。
+- **只读不可写回不变量与测试向下兼容**：智能填写全程保持纯只读 Markdown 预览与复制语义。针对既有单元测试桩（显式 stub `buildExcelSmartFillRequest` 或未注入 yielding 抽取器），实现安全平滑同步回退，保持既有生命周期测试 100% 兼容。
+- **全量验证结论**：
+  - 本地 Docker Python 3.8 全量后端测试：`1491 passed / 55 skipped`；Excel 性能诊断专项 `5/5 passed`，Excel 后端测试 `139/139 passed`。
+  - 审查修复后正式插件全量契约测试：`260/260 passed`（Python 3.8/Node Docker 环境）；Excel 专项 `118/118 passed`，分片抽取专项 `9/9 passed`。
+  - `wps-addon` vitest 单元测试：`12/12 passed`，Vite 生产构建成功。
+  - Python 3.8 兼容性语法编译 `compileall` 与 `git diff --check` 全部通过。
+  - 审查修复未改 Adapter，未复跑后端全量、真实 WPS 或 25,000 单元格真机总耗时基线；自动化分片预算测试不替代真机性能验收。
+
 ## 当前功能实现：Issue #209 分片执行 Word 全篇与格式审查抽取（2026-09-20）
 
 - **PR #221 审查修复**：分片调度下沉到单张表的单元格、嵌套表和单段字符格式递归内部，大型选区改走异步段落抽取；默认预算统一为 32ms。全篇与格式审查从准备开始冻结文档会话和编辑信号，在分片、上传与提交边界持续核对；删除生产代码中的测试专用虚拟时钟参数和未使用的 `runChunkedArray` 导出，保留现有按函数切片测试所需的同步回退。

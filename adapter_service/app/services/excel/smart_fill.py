@@ -87,6 +87,8 @@ class ExcelSmartFill:
         if clock is not None:
             provider_kwargs["clock"] = clock
         provider_fn = self.provider_client.excel_smart_fill
+        if progress_callback:
+            progress_callback("provider_processing")
         try:
             result = provider_fn(
                 request,
