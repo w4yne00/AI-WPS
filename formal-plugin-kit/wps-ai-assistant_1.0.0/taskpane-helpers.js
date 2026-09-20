@@ -3905,6 +3905,83 @@
     return { segments: merged, dataStatus: "verified", segmentCount: merged.length };
   }
 
+  function extractHomogeneousFormatSegmentsYielding(range, options, loopOptions) {
+    var source = range || {};
+    var text = readText(source);
+    var maxSegments = Math.max(1, Number(options && options.maxSegments) || 2048);
+    var segments = [];
+    var insufficientReason = "";
+    var pending = text ? [{ start: 0, end: text.length, candidate: source }] : [];
+
+    function scanNext() {
+      var current;
+      var value;
+      var length;
+      var middle;
+      var left;
+      var right;
+      if (insufficientReason || !pending.length) {
+        return true;
+      }
+      current = pending.pop();
+      length = current.end - current.start;
+      if (segments.length >= maxSegments && length > 1) {
+        insufficientReason = "format_fragmentation_limit";
+        return true;
+      }
+      value = readCharacterFormat(current.candidate);
+      if (!value.mixed) {
+        if (segments.length >= maxSegments) {
+          insufficientReason = "format_fragmentation_limit";
+          return true;
+        }
+        segments.push({ start: current.start, end: current.end, format: value.format });
+        return !pending.length;
+      }
+      if (length <= 1) {
+        insufficientReason = "format_range_unreadable";
+        return true;
+      }
+      middle = current.start + Math.floor(length / 2);
+      left = sliceCharacterRange(source, current.start, middle);
+      right = sliceCharacterRange(source, middle, current.end);
+      if (!left || !right || readText(left).length !== middle - current.start ||
+          readText(right).length !== current.end - middle) {
+        insufficientReason = "format_range_unreadable";
+        return true;
+      }
+      pending.push({ start: middle, end: current.end, candidate: right });
+      pending.push({ start: current.start, end: middle, candidate: left });
+      return false;
+    }
+
+    if (!text) {
+      return Promise.resolve({ segments: [], dataStatus: "verified", segmentCount: 0 });
+    }
+    return runChunkedSteps(scanNext, loopOptions).then(function () {
+      if (insufficientReason) {
+        return {
+          segments: [],
+          dataStatus: "insufficient",
+          insufficientReason: insufficientReason,
+          segmentCount: segments.length,
+          maxSegments: maxSegments
+        };
+      }
+      var merged = [];
+      segments.forEach(function (segment) {
+        var previous = merged[merged.length - 1];
+        if (previous && previous.end === segment.start &&
+            stableFormatReviewJson(previous.format) === stableFormatReviewJson(segment.format)) {
+          previous.end = segment.end;
+        } else {
+          merged.push(segment);
+        }
+      });
+      return { segments: merged, dataStatus: "verified", segmentCount: merged.length };
+    });
+  }
+
   function readCollectionCount(collection) {
     if (!collection) {
       return 0;
@@ -4046,6 +4123,146 @@
     };
   }
 
+  function readFullDocumentReviewTableYielding(table, tableIndex, parentCellId, tablePath,
+      options, loopOptions) {
+    var rows = [];
+    var rowCollection = readTableRows(table);
+    var rowCount = readCollectionCount(rowCollection);
+    var currentTablePath = Array.isArray(tablePath)
+      ? tablePath.slice()
+      : [{ tableIndex: Number(tableIndex) || 0, rowIndex: 0, columnIndex: 0 }];
+    var tableId = toSafeString(firstDefined(
+      safeRead(table, "Id"), safeRead(table, "ID"), safeRead(table, "tableId")
+    ), "table-" + tableIndex);
+    var nestedTables = [];
+    var rowIndex = 1;
+    var columnIndex = 1;
+    var cells = [];
+    var cellCollection = null;
+    var cellCount = 0;
+
+    function readNestedTables(collection, cellId) {
+      var nested = [];
+      var nestedCount = readCollectionCount(collection);
+      var nestedIndex = 1;
+      function next() {
+        if (nestedIndex > nestedCount) {
+          return Promise.resolve(nested);
+        }
+        var currentIndex = nestedIndex;
+        nestedIndex += 1;
+        return readFullDocumentReviewTableYielding(
+          getCollectionItem(collection, currentIndex),
+          currentIndex,
+          cellId,
+          currentTablePath.concat([{
+            tableIndex: currentIndex,
+            rowIndex: rowIndex,
+            columnIndex: columnIndex
+          }]),
+          options,
+          loopOptions
+        ).then(function (nestedTable) {
+          nested.push(nestedTable);
+          return next();
+        });
+      }
+      return next();
+    }
+
+    function processNextCell() {
+      var row;
+      var cell;
+      var cellId;
+      var nestedCollection;
+      var cellRange;
+      if (rowIndex > rowCount) {
+        return true;
+      }
+      if (!cellCollection) {
+        row = getCollectionItem(rowCollection, rowIndex);
+        cellCollection = readTableCells(row);
+        cellCount = readCollectionCount(cellCollection);
+        columnIndex = 1;
+        cells = [];
+      }
+      if (columnIndex > cellCount) {
+        if (cells.length) {
+          rows.push({ rowIndex: rowIndex, cells: cells });
+        }
+        rowIndex += 1;
+        cellCollection = null;
+        return rowIndex > rowCount;
+      }
+      cell = getCollectionItem(cellCollection, columnIndex);
+      cellId = toSafeString(firstDefined(
+        safeRead(cell, "Id"), safeRead(cell, "ID"), safeRead(cell, "cellId")
+      ), tableId + "-cell-" + rowIndex + "-" + columnIndex);
+      nestedCollection = firstDefined(safeRead(cell, "Tables"), safeRead(cell, "tables"), []);
+      cellRange = resolveRange(cell);
+      function appendCell(nested, cellFormat) {
+        nested.forEach(function (item) { nestedTables.push(item); });
+        cells.push({
+          cellId: cellId,
+          rowIndex: normalizePositiveInteger(firstDefined(
+            safeRead(cell, "RowIndex"), safeRead(cell, "rowIndex"), rowIndex
+          )) || rowIndex,
+          columnIndex: normalizePositiveInteger(firstDefined(
+            safeRead(cell, "ColumnIndex"), safeRead(cell, "columnIndex"), columnIndex
+          )) || columnIndex,
+          rowSpan: normalizePositiveInteger(firstDefined(
+            safeRead(cell, "RowSpan"), safeRead(cell, "rowSpan"), 1
+          )) || 1,
+          columnSpan: normalizePositiveInteger(firstDefined(
+            safeRead(cell, "ColumnSpan"), safeRead(cell, "columnSpan"), 1
+          )) || 1,
+          mergeId: toSafeString(firstDefined(
+            safeRead(cell, "MergeId"), safeRead(cell, "mergeId")
+          ), ""),
+          text: readText(cell),
+          nestedTableIds: nested.map(function (item) { return item.tableId; }),
+          format: cellFormat ? {
+            segments: cellFormat.segments,
+            dataStatus: cellFormat.dataStatus,
+            insufficientReason: cellFormat.insufficientReason || ""
+          } : {}
+        });
+        columnIndex += 1;
+        return false;
+      }
+      if (readCollectionCount(nestedCollection) === 0 &&
+          !(options && options.includeCharacterFormatSegments)) {
+        return appendCell([], null);
+      }
+      return readNestedTables(nestedCollection, cellId).then(function (nested) {
+        if (options && options.includeCharacterFormatSegments) {
+          return extractHomogeneousFormatSegmentsYielding(cellRange || cell, {
+            maxSegments: options.maxFormatSegments || 2048
+          }, loopOptions).then(function (cellFormat) {
+            return appendCell(nested, cellFormat);
+          });
+        }
+        return appendCell(nested, null);
+      });
+    }
+
+    return runChunkedSteps(processNextCell, loopOptions).then(function () {
+      var paragraphIndex = normalizePositiveInteger(firstDefined(
+        safeRead(table, "ParagraphIndex"), safeRead(table, "paragraphIndex")
+      ));
+      return {
+        tableId: tableId,
+        tableIndex: Number(tableIndex) || 0,
+        tablePath: currentTablePath,
+        paragraphIndex: paragraphIndex,
+        parentCellId: parentCellId || "",
+        rows: rows,
+        nestedTables: nestedTables,
+        range: readParagraphRange(table, paragraphIndex || Number(tableIndex) || 0)
+      };
+    });
+  }
+
   function monotonicNow() {
     return (typeof performance !== "undefined" && performance && typeof performance.now === "function")
       ? performance.now()
@@ -4054,11 +4271,10 @@
 
   function runChunkedRange(start, count, processItem, options) {
     options = options || {};
-    var budgetMs = Number(options.budgetMs || 50);
+    var budgetMs = Number(options.budgetMs || 32);
     var checkCancelled = options.checkCancelled;
     var onProgress = options.onProgress;
     var delayMs = typeof options.delayMs === "number" ? options.delayMs : 0;
-    var itemTimeAdvanceMs = Number(options.itemTimeAdvanceMs || 0);
     var index = start;
 
     return new Promise(function (resolve, reject) {
@@ -4070,9 +4286,6 @@
           var sliceStart = monotonicNow();
           while (index <= count) {
             processItem(index);
-            if (itemTimeAdvanceMs > 0 && typeof options.advanceTime === "function") {
-              options.advanceTime(itemTimeAdvanceMs);
-            }
             index += 1;
             if (index <= count) {
               var elapsed = monotonicNow() - sliceStart;
@@ -4097,14 +4310,55 @@
     });
   }
 
-  function runChunkedArray(array, processItem, options) {
-    var items = Array.isArray(array) ? array : [];
-    if (!items.length) {
-      return Promise.resolve();
-    }
-    return runChunkedRange(0, items.length - 1, function (idx) {
-      processItem(items[idx], idx);
-    }, options);
+  function runChunkedSteps(processStep, options) {
+    options = options || {};
+    var budgetMs = Number(options.budgetMs || 32);
+    var checkCancelled = options.checkCancelled;
+    var delayMs = typeof options.delayMs === "number" ? options.delayMs : 0;
+    return new Promise(function (resolve, reject) {
+      function runSlice() {
+        var sliceStart = monotonicNow();
+        function continueAfterStep(finished) {
+          if (finished) {
+            resolve();
+            return;
+          }
+          if (monotonicNow() - sliceStart >= budgetMs) {
+            setTimeout(runSlice, delayMs);
+            return;
+          }
+          next();
+        }
+        function next() {
+          var result;
+          while (true) {
+            try {
+              if (checkCancelled) {
+                checkCancelled();
+              }
+              result = processStep();
+            } catch (error) {
+              reject(error);
+              return;
+            }
+            if (result && typeof result.then === "function") {
+              result.then(continueAfterStep, reject);
+              return;
+            }
+            if (result) {
+              resolve();
+              return;
+            }
+            if (monotonicNow() - sliceStart >= budgetMs) {
+              setTimeout(runSlice, delayMs);
+              return;
+            }
+          }
+        }
+        next();
+      }
+      runSlice();
+    });
   }
 
   function collectFullDocumentReviewTables(document, options) {
@@ -4125,21 +4379,31 @@
   function collectFullDocumentReviewTablesYielding(document, options, loopOptions) {
     var opts = options;
     var lOpts = loopOptions;
-    if (options && !loopOptions && (options.budgetMs || options.checkCancelled || options.onProgress || options.itemTimeAdvanceMs)) {
+    if (options && !loopOptions && (options.budgetMs || options.checkCancelled || options.onProgress)) {
       lOpts = options;
       opts = null;
     }
     var collection = getTableCollection(document);
     var count = readCollectionCount(collection);
     var tables = [];
-    return runChunkedRange(1, count, function (index) {
-      tables.push(readFullDocumentReviewTable(
-        getCollectionItem(collection, index),
-        index,
+    var index = 1;
+    return runChunkedSteps(function () {
+      if (index > count) {
+        return true;
+      }
+      var currentIndex = index;
+      index += 1;
+      return readFullDocumentReviewTableYielding(
+        getCollectionItem(collection, currentIndex),
+        currentIndex,
         "",
-        [{ tableIndex: index, rowIndex: 0, columnIndex: 0 }],
-        opts
-      ));
+        [{ tableIndex: currentIndex, rowIndex: 0, columnIndex: 0 }],
+        opts,
+        lOpts
+      ).then(function (table) {
+        tables.push(table);
+        return false;
+      });
     }, lOpts).then(function () {
       return tables;
     });
@@ -4999,10 +5263,16 @@
       count = Math.min(count, collectOptions.maxParagraphs);
     }
     var items = [];
-    return runChunkedRange(1, count, function (i) {
-      var paragraph = getCollectionItem(collection, i);
+    var i = 1;
+    return runChunkedSteps(function () {
+      if (i > count) {
+        return true;
+      }
+      var paragraphIndex = i;
+      i += 1;
+      var paragraph = getCollectionItem(collection, paragraphIndex);
       if (!paragraph) {
-        return;
+        return false;
       }
       var paragraphRange = resolveRange(paragraph);
       if (collectOptions.excludeTableParagraphs) {
@@ -5011,48 +5281,52 @@
           safeRead(paragraph, "Tables")
         );
         if (readCollectionCount(containingTables) > 0) {
-          return;
+          return false;
         }
       }
       var font = readFont(paragraph);
       var paragraphFormat = readParagraphFormat(paragraph);
-      var characterFormat = collectOptions.includeCharacterFormatSegments
-        ? extractHomogeneousFormatSegments(paragraphRange || paragraph, {
-          maxSegments: collectOptions.maxFormatSegments
-        })
-        : null;
-      var rawOutlineLevel = safeRead(paragraphFormat, "OutlineLevel");
-      if (typeof rawOutlineLevel === "undefined") {
-        rawOutlineLevel = safeRead(paragraphFormat, "outlineLevel");
+      function appendParagraph(characterFormat) {
+        var rawOutlineLevel = safeRead(paragraphFormat, "OutlineLevel");
+        if (typeof rawOutlineLevel === "undefined") {
+          rawOutlineLevel = safeRead(paragraphFormat, "outlineLevel");
+        }
+        var item = {
+          index: paragraphIndex,
+          text: limitTextLength(readText(paragraph), collectOptions.maxParagraphTextLength),
+          range: readParagraphRange(paragraph, paragraphIndex),
+          styleName: readStyleName(paragraph),
+          fontName: toSafeString(firstDefined(safeRead(font, "NameFarEast"), safeRead(font, "Name")), ""),
+          fontSize: normalizeFontSize(safeRead(font, "Size")),
+          bold: Boolean(safeRead(font, "Bold")),
+          italic: Boolean(safeRead(font, "Italic")),
+          underline: normalizeInteger(firstDefined(safeRead(font, "Underline"), null)),
+          alignment: normalizeAlignmentValue(safeRead(paragraphFormat, "Alignment"), ""),
+          lineSpacing: normalizeNumber(firstDefined(safeRead(paragraphFormat, "LineSpacing"), safeRead(paragraphFormat, "lineSpacing"), null)),
+          lineSpacingMode: normalizeWpsLineSpacingMode(firstDefined(
+            safeRead(paragraphFormat, "LineSpacingRule"), safeRead(paragraphFormat, "lineSpacingRule"), null
+          )),
+          firstLineIndent: normalizeNumber(firstDefined(safeRead(paragraphFormat, "FirstLineIndent"), safeRead(paragraphFormat, "firstLineIndent"), null)),
+          spaceBefore: normalizeNumber(firstDefined(safeRead(paragraphFormat, "SpaceBefore"), safeRead(paragraphFormat, "spaceBefore"), null)),
+          spaceAfter: normalizeNumber(firstDefined(safeRead(paragraphFormat, "SpaceAfter"), safeRead(paragraphFormat, "spaceAfter"), null)),
+          leftIndent: normalizeNumber(firstDefined(safeRead(paragraphFormat, "LeftIndent"), safeRead(paragraphFormat, "leftIndent"), null)),
+          rightIndent: normalizeNumber(firstDefined(safeRead(paragraphFormat, "RightIndent"), safeRead(paragraphFormat, "rightIndent"), null)),
+          formatSegments: characterFormat ? characterFormat.segments : [],
+          formatDataStatus: characterFormat ? characterFormat.dataStatus : "verified",
+          formatInsufficientReason: characterFormat ? characterFormat.insufficientReason || "" : ""
+        };
+        if (typeof rawOutlineLevel !== "undefined") {
+          item.outlineLevel = normalizeWpsOutlineLevel(rawOutlineLevel);
+        }
+        items.push(item);
+        return false;
       }
-      var item = {
-        index: i,
-        text: limitTextLength(readText(paragraph), collectOptions.maxParagraphTextLength),
-        range: readParagraphRange(paragraph, i),
-        styleName: readStyleName(paragraph),
-        fontName: toSafeString(firstDefined(safeRead(font, "NameFarEast"), safeRead(font, "Name")), ""),
-        fontSize: normalizeFontSize(safeRead(font, "Size")),
-        bold: Boolean(safeRead(font, "Bold")),
-        italic: Boolean(safeRead(font, "Italic")),
-        underline: normalizeInteger(firstDefined(safeRead(font, "Underline"), null)),
-        alignment: normalizeAlignmentValue(safeRead(paragraphFormat, "Alignment"), ""),
-        lineSpacing: normalizeNumber(firstDefined(safeRead(paragraphFormat, "LineSpacing"), safeRead(paragraphFormat, "lineSpacing"), null)),
-        lineSpacingMode: normalizeWpsLineSpacingMode(firstDefined(
-          safeRead(paragraphFormat, "LineSpacingRule"), safeRead(paragraphFormat, "lineSpacingRule"), null
-        )),
-        firstLineIndent: normalizeNumber(firstDefined(safeRead(paragraphFormat, "FirstLineIndent"), safeRead(paragraphFormat, "firstLineIndent"), null)),
-        spaceBefore: normalizeNumber(firstDefined(safeRead(paragraphFormat, "SpaceBefore"), safeRead(paragraphFormat, "spaceBefore"), null)),
-        spaceAfter: normalizeNumber(firstDefined(safeRead(paragraphFormat, "SpaceAfter"), safeRead(paragraphFormat, "spaceAfter"), null)),
-        leftIndent: normalizeNumber(firstDefined(safeRead(paragraphFormat, "LeftIndent"), safeRead(paragraphFormat, "leftIndent"), null)),
-        rightIndent: normalizeNumber(firstDefined(safeRead(paragraphFormat, "RightIndent"), safeRead(paragraphFormat, "rightIndent"), null)),
-        formatSegments: characterFormat ? characterFormat.segments : [],
-        formatDataStatus: characterFormat ? characterFormat.dataStatus : "verified",
-        formatInsufficientReason: characterFormat ? characterFormat.insufficientReason || "" : ""
-      };
-      if (typeof rawOutlineLevel !== "undefined") {
-        item.outlineLevel = normalizeWpsOutlineLevel(rawOutlineLevel);
+      if (!collectOptions.includeCharacterFormatSegments) {
+        return appendParagraph(null);
       }
-      items.push(item);
+      return extractHomogeneousFormatSegmentsYielding(paragraphRange || paragraph, {
+        maxSegments: collectOptions.maxFormatSegments
+      }, loopOptions).then(appendParagraph);
     }, loopOptions).then(function () {
       if (items.length) {
         return items;
@@ -5180,6 +5454,34 @@
       }
     }
     return collectParagraphsFromText(selectedText, options);
+  }
+
+  function collectParagraphsFromSelectionSourcesYielding(selectionSources, selectedText,
+      options, loopOptions) {
+    var sources = Array.isArray(selectionSources) ? selectionSources : [selectionSources];
+    var collectOptions = normalizeCollectOptions(options);
+    var index = 0;
+    function next() {
+      var source;
+      if (index >= sources.length) {
+        return Promise.resolve(collectParagraphsFromText(selectedText, options));
+      }
+      source = sources[index];
+      index += 1;
+      if (!source) {
+        return next();
+      }
+      return collectParagraphsYielding(source, {
+        maxParagraphs: collectOptions.maxParagraphs,
+        maxParagraphTextLength: collectOptions.maxParagraphTextLength,
+        avoidFallbackTextRead: true,
+        includeCharacterFormatSegments: collectOptions.includeCharacterFormatSegments,
+        maxFormatSegments: collectOptions.maxFormatSegments
+      }, loopOptions).then(function (paragraphs) {
+        return paragraphs.length ? paragraphs : next();
+      });
+    }
+    return next();
   }
 
   function buildDocumentStructure(options) {
@@ -6837,7 +7139,6 @@
     collectDeterministicFormatReviewImages: collectDeterministicFormatReviewImages,
     collectDeterministicFormatReviewImagesYielding: collectDeterministicFormatReviewImagesYielding,
     runChunkedRange: runChunkedRange,
-    runChunkedArray: runChunkedArray,
     collectWordAutoTocRegions: collectWordAutoTocRegions,
     collectWordManualAndSuspectedTocRegions: collectWordManualAndSuspectedTocRegions,
     isAutoTocField: isAutoTocField,
@@ -6848,6 +7149,7 @@
     normalizeWpsOutlineLevel: normalizeWpsOutlineLevel,
     collectHeadingsFromParagraphs: collectHeadingsFromParagraphs,
     collectParagraphsFromSelectionSources: collectParagraphsFromSelectionSources,
+    collectParagraphsFromSelectionSourcesYielding: collectParagraphsFromSelectionSourcesYielding,
     collectParagraphsFromText: collectParagraphsFromText,
     readDocumentText: readDocumentText,
     toSafeString: toSafeString,

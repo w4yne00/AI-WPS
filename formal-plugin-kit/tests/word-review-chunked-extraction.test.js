@@ -43,7 +43,211 @@ test("helpers: runChunkedRange yields macrotasks based on time budget and report
     assert.strictEqual(processed[59], 60);
     assert.ok(macrotaskYields >= 5, `expected at least 5 macrotask yields, got ${macrotaskYields}`);
     assert.ok(progressReports.length >= 5, `expected progress reports on yields, got ${progressReports.length}`);
+    progressReports.forEach((report, index) => {
+      if (index > 0) {
+        assert.ok(report.current >= progressReports[index - 1].current,
+          `progress must be monotonic: ${progressReports[index - 1].current} -> ${report.current}`);
+      }
+      assert.strictEqual(report.total, 60);
+    });
     assert.strictEqual(progressReports[progressReports.length - 1].current, 60);
+  } finally {
+    global.performance = originalPerformance;
+    global.setTimeout = originalSetTimeout;
+  }
+});
+
+test("helpers: one large table yields between cells instead of blocking as one item", async () => {
+  let virtualTime = 0;
+  let macrotaskYields = 0;
+  const originalPerformance = global.performance;
+  const originalSetTimeout = global.setTimeout;
+  global.performance = { now: () => virtualTime };
+  global.setTimeout = (fn) => {
+    macrotaskYields += 1;
+    process.nextTick(fn);
+    return 1;
+  };
+
+  const cells = Array.from({ length: 24 }, (_, index) => ({
+    Id: `cell-${index + 1}`,
+    RowIndex: 1,
+    ColumnIndex: index + 1,
+    Text: `单元格 ${index + 1}`
+  }));
+  const cellCollection = {
+    Count: cells.length,
+    Item(index) {
+      virtualTime += 4;
+      return cells[index - 1];
+    }
+  };
+  const fakeDocument = {
+    Tables: {
+      Count: 1,
+      Item() {
+        return {
+          Id: "large-table",
+          Rows: {
+            Count: 1,
+            Item: () => ({ Cells: cellCollection })
+          }
+        };
+      }
+    }
+  };
+
+  try {
+    const tables = await helpers.collectFullDocumentReviewTablesYielding(fakeDocument, {
+      budgetMs: 20
+    });
+    assert.strictEqual(tables[0].rows[0].cells.length, 24);
+    assert.ok(macrotaskYields >= 3,
+      `large table must yield between cells, got ${macrotaskYields} yields`);
+  } finally {
+    global.performance = originalPerformance;
+    global.setTimeout = originalSetTimeout;
+  }
+});
+
+test("helpers: one fragmented paragraph yields during format segment scanning", async () => {
+  let virtualTime = 0;
+  let macrotaskYields = 0;
+  const originalPerformance = global.performance;
+  const originalSetTimeout = global.setTimeout;
+  global.performance = { now: () => virtualTime };
+  global.setTimeout = (fn) => {
+    macrotaskYields += 1;
+    process.nextTick(fn);
+    return 1;
+  };
+
+  const text = "abcdefghijklmnop";
+  function makeRange(start, end) {
+    const range = {
+      Start: start,
+      End: end,
+      Tables: { Count: 0 },
+      Duplicate() {
+        return makeRange(this.Start, this.End);
+      },
+      SetRange(nextStart, nextEnd) {
+        this.Start = nextStart;
+        this.End = nextEnd;
+      }
+    };
+    Object.defineProperty(range, "Text", {
+      get() {
+        return text.slice(this.Start, this.End);
+      }
+    });
+    Object.defineProperty(range, "Font", {
+      get() {
+        virtualTime += 4;
+        if (this.End - this.Start > 1) {
+          return { NameFarEast: 9999999, Size: 9999999 };
+        }
+        return { NameFarEast: "宋体", Size: 12, Bold: false, Italic: false };
+      }
+    });
+    return range;
+  }
+
+  const fakeDocument = {
+    Paragraphs: [{
+      Text: text,
+      Range: makeRange(0, text.length),
+      Font: { NameFarEast: "宋体", Size: 12, Bold: false, Italic: false },
+      ParagraphFormat: { OutlineLevel: 10, Alignment: 0 }
+    }]
+  };
+
+  try {
+    const paragraphs = await helpers.collectParagraphsYielding(fakeDocument, {
+      avoidFallbackTextRead: true,
+      includeCharacterFormatSegments: true,
+      maxFormatSegments: 32
+    }, {
+      budgetMs: 20
+    });
+    assert.strictEqual(paragraphs[0].formatSegments.length, 1);
+    assert.ok(macrotaskYields >= 3,
+      `format scan must yield inside one paragraph, got ${macrotaskYields} yields`);
+  } finally {
+    global.performance = originalPerformance;
+    global.setTimeout = originalSetTimeout;
+  }
+});
+
+test("taskpane: large selection paragraph extraction yields before completing", async () => {
+  let virtualTime = 0;
+  let macrotaskYields = 0;
+  const originalPerformance = global.performance;
+  const originalSetTimeout = global.setTimeout;
+  global.performance = { now: () => virtualTime };
+  global.setTimeout = (fn) => {
+    macrotaskYields += 1;
+    process.nextTick(fn);
+    return 1;
+  };
+
+  const paragraphs = Array.from({ length: 30 }, (_, index) => ({
+    Text: `选区段落 ${index + 1}`,
+    Range: { Tables: { Count: 0 } },
+    Font: { NameFarEast: "宋体", Size: 12 },
+    ParagraphFormat: { OutlineLevel: 10 }
+  }));
+  const selectionSource = {
+    Paragraphs: {
+      Count: paragraphs.length,
+      Item(index) {
+        virtualTime += 4;
+        return paragraphs[index - 1];
+      }
+    }
+  };
+
+  function functionSource(name) {
+    const start = taskpaneSource.indexOf(`function ${name}(`);
+    assert.ok(start >= 0, `missing function ${name}`);
+    const next = taskpaneSource.indexOf("\n  function ", start + 1);
+    return taskpaneSource.slice(start, next >= 0 ? next : taskpaneSource.length);
+  }
+
+  const context = {
+    helpers,
+    state: {
+      selectedTemplateId: "tpl-standard",
+      userInstruction: "",
+      rewriteStyle: "",
+      focusPoint: "",
+      lengthMode: "normal",
+      technicalDocumentType: "auto",
+      technicalReviewPrompt: ""
+    },
+    getActiveDocument: () => ({ Name: "selection.docx" }),
+    getSelectionText: () => "选区正文",
+    getSelectionSources: () => [selectionSource],
+    getDocumentName: () => "selection.docx",
+    collectHeadings: () => [],
+    collectPageSetup: () => ({}),
+    truncateText: (value) => value
+  };
+  const extractDocumentYielding = vm.runInNewContext(
+    `(function () { ${functionSource("extractDocumentYielding")}; return extractDocumentYielding; })()`,
+    context
+  );
+
+  try {
+    const payload = await extractDocumentYielding("selection", null, {
+      preferSelectionRangeParagraphs: true,
+      avoidFallbackTextRead: true
+    }, {
+      budgetMs: 20
+    });
+    assert.strictEqual(payload.content.paragraphs.length, 30);
+    assert.ok(macrotaskYields >= 3,
+      `selection extraction must yield, got ${macrotaskYields} yields`);
   } finally {
     global.performance = originalPerformance;
     global.setTimeout = originalSetTimeout;
@@ -96,10 +300,11 @@ test("taskpane: full document review extraction yields event loop and matches sy
   assert.ok(taskpaneSource.includes("extractFullDocumentReviewBodyYielding"), "taskpane must have extractFullDocumentReviewBodyYielding");
 
   // Create fake large document
+  let virtualTime = 0;
   const paragraphs = [];
   for (let i = 1; i <= 80; i += 1) {
-    paragraphs.push({
-      Text: `这是第 ${i} 段正文内容，用于测试 Word 全篇审查长文档提取分片。`,
+    const paragraphText = `这是第 ${i} 段正文内容，用于测试 Word 全篇审查长文档提取分片。`;
+    const paragraph = {
       Range: {
         Tables: { Count: 0 }
       },
@@ -109,7 +314,14 @@ test("taskpane: full document review extraction yields event loop and matches sy
       ListFormat: {
         ListString: i % 5 === 0 ? "1." : ""
       }
+    };
+    Object.defineProperty(paragraph, "Text", {
+      get() {
+        virtualTime += 1;
+        return paragraphText;
+      }
     });
+    paragraphs.push(paragraph);
   }
 
   const fakeDocument = {
@@ -140,7 +352,6 @@ test("taskpane: full document review extraction yields event loop and matches sy
   const syncParagraphs = helpers.collectFullDocumentReviewParagraphs(fakeDocument);
   const syncTables = helpers.collectFullDocumentReviewTables(fakeDocument);
 
-  let virtualTime = 0;
   let macrotaskCount = 0;
   const originalPerformance = global.performance;
   global.performance = { now: () => virtualTime };
@@ -154,9 +365,7 @@ test("taskpane: full document review extraction yields event loop and matches sy
 
   try {
     const chunkedParagraphs = await helpers.collectFullDocumentReviewParagraphsYielding(fakeDocument, {
-      budgetMs: 25,
-      itemTimeAdvanceMs: 1,
-      advanceTime: (ms) => { virtualTime += ms; }
+      budgetMs: 25
     });
     const chunkedTables = await helpers.collectFullDocumentReviewTablesYielding(fakeDocument, {
       budgetMs: 25
@@ -177,10 +386,11 @@ test("taskpane: format review extraction yields event loop and matches sync base
   assert.strictEqual(typeof helpers.collectDeterministicFormatReviewImagesYielding, "function",
     "helpers must provide collectDeterministicFormatReviewImagesYielding");
 
+  let virtualTime = 0;
   const paragraphs = [];
   for (let i = 1; i <= 60; i += 1) {
-    paragraphs.push({
-      Text: `格式审查段落 ${i} 样式测试。`,
+    const paragraphText = `格式审查段落 ${i} 样式测试。`;
+    const paragraph = {
       Range: {
         Tables: { Count: 0 },
         Characters: [{ Text: "格式" }, { Text: "审查" }]
@@ -195,7 +405,14 @@ test("taskpane: format review extraction yields event loop and matches sync base
         OutlineLevel: 10,
         Alignment: 0
       }
+    };
+    Object.defineProperty(paragraph, "Text", {
+      get() {
+        virtualTime += 1;
+        return paragraphText;
+      }
     });
+    paragraphs.push(paragraph);
   }
 
   const fakeDocument = {
@@ -221,7 +438,6 @@ test("taskpane: format review extraction yields event loop and matches sync base
   const syncParagraphs = helpers.collectParagraphs(fakeDocument, extractionOptions);
   const syncImages = helpers.collectDeterministicFormatReviewImages(fakeDocument, syncParagraphs);
 
-  let virtualTime = 0;
   let macrotaskCount = 0;
   const originalPerformance = global.performance;
   global.performance = { now: () => virtualTime };
@@ -235,9 +451,7 @@ test("taskpane: format review extraction yields event loop and matches sync base
 
   try {
     const chunkedParagraphs = await helpers.collectParagraphsYielding(fakeDocument, extractionOptions, {
-      budgetMs: 25,
-      itemTimeAdvanceMs: 1,
-      advanceTime: (ms) => { virtualTime += ms; }
+      budgetMs: 25
     });
     const chunkedImages = await helpers.collectDeterministicFormatReviewImagesYielding(fakeDocument, chunkedParagraphs, {
       budgetMs: 25
@@ -373,7 +587,114 @@ test("taskpane: full document review aborts and cleans up snapshot when cancelle
 
   assert.strictEqual(state.fullDocumentReviewPreparing, false, "preparing must be false after abort");
   assert.strictEqual(jobSubmitted, false, "model job must never be submitted after cancel");
+  assert.ok(deletedSnapshots.length > 0, "cancel after snapshot creation must delete the snapshot");
   assert.ok(statusText.includes("已取消全篇审查准备"), `statusText must reflect cancel: ${statusText}`);
+});
+
+test("taskpane: full document review rejects an active document session switch during extraction", async () => {
+  let activeDocument;
+  let snapshotCreated = false;
+  let statusText = "";
+  const firstDocument = {
+    Name: "same-name.docx",
+    sessionId: "doc-session-1",
+    EditSequence: "same-signal",
+    Paragraphs: [{ Text: "旧文档正文", Range: { Tables: { Count: 0 } } }],
+    Tables: []
+  };
+  const secondDocument = {
+    Name: "same-name.docx",
+    sessionId: "doc-session-2",
+    EditSequence: "same-signal",
+    Paragraphs: [{ Text: "新文档正文", Range: { Tables: { Count: 0 } } }],
+    Tables: []
+  };
+  activeDocument = firstDocument;
+
+  const state = {
+    fullDocumentReviewEnabled: true,
+    fullDocumentReviewJobId: "",
+    documentReviewJobId: "",
+    fullDocumentReviewPreparing: false,
+    fullDocumentReviewCancelRequested: false,
+    documentSessionId: "doc-session-1",
+    documentDisplayName: "same-name.docx",
+    technicalDocumentType: "auto",
+    technicalReviewPrompt: "",
+    activeTaskSlots: {}
+  };
+  const contextHelpers = Object.assign({}, helpers, {
+    isTaskSlotBusy: () => false,
+    claimTaskSlot: () => {},
+    getDocumentSessionId: (document) => document && document.sessionId,
+    getDocumentDisplayName: () => "same-name.docx",
+    readFullDocumentReviewEditSignal: (document) => document && document.EditSequence || "",
+    collectFullDocumentReviewParagraphsYielding: async (document) => {
+      const result = helpers.collectFullDocumentReviewParagraphs(document);
+      activeDocument = secondDocument;
+      return result;
+    },
+    collectFullDocumentReviewTablesYielding: async () => []
+  });
+  const context = {
+    state,
+    helpers: contextHelpers,
+    getActiveDocument: () => activeDocument,
+    getDocumentName: (document) => document && document.Name || "",
+    getFullDocumentReviewReadiness: () => ({ fullDocumentReviewReady: true }),
+    validateActiveDirectTaskSelection: () => ({ valid: true }),
+    byId: () => null,
+    setActiveResultRecord: () => {},
+    setActiveReviewJobRecord: () => {},
+    renderFullDocumentReviewEntry: () => {},
+    setModelTaskBusy: () => {},
+    setPlainResult: () => {},
+    setStatus: (message) => { statusText = message; },
+    setResult: () => {},
+    setTrace: () => {},
+    setDocumentReviewCancelVisible: () => {},
+    getWritingPolicyScene: () => "general",
+    describeFetchError: (error) => error && error.message || String(error),
+    releaseTaskSlotsForJob: () => {},
+    clearFullDocumentReviewActiveJob: () => {},
+    stopDocumentReviewWaitFeedback: () => {},
+    setTimeout: (fn) => process.nextTick(fn),
+    request: async (url) => {
+      if (url === "/word/document-review/full/snapshots") {
+        snapshotCreated = true;
+        throw new Error("snapshot must not be created after document switch");
+      }
+      return { data: {} };
+    }
+  };
+
+  function functionSource(name) {
+    const start = taskpaneSource.indexOf(`function ${name}(`);
+    assert.ok(start >= 0, `missing function ${name}`);
+    const next = taskpaneSource.indexOf("\n  function ", start + 1);
+    return taskpaneSource.slice(start, next >= 0 ? next : taskpaneSource.length);
+  }
+
+  const names = [
+    "ensureFullDocumentReviewPreparation",
+    "extractFullDocumentReviewBodyYielding",
+    "uploadFullDocumentReviewBatches",
+    "discardFullDocumentReviewSnapshot",
+    "cancelFullDocumentReviewPreparation",
+    "cleanupFullDocumentReviewTerminal",
+    "runFullDocumentReview"
+  ];
+  const declarations = names.map(functionSource).join("\n");
+  const exported = names.map((name) => `${name}: ${name}`).join(",");
+  const fns = vm.runInNewContext(
+    `(function () { ${declarations}; return {${exported}}; })()`,
+    context
+  );
+
+  await fns.runFullDocumentReview();
+
+  assert.strictEqual(snapshotCreated, false, "document switch must abort before snapshot creation");
+  assert.ok(statusText.includes("文档"), `status must explain document identity change: ${statusText}`);
 });
 
 test("taskpane: format review preparation can be cancelled, cleans up snapshot session and never calls model", async () => {
@@ -523,6 +844,7 @@ test("taskpane: format review preparation can be cancelled, cleans up snapshot s
 
   assert.strictEqual(state.deterministicFormatReviewPreparing, false, "preparing must be false after abort");
   assert.strictEqual(jobSubmitted, false, "model job must never be submitted after cancel");
+  assert.ok(deletedSnapshots.length > 0, "cancel after snapshot creation must delete the snapshot");
   assert.ok(statusText.includes("已取消格式审查准备"), `statusText must reflect cancel: ${statusText}`);
 });
 
@@ -769,5 +1091,3 @@ test("taskpane: document edit during format review preparation aborts, cleans up
   assert.ok(deletedSnapshots.length > 0, "uncommitted snapshot must be deleted on edit abort");
   assert.ok(statusText.includes("检测到文档编辑"), `statusText must reflect edit: ${statusText}`);
 });
-
-

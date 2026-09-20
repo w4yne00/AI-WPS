@@ -2220,14 +2220,25 @@
     var collectPromise;
     if (options.preferSelectionTextParagraphs && selectedText && helpers.collectParagraphsFromText) {
       plainText = selectedText;
-      collectPromise = Promise.resolve(helpers.collectParagraphsFromSelectionSources
-        ? helpers.collectParagraphsFromSelectionSources(selectionSources, selectedText, options)
-        : helpers.collectParagraphsFromText(selectedText, options));
+      collectPromise = helpers.collectParagraphsFromSelectionSourcesYielding
+        ? helpers.collectParagraphsFromSelectionSourcesYielding(
+          selectionSources, selectedText, options, loopOptions
+        )
+        : Promise.resolve(helpers.collectParagraphsFromSelectionSources
+          ? helpers.collectParagraphsFromSelectionSources(selectionSources, selectedText, options)
+          : helpers.collectParagraphsFromText(selectedText, options));
     } else if (selectionMode === "selection" && options.preferSelectionRangeParagraphs &&
         helpers.collectParagraphsFromSelectionSources) {
-      var paras = helpers.collectParagraphsFromSelectionSources(selectionSources, selectedText, options);
-      plainText = selectedText || paras.map(function (item) { return item.text; }).join("\n");
-      collectPromise = Promise.resolve(paras);
+      collectPromise = (helpers.collectParagraphsFromSelectionSourcesYielding
+        ? helpers.collectParagraphsFromSelectionSourcesYielding(
+          selectionSources, selectedText, options, loopOptions
+        )
+        : Promise.resolve(helpers.collectParagraphsFromSelectionSources(
+          selectionSources, selectedText, options
+        ))).then(function (paras) {
+        plainText = selectedText || paras.map(function (item) { return item.text; }).join("\n");
+        return paras;
+      });
     } else {
       collectPromise = (helpers.collectParagraphsYielding
         ? helpers.collectParagraphsYielding(document, options, loopOptions)
@@ -10062,10 +10073,18 @@
     if (!document) {
       return Promise.reject(new Error("未检测到活动文档。"));
     }
-    var lOpts = loopOptions || {
-      budgetMs: 50,
+    var requestedLoopOptions = loopOptions || {};
+    var expectedEditSignal = requestedLoopOptions.expectedEditSignal;
+    var expectedDocumentSessionId = requestedLoopOptions.expectedDocumentSessionId;
+    var lOpts = {
+      budgetMs: requestedLoopOptions.budgetMs || 32,
+      delayMs: requestedLoopOptions.delayMs,
+      onProgress: requestedLoopOptions.onProgress,
       checkCancelled: function () {
-        ensureFullDocumentReviewPreparation();
+        if (requestedLoopOptions.checkCancelled) {
+          requestedLoopOptions.checkCancelled();
+        }
+        ensureFullDocumentReviewPreparation(expectedEditSignal, expectedDocumentSessionId);
       }
     };
     var collectParas = helpers.collectFullDocumentReviewParagraphsYielding
@@ -10097,6 +10116,7 @@
       body.editSignal = helpers.readFullDocumentReviewEditSignal
         ? helpers.readFullDocumentReviewEditSignal(document)
         : "";
+      body.documentSessionId = expectedDocumentSessionId || "";
       body.batches = helpers.buildFullDocumentReviewBatches
         ? helpers.buildFullDocumentReviewBatches(body, 3500)
         : [{
@@ -10118,7 +10138,7 @@
           setTimeout(resolve, 0);
         });
       }).then(function () {
-        ensureFullDocumentReviewPreparation(body.editSignal);
+        ensureFullDocumentReviewPreparation(body.editSignal, body.documentSessionId);
         return request(
           "/word/document-review/full/snapshots/" + encodeURIComponent(session.sessionId) +
             "/batches/" + batch.sequence,
@@ -10138,17 +10158,28 @@
     }, Promise.resolve());
   }
 
-  function ensureFullDocumentReviewPreparation(editSignal) {
+  function ensureFullDocumentReviewPreparation(editSignal, documentSessionId) {
     var document;
     var currentSignal;
+    var currentDocumentSessionId;
     if (state.fullDocumentReviewCancelRequested) {
       throw new Error("已取消全篇审查准备，未调用模型。");
     }
     document = getActiveDocument();
+    if (!document) {
+      throw new Error("活动文档已关闭，已停止全篇审查并清理快照。");
+    }
+    currentDocumentSessionId = helpers.getDocumentSessionId
+      ? helpers.getDocumentSessionId(document)
+      : state.documentSessionId;
+    if (documentSessionId && String(currentDocumentSessionId || "") !== String(documentSessionId)) {
+      throw new Error("检测到活动文档已切换，已停止全篇审查并清理快照。");
+    }
     currentSignal = helpers.readFullDocumentReviewEditSignal
       ? helpers.readFullDocumentReviewEditSignal(document)
       : "";
-    if (editSignal && currentSignal !== editSignal) {
+    if (editSignal !== null && typeof editSignal !== "undefined" &&
+        String(currentSignal || "") !== String(editSignal || "")) {
       throw new Error("检测到文档在全篇审查准备期间被编辑，已停止并清理快照。");
     }
   }
@@ -10160,9 +10191,18 @@
     var session = null;
     var firstPassStartedAt = null;
     var localExtractionMs = 0;
-    var currentDoc = (helpers.getDocumentSessionId && getActiveDocument) ? helpers.getDocumentSessionId(getActiveDocument()) : state.documentSessionId;
-    var docDisplayName = (helpers.getDocumentDisplayName && getActiveDocument)
-      ? helpers.getDocumentDisplayName(getActiveDocument())
+    var preparationDocument = getActiveDocument();
+    var currentDoc = (helpers.getDocumentSessionId && preparationDocument)
+      ? helpers.getDocumentSessionId(preparationDocument) : state.documentSessionId;
+    var preparationEditSignal = helpers.readFullDocumentReviewEditSignal && preparationDocument
+      ? helpers.readFullDocumentReviewEditSignal(preparationDocument) : "";
+    var extractionLoopOptions = {
+      budgetMs: 32,
+      expectedEditSignal: preparationEditSignal,
+      expectedDocumentSessionId: currentDoc
+    };
+    var docDisplayName = (helpers.getDocumentDisplayName && preparationDocument)
+      ? helpers.getDocumentDisplayName(preparationDocument)
       : (state.documentDisplayName || "Word 文档");
     if (!state.fullDocumentReviewEnabled || !readiness.fullDocumentReviewReady) {
       setStatus(readiness.label || "全篇审查尚未就绪。");
@@ -10205,9 +10245,9 @@
     var feedbackTimestamp = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
     var clickToFeedbackMs = Math.max(0, Math.round(feedbackTimestamp - clickTimestamp));
     firstPassStartedAt = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
-    return extractFullDocumentReviewBodyYielding().then(function (body) {
+    return extractFullDocumentReviewBodyYielding(extractionLoopOptions).then(function (body) {
       firstPass = body;
-      ensureFullDocumentReviewPreparation(firstPass.editSignal);
+      ensureFullDocumentReviewPreparation(firstPass.editSignal, currentDoc);
       firstPass.firstPassDurationMs = Math.max(0, Math.round(
         ((typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now()) - firstPassStartedAt
       ));
@@ -10230,13 +10270,13 @@
       });
     }).then(function (body) {
       session = body.data || {};
-      ensureFullDocumentReviewPreparation(firstPass.editSignal);
+      ensureFullDocumentReviewPreparation(firstPass.editSignal, currentDoc);
       return uploadFullDocumentReviewBatches(session, firstPass);
     }).then(function () {
       setStatus("正在执行第二遍轻量哈希验证...");
       firstPass.secondPassStartedAt = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
-      ensureFullDocumentReviewPreparation(firstPass.editSignal);
-      return extractFullDocumentReviewBodyYielding();
+      ensureFullDocumentReviewPreparation(firstPass.editSignal, currentDoc);
+      return extractFullDocumentReviewBodyYielding(extractionLoopOptions);
     }).then(function (secondPass) {
       secondPass.secondPassDurationMs = Math.max(0, Math.round(
         ((typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now()) - firstPass.secondPassStartedAt
@@ -10275,7 +10315,7 @@
     }).then(function (body) {
       var snapshot = body.data || {};
       var capacity = snapshot.capacity || {};
-      ensureFullDocumentReviewPreparation(firstPass.editSignal);
+      ensureFullDocumentReviewPreparation(firstPass.editSignal, currentDoc);
       session.snapshotToken = snapshot.snapshotToken;
       setStatus("快照完成：" + firstPass.reviewCharacterCount + " 个审查字符，初始约 " +
         Number(capacity.initialChunkCount || 0) + " 个分片，调用上限 " +
@@ -11188,6 +11228,7 @@
     var documentName;
     var editSequence;
     var documentIdentity;
+    var documentSessionId;
     var tables = [];
     var contextBlocks = [];
     var imageCollection;
@@ -11202,10 +11243,14 @@
       documentIdSha256: helpers.sha256Text(documentName).slice(0, 64),
       hostDocumentId: String(readValue(document, "Id") || readValue(document, "ID") || documentName)
     };
+    documentSessionId = scope.documentSessionId || (helpers.getDocumentSessionId
+      ? helpers.getDocumentSessionId(document) : state.documentSessionId);
     var lOpts = loopOptions || {
-      budgetMs: 50,
+      budgetMs: 32,
       checkCancelled: function () {
-        ensureDeterministicFormatReviewPreparation(editSequence, documentIdentity);
+        ensureDeterministicFormatReviewPreparation(
+          editSequence, documentIdentity, documentSessionId
+        );
       }
     };
     if (lOpts.checkCancelled) {
@@ -11378,14 +11423,17 @@
         imageFacts: imageCollection.facts
       });
       body._imageObjects = imageCollection.objects;
+      body.documentSessionId = documentSessionId || "";
       return body;
     });
   }
 
-  function ensureDeterministicFormatReviewPreparation(editSequence, documentIdentity) {
+  function ensureDeterministicFormatReviewPreparation(editSequence, documentIdentity,
+      documentSessionId) {
     var document = getActiveDocument();
     var currentSequence;
     var currentName;
+    var currentDocumentSessionId;
     if (state.deterministicFormatReviewCancelRequested) {
       throw new Error("已取消格式审查准备，未调用模型。");
     }
@@ -11396,9 +11444,13 @@
       ? helpers.readFullDocumentReviewEditSignal(document)
       : "";
     currentName = getDocumentName(document);
+    currentDocumentSessionId = helpers.getDocumentSessionId
+      ? helpers.getDocumentSessionId(document)
+      : state.documentSessionId;
     if (String(editSequence || "") !== String(currentSequence || "") ||
         String(documentIdentity && documentIdentity.hostDocumentId || "") !==
-          String(readValue(document, "Id") || readValue(document, "ID") || currentName)) {
+          String(readValue(document, "Id") || readValue(document, "ID") || currentName) ||
+        (documentSessionId && String(currentDocumentSessionId || "") !== String(documentSessionId))) {
       throw new Error("检测到文档编辑或文档身份变化，已安全中止格式审查并清理快照。");
     }
   }
@@ -11409,7 +11461,9 @@
       return promise.then(function () {
         return new Promise(function (resolve) { setTimeout(resolve, 0); });
       }).then(function () {
-        ensureDeterministicFormatReviewPreparation(body.editSequence, body.documentIdentity);
+        ensureDeterministicFormatReviewPreparation(
+          body.editSequence, body.documentIdentity, body.documentSessionId
+        );
         return request(
           "/word/format-review/snapshots/" + encodeURIComponent(session.snapshotId) +
             "/batches/" + batch.sequence,
@@ -11434,7 +11488,9 @@
     var committedGroups = 0;
 
     function next(remainingCalls) {
-      ensureDeterministicFormatReviewPreparation(body.editSequence, body.documentIdentity);
+      ensureDeterministicFormatReviewPreparation(
+        body.editSequence, body.documentIdentity, body.documentSessionId
+      );
       return request(
         "/word/format-review/snapshots/" + encodeURIComponent(session.snapshotId) + "/image-groups",
         {
@@ -11455,10 +11511,14 @@
           if (!imageObject) {
             throw new Error("未找到图片对象，已停止受控图片导出。");
           }
-          ensureDeterministicFormatReviewPreparation(body.editSequence, body.documentIdentity);
+          ensureDeterministicFormatReviewPreparation(
+            body.editSequence, body.documentIdentity, body.documentSessionId
+          );
           saveFormatReviewImageAsPng(imageObject, asset.slotPath);
         });
-        ensureDeterministicFormatReviewPreparation(body.editSequence, body.documentIdentity);
+        ensureDeterministicFormatReviewPreparation(
+          body.editSequence, body.documentIdentity, body.documentSessionId
+        );
         return request(
           "/word/format-review/snapshots/" + encodeURIComponent(session.snapshotId) +
             "/image-groups/" + encodeURIComponent(group.groupId) + "/commit",
@@ -11520,6 +11580,7 @@
       setResult(scope.message);
       return;
     }
+    scope.documentSessionId = currentDoc;
     setActiveResultRecord("word.format_review", currentDoc, null);
     clearDeterministicFormatReviewPresentation();
     clearDeterministicFormatReviewActiveJob(null, currentDoc);
@@ -11542,7 +11603,9 @@
       firstPass = snapshot;
       firstPass.batches = helpers.buildDeterministicFormatReviewBatches(firstPass, 3500);
       state.deterministicFormatReviewImageObjects = firstPass._imageObjects || {};
-      ensureDeterministicFormatReviewPreparation(firstPass.editSequence, firstPass.documentIdentity);
+      ensureDeterministicFormatReviewPreparation(
+        firstPass.editSequence, firstPass.documentIdentity, firstPass.documentSessionId
+      );
       state.deterministicFormatReviewDocumentIdentity = firstPass.documentIdentity;
       state.latestSelectionMode = firstPass.selectionMode;
       setStatus("正在创建格式快照会话...");
@@ -11591,7 +11654,9 @@
       return uploadDeterministicFormatReviewBatches(session, firstPass);
     }).then(function () {
       setStatus("正在执行第二遍格式结构与指纹验证...");
-      ensureDeterministicFormatReviewPreparation(firstPass.editSequence, firstPass.documentIdentity);
+      ensureDeterministicFormatReviewPreparation(
+        firstPass.editSequence, firstPass.documentIdentity, firstPass.documentSessionId
+      );
       var secondExtractionStartedAt = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
       if (typeof extractDeterministicFormatReviewSnapshotYielding === "function") {
         return extractDeterministicFormatReviewSnapshotYielding(scope).then(function (secondPass) {
