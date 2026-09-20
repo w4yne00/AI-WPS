@@ -1,7 +1,7 @@
 from copy import deepcopy
 from typing import Callable, Dict, Optional
 
-from app.core.errors import AdapterError
+from app.core.errors import AdapterError, ProviderTimeoutError
 from app.core.models import ExcelFormulaAssistantRequest
 from app.services.excel.formula_checks import inspect_formula
 from app.services.provider_client import ProviderClient
@@ -67,11 +67,33 @@ class ExcelFormulaAssistant:
             provider_kwargs["task_auth"] = task_auth
         if progress_callback is not None:
             provider_kwargs["progress_callback"] = progress_callback
-        result = self.provider_client.excel_formula_assistant(
-            request,
-            trace_id=trace_id,
-            **provider_kwargs
-        )
+        try:
+            result = self.provider_client.excel_formula_assistant(
+                request,
+                trace_id=trace_id,
+                **provider_kwargs
+            )
+            if hasattr(progress_callback, "record_metric"):
+                progress_callback.record_metric("providerOutcome", "success")
+        except ProviderTimeoutError:
+            if hasattr(progress_callback, "set_diagnostic_error_code"):
+                progress_callback.set_diagnostic_error_code("PROVIDER_TIMEOUT")
+            if hasattr(progress_callback, "record_metric"):
+                progress_callback.record_metric("providerOutcome", "provider_timeout")
+            raise
+        except AdapterError as exc:
+            if hasattr(progress_callback, "set_diagnostic_error_code"):
+                progress_callback.set_diagnostic_error_code(exc.code)
+            if hasattr(progress_callback, "record_metric"):
+                progress_callback.record_metric("providerOutcome", "provider_error")
+            raise
+        except Exception:
+            if hasattr(progress_callback, "set_diagnostic_error_code"):
+                progress_callback.set_diagnostic_error_code("EXCEL_FORMULA_JOB_FAILED")
+            if hasattr(progress_callback, "record_metric"):
+                progress_callback.record_metric("providerOutcome", "provider_error")
+            raise
+
         primary_formula = result.get("primaryFormula", "")
         alternative_formula = result.get("alternativeFormula", "")
         if alternative_formula == primary_formula:
