@@ -1205,6 +1205,23 @@ def test_preview_delivery_tree_contains_all_nine_tasks_and_smart_fill_assets(tmp
 
     assert (delivery / "packages/adapter-start-kit/adapter_service/app/services/excel/smart_fill.py").is_file()
     assert (delivery / "packages/adapter-start-kit/adapter_service/app/services/excel/smart_fill_jobs.py").is_file()
+    assert (delivery / "packages/adapter-start-kit/adapter_service/app/services/direct_text_stream.py").is_file()
+    assert (delivery / "docs/operations/runtime-config.md").is_file()
+
+    adapter_pkg_dir = str(delivery / "packages/adapter-start-kit/adapter_service")
+    sys.path.insert(0, adapter_pkg_dir)
+    try:
+        stream_spec = importlib.util.spec_from_file_location(
+            "assembled_direct_text_stream",
+            delivery / "packages/adapter-start-kit/adapter_service/app/services/direct_text_stream.py",
+        )
+        stream_mod = importlib.util.module_from_spec(stream_spec)
+        stream_spec.loader.exec_module(stream_mod)
+        assert hasattr(stream_mod, "read_direct_text_stream")
+        assert hasattr(stream_mod, "StreamingThinkFilter")
+    finally:
+        if adapter_pkg_dir in sys.path:
+            sys.path.remove(adapter_pkg_dir)
 
 
 def test_preview_audit_rejects_missing_or_substituted_prompt_task(tmp_path):
@@ -1444,3 +1461,118 @@ def test_preview_acceptance_template_covers_nine_tasks_and_pending_status(tmp_pa
     assert "320×700" in acceptance
     assert "420×900" in acceptance
     assert "目标机人工验收" in acceptance
+    assert "交互流式、毫秒诊断与回滚目标机验收" in acceptance
+    assert "AI_WPS_ENABLE_DIRECT_STREAMING" in acceptance
+    assert 'streamingCapability == "validated"' in acceptance
+    assert "关闭特性即时回滚" in acceptance
+    assert "每个试点任务、每个模型组合至少 30 次" in acceptance
+    assert "blocking/streaming 对照" in acceptance
+    assert "原始测试时间" in acceptance
+    assert "p50/p95/p99" in acceptance
+    assert "完整生成回归" in acceptance
+    assert "原始证据编号" in acceptance
+
+
+def test_preview_audit_rejects_missing_streaming_module(tmp_path):
+    delivery = _prepare_delivery(tmp_path)
+    audit = delivery / "scripts/audit_v0260_preview1_delivery.py"
+
+    generated = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "packaging/audit_phase1_delivery.py"),
+            str(delivery),
+            "--write-hashes",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert generated.returncode == 0, generated.stdout + generated.stderr
+
+    stream_file = (
+        delivery
+        / "packages/adapter-start-kit/adapter_service/app/services/direct_text_stream.py"
+    )
+    stream_file.unlink()
+
+    # When missing from inventory
+    rejected = subprocess.run(
+        [sys.executable, str(audit), str(delivery)],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert rejected.returncode != 0
+    assert "V0260_ALLOWLISTED_FILE_MISSING" in rejected.stdout
+
+    # When also removed from allowlist and hash manifest, streaming module contract catches it
+    allowlist_path = delivery / "release-allowlist.json"
+    allowlist = json.loads(allowlist_path.read_text(encoding="utf-8"))
+    allowlist["files"] = [
+        f for f in allowlist.get("files", [])
+        if "direct_text_stream.py" not in f
+    ]
+    allowlist_path.write_text(json.dumps(allowlist), encoding="utf-8")
+
+    hashes_path = delivery / "release-file-hashes.json"
+    hashes = json.loads(hashes_path.read_text(encoding="utf-8"))
+    hashes["files"] = {
+        k: v for k, v in hashes.get("files", {}).items()
+        if "direct_text_stream.py" not in k
+    }
+    hashes_path.write_text(json.dumps(hashes), encoding="utf-8")
+
+    rejected2 = subprocess.run(
+        [sys.executable, str(audit), str(delivery)],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert rejected2.returncode != 0
+    assert "V0260_STREAMING_MODULE_MISSING" in rejected2.stdout
+
+
+def test_preview_audit_rejects_broken_streaming_capability_integration(tmp_path):
+    delivery = _prepare_delivery(tmp_path)
+    audit = delivery / "scripts/audit_v0260_preview1_delivery.py"
+    writing_jobs = (
+        delivery
+        / "packages/adapter-start-kit/adapter_service/app/services/word/writing_jobs.py"
+    )
+    original = writing_jobs.read_text(encoding="utf-8")
+    broken = original.replace(
+        "and streaming_capability_validated(\n"
+        "                    task_auth.get(\"streamingCapability\")\n"
+        "                )",
+        "and task_auth.get(\"streamingCapability\") == \"validated\"",
+    )
+    assert broken != original
+    writing_jobs.write_text(broken, encoding="utf-8")
+
+    generated = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "packaging/audit_phase1_delivery.py"),
+            str(delivery),
+            "--write-hashes",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert generated.returncode == 0, generated.stdout + generated.stderr
+
+    rejected = subprocess.run(
+        [sys.executable, str(audit), str(delivery)],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert rejected.returncode != 0
+    assert "V0260_STREAMING_RUNTIME_CONTRACT_FAILED" in rejected.stdout

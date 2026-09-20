@@ -241,6 +241,7 @@
     documentReviewStopWaiting: null,
     fullDocumentReviewEnabled: false,
     deterministicFormatReviewEnabled: false,
+    directStreamingEnabled: false,
     deterministicFormatReviewJobId: "",
     deterministicFormatReviewPollStartedAt: 0,
     deterministicFormatReviewPollErrorCount: 0,
@@ -732,6 +733,7 @@
           documentSessionId: job.documentSessionId || "",
           traceId: job.traceId || "",
           startedAt: job.startedAt || Date.now(),
+          streamingEnabled: typeof job.streamingEnabled === "boolean" ? job.streamingEnabled : false,
           frontendVersion: FRONTEND_BUILD_VERSION
         });
         window.localStorage.setItem(key, record);
@@ -1085,6 +1087,9 @@
     );
     state.deterministicFormatReviewEnabled = Boolean(
       configData.features && configData.features.deterministicFormatReviewEnabled
+    );
+    state.directStreamingEnabled = Boolean(
+      configData.features && configData.features.directStreamingEnabled
     );
     renderWorkflowProfileManager();
     renderWorkflowProfileStrip();
@@ -7875,6 +7880,13 @@
       : "/word/smart-write/jobs";
   }
 
+  function writingJobUsesEvents(job) {
+    if (job && typeof job.streamingEnabled === "boolean") {
+      return job.streamingEnabled;
+    }
+    return Boolean(state.directStreamingEnabled);
+  }
+
   function setWritingJob(jobId, taskType, mode) {
     state.writingJobId = jobId || "";
     state.writingJobTaskType = jobId ? taskType : "";
@@ -8986,6 +8998,7 @@
       mode: mode,
       documentSessionId: docSession,
       documentPayload: JSON.parse(JSON.stringify(payload)),
+      streamingEnabled: Boolean(state.directStreamingEnabled),
       startedAt: startedAt
     };
     setActiveWritingJobRecord(taskType, docSession, jobRecord);
@@ -9007,6 +9020,7 @@
         setWritingJob(returnedJobId, taskType, mode);
         setTrace(body.traceId || job.traceId || returnedJobId);
         jobRecord.jobId = returnedJobId;
+        jobRecord.streamingEnabled = writingJobUsesEvents(job);
         setActiveWritingJobRecord(taskType, docSession, jobRecord);
         saveWritingActiveJob({
           jobId: returnedJobId,
@@ -9014,6 +9028,7 @@
           mode: mode,
           documentSessionId: docSession,
           traceId: body.traceId || job.traceId || "",
+          streamingEnabled: jobRecord.streamingEnabled,
           startedAt: startedAt
         });
         if (job.status === "completed") {
@@ -9033,7 +9048,7 @@
         if (typeof startWritingWaitFeedback === "function") {
           state.stopWritingWaitFeedback = startWritingWaitFeedback(returnedJobId, taskType);
         }
-        if (typeof pollWritingJobEvents === "function") {
+        if (writingJobUsesEvents(job) && typeof pollWritingJobEvents === "function") {
           pollWritingJobEvents(returnedJobId, taskType, mode, false, docSession, 0, 0);
         } else {
           pollWritingJob(returnedJobId, taskType, mode, false, docSession);
@@ -9044,7 +9059,7 @@
           return;
         }
         setStatus(writingTaskLabel(taskType) + "提交响应未确认，正在按任务编号恢复查询...");
-        if (typeof pollWritingJobEvents === "function") {
+        if (writingJobUsesEvents(jobRecord) && typeof pollWritingJobEvents === "function") {
           pollWritingJobEvents(jobId, taskType, mode, false, docSession, 0, 0);
         } else {
           pollWritingJob(jobId, taskType, mode, false, docSession);
@@ -9091,7 +9106,7 @@
     } else {
       setPlainResult("检测到未完成的写作任务，将继续查询 adapter 后台状态。\n任务编号：" + active.jobId);
     }
-    if (typeof pollWritingJobEvents === "function") {
+    if (writingJobUsesEvents(active) && typeof pollWritingJobEvents === "function") {
       pollWritingJobEvents(active.jobId, active.taskType, active.mode, true, docSession, 0, 0);
     } else {
       pollWritingJob(active.jobId, active.taskType, active.mode, true, docSession);

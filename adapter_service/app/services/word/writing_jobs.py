@@ -4,7 +4,10 @@ from copy import deepcopy
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.core.errors import AdapterError
-from app.core.features import direct_streaming_enabled
+from app.core.features import (
+    direct_streaming_enabled,
+    streaming_capability_validated,
+)
 from app.core.models import WordDocumentRequest
 from app.services.long_task_coordinator import (
     MAX_EVENT_WAIT_MS,
@@ -97,10 +100,16 @@ class WritingJobStore:
                         self._active_doc_sessions.pop(slot_key, None)
 
             task_auth = self.worker.snapshot_task_auth() if hasattr(self.worker, "snapshot_task_auth") else None
+            streaming_enabled = direct_streaming_enabled()
+            if isinstance(task_auth, dict):
+                task_auth = deepcopy(task_auth)
+                task_auth["directStreamingEnabled"] = streaming_enabled
             is_streaming = bool(
-                direct_streaming_enabled()
+                streaming_enabled
                 and isinstance(task_auth, dict)
-                and task_auth.get("streamingCapability") == "validated"
+                and streaming_capability_validated(
+                    task_auth.get("streamingCapability")
+                )
             )
             snapshot = {
                 "request": _copy_request(request),
@@ -123,6 +132,7 @@ class WritingJobStore:
                 public_metadata={
                     "runningMessage": "模型后台正在处理{0}，Adapter 会继续等待结果。".format(label),
                     "providerTimeoutSeconds": INTERACTIVE_WRITING_TIMEOUT_SECONDS,
+                    "streamingEnabled": is_streaming,
                 },
                 safe_failure_codes={
                     "MODEL_CONFIG_INCOMPLETE",

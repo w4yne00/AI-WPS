@@ -104,7 +104,13 @@ class WritingJobStoreTests(unittest.TestCase):
         worker.release.set()
         completed = self.wait_completed(store, started["jobId"])
         self.assertEqual(completed["result"]["rewrittenText"], "处理完成。")
-        self.assertEqual(worker.calls[0][2], {"configurationId": "snapshot-config"})
+        self.assertEqual(
+            worker.calls[0][2],
+            {
+                "configurationId": "snapshot-config",
+                "directStreamingEnabled": False,
+            },
+        )
 
     def test_smart_imitation_job_returns_completed_result(self):
         worker = BlockingWritingWorker()
