@@ -1075,7 +1075,7 @@ def test_preview_upgrade_allows_runtime_migration_fields_while_preserving_user_c
             )
         return subprocess.CompletedProcess(
             args=["fake-installer"],
-            returncode=0,
+            returncode=1 if len(calls) == 3 else 0,
             stdout=(
                 "adapter_state_transition_lock=stopped port=18101\n"
                 "release_generation=switched version=0.26.0-preview.1\n"
@@ -1086,8 +1086,10 @@ def test_preview_upgrade_allows_runtime_migration_fields_while_preserving_user_c
         )
 
     stop_calls = []
-    runtime_pids = iter((101, 202))
+    runtime_pids = iter((101, 202, 303))
     replacement_checks = []
+    rollback_checks = []
+    persistent_checks = []
     monkeypatch.setattr(lifecycle, "run_installer", fake_run_installer)
     monkeypatch.setattr(
         lifecycle,
@@ -1103,7 +1105,7 @@ def test_preview_upgrade_allows_runtime_migration_fields_while_preserving_user_c
     monkeypatch.setattr(
         lifecycle,
         "adapter_process_is_running",
-        lambda pid: pid == 202,
+        lambda pid: pid == 303,
     )
     monkeypatch.setattr(
         lifecycle,
@@ -1115,15 +1117,40 @@ def test_preview_upgrade_allows_runtime_migration_fields_while_preserving_user_c
         "verify_upgrade_replacement",
         lambda sentinels: replacement_checks.append(sentinels),
     )
+    monkeypatch.setattr(
+        lifecycle,
+        "seed_upgrade_persistent_data",
+        lambda environment: {Path(environment["AI_WPS_INSTALL_ROOT"]) / "state.bin": b"state"},
+    )
+    monkeypatch.setattr(
+        lifecycle,
+        "verify_upgrade_persistent_data",
+        lambda expected: persistent_checks.append(expected),
+    )
+    monkeypatch.setattr(
+        lifecycle,
+        "verify_upgrade_rollback_replacement",
+        lambda sentinels: rollback_checks.append(sentinels),
+    )
+    monkeypatch.setattr(
+        lifecycle,
+        "verify_latest_transaction_rolled_back",
+        lambda environment: rollback_checks.append(environment["AI_WPS_INSTALL_ROOT"]),
+    )
 
     reserved = iter((18101, 29137))
     lifecycle.run_preview_upgrade(
         tmp_path / "delivery", tmp_path, lambda: next(reserved)
     )
-    assert calls == [1, 2]
+    assert calls == [1, 2, 3]
     assert len(stop_calls) == 1
     assert replacement_checks == [
         [tmp_path / "preview-upgrade/home/ai-wps/old-file"]
+    ]
+    assert len(persistent_checks) == 2
+    assert rollback_checks == [
+        [tmp_path / "preview-upgrade/home/ai-wps/old-file"],
+        str(tmp_path / "preview-upgrade/home/ai-wps"),
     ]
 
 

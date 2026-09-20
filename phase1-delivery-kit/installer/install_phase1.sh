@@ -43,6 +43,8 @@ RUNTIME_BACKUP_VERIFIED="0"
 CANDIDATE_HEALTH_STATUS=""
 CANDIDATE_RECOVERY_SUMMARY=""
 PRESERVE_RECOVERY_CANDIDATE="0"
+PREVIOUS_ADAPTER_WAS_RUNNING="0"
+EARLY_FAILURE_GUARD_ACTIVE="0"
 
 log() {
   printf '%s\n' "$*"
@@ -1060,6 +1062,19 @@ restart_previous_adapter() {
   fi
 }
 
+restore_previous_adapter_after_early_failure() {
+  local status="$?"
+  trap - EXIT
+  if [ "$status" -ne 0 ] \
+    && [ "${EARLY_FAILURE_GUARD_ACTIVE:-0}" = "1" ] \
+    && [ "${PREVIOUS_ADAPTER_WAS_RUNNING:-0}" = "1" ] \
+    && ! adapter_port_is_listening; then
+    resolve_active_adapter
+    restart_previous_adapter
+  fi
+  exit "$status"
+}
+
 parse_arguments "$@"
 resolve_installation_principal
 resolve_python_binary
@@ -1085,6 +1100,12 @@ export AI_WPS_VAR_DIR="$VAR_DIR"
 recover_systemd_handoff
 ensure_wps_processes_stopped
 probe_current_install_readiness
+if [ "$CURRENT_INSTALL_PRESENT" = "1" ] \
+  && { [ "$CURRENT_INSTALL_READY" = "1" ] || adapter_port_is_listening; }; then
+  PREVIOUS_ADAPTER_WAS_RUNNING="1"
+fi
+EARLY_FAILURE_GUARD_ACTIVE="1"
+trap restore_previous_adapter_after_early_failure EXIT
 stop_adapter_for_state_transition
 reexec_as_target_if_needed
 
@@ -1160,11 +1181,13 @@ cleanup_installation_candidate() {
         ;;
     esac
   fi
-  if [ "${RELEASE_SWITCHED:-0}" = "1" ] \
+  if { [ "${PREVIOUS_ADAPTER_WAS_RUNNING:-0}" = "1" ] \
+      || [ "${RELEASE_SWITCHED:-0}" = "1" ]; } \
     && [ "$transaction_status" != "committed" ] \
     && [ "$transaction_status" != "recovery_activated" ] \
     && { [ "$transaction_status" != "ready_to_commit" ] \
-      || [ "${AI_WPS_DEFER_RELEASE_COMMIT:-0}" != "1" ]; }; then
+      || [ "${AI_WPS_DEFER_RELEASE_COMMIT:-0}" != "1" ]; } \
+    && ! adapter_port_is_listening; then
     resolve_active_adapter
     restart_previous_adapter
   fi
@@ -1202,6 +1225,7 @@ cleanup_installation_candidate() {
     restart_previous_adapter
   fi
 }
+EARLY_FAILURE_GUARD_ACTIVE="0"
 trap cleanup_installation_candidate EXIT
 
 log "phase1_install_start=true"
