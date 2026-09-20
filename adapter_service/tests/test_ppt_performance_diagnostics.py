@@ -89,6 +89,8 @@ class PptPerformanceDiagnosticsTests(unittest.TestCase):
         self.assertIn("phaseElapsedMs", completed)
         self.assertIn("phaseDurationsMs", completed)
         self.assertIn("queueWaitMs", completed)
+        self.assertIsInstance(completed.get("terminalAgeMs"), int)
+        self.assertGreaterEqual(completed["terminalAgeMs"], 0)
 
         # 秒级兼容字段保留
         self.assertIn("elapsedSeconds", completed)
@@ -239,6 +241,75 @@ class PptPerformanceDiagnosticsTests(unittest.TestCase):
         recent = [j for j in diagnostics["recentTerminalJobs"] if j["jobId"] == "ppt-slide-timeout-1"][0]
         self.assertEqual(recent.get("providerOutcome"), "provider_timeout")
         self.assertEqual(recent.get("errorCode"), "PROVIDER_TIMEOUT")
+
+    def test_ppt_slide_assistant_unconfigured_records_not_attempted_for_both_sources(self):
+        for source_mode in ("slide", "document"):
+            with self.subTest(source_mode=source_mode):
+                coordinator = LongTaskCoordinator()
+                fake_provider_client = MagicMock()
+                fake_provider_client.resolve_task_auth.return_value = {
+                    "accessMethod": "direct_model",
+                    "providerBaseUrl": "",
+                    "apiKey": "",
+                    "modelName": "",
+                }
+                unconfigured = AdapterError(
+                    "MODEL_CONFIG_INCOMPLETE",
+                    "未配置模型",
+                    status_code=400,
+                )
+                fake_provider_client.ppt_slide_assistant.side_effect = unconfigured
+                fake_provider_client.ppt_document_summary.side_effect = unconfigured
+
+                assistant = PptSlideAssistant(provider_client=fake_provider_client)
+                store = PptSlideAssistantJobStore(
+                    assistant=assistant,
+                    coordinator=coordinator,
+                )
+                payload = {
+                    "presentationId": "pres-perf-unconfigured-" + source_mode,
+                    "scene": "ppt",
+                    "sourceMode": source_mode,
+                    "clientJobId": "ppt-unconfigured-" + source_mode,
+                    "documentSessionId": "session-unconfigured-" + source_mode,
+                }
+                if source_mode == "slide":
+                    payload.update({
+                        "slide": {
+                            "index": 1,
+                            "title": "原标题",
+                            "subtitle": "副标题",
+                            "textBlocks": ["正文文本超过二十个字符以便触发优化模式。"],
+                        },
+                        "userInstruction": "精简语句",
+                    })
+                else:
+                    content_bytes = b"# Document Content\nSome detailed text"
+                    stored = store.document_file_store.store(
+                        "方案.md",
+                        "text/markdown",
+                        len(content_bytes),
+                        base64.b64encode(content_bytes).decode("ascii"),
+                    )
+                    payload.update({
+                        "fileToken": stored["fileToken"],
+                        "requestedSlideCount": 5,
+                        "userInstruction": "提炼要点",
+                    })
+
+                request = PptSlideAssistantRequest.parse_obj(payload)
+                store.start(request, trace_id="trace-unconfigured-" + source_mode)
+                completed = coordinator.wait(
+                    payload["clientJobId"],
+                    task_type="ppt.slide_assistant",
+                )
+
+                self.assertEqual(completed["status"], "failed")
+                self.assertEqual(
+                    completed["metrics"].get("providerOutcome"),
+                    "not_attempted",
+                )
+                self.assertEqual(completed.get("providerOutcome"), "not_attempted")
 
     def test_ppt_structure_review_success_records_millisecond_metrics_and_provider_outcome(self):
         fake_provider_client = MagicMock()

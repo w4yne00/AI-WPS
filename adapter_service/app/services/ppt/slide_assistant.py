@@ -167,7 +167,12 @@ class PptSlideAssistant:
             if hasattr(progress_callback, "set_diagnostic_error_code"):
                 progress_callback.set_diagnostic_error_code(exc.code)
             if hasattr(progress_callback, "record_metric"):
-                progress_callback.record_metric("providerOutcome", "provider_error")
+                progress_callback.record_metric(
+                    "providerOutcome",
+                    "not_attempted"
+                    if exc.code == "MODEL_CONFIG_INCOMPLETE"
+                    else "provider_error",
+                )
             raise
         except Exception:
             if hasattr(progress_callback, "set_diagnostic_error_code"):
@@ -223,7 +228,12 @@ class PptSlideAssistant:
             if hasattr(progress_callback, "set_diagnostic_error_code"):
                 progress_callback.set_diagnostic_error_code(exc.code)
             if hasattr(progress_callback, "record_metric"):
-                progress_callback.record_metric("providerOutcome", "provider_error")
+                progress_callback.record_metric(
+                    "providerOutcome",
+                    "not_attempted"
+                    if exc.code == "MODEL_CONFIG_INCOMPLETE"
+                    else "provider_error",
+                )
             raise
         except Exception:
             if hasattr(progress_callback, "set_diagnostic_error_code"):

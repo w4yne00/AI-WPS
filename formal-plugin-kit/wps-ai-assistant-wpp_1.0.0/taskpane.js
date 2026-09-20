@@ -174,6 +174,17 @@
     return record;
   }
 
+  function getTerminalCompletionTimestamp(job) {
+    var observedTimestamp = (typeof performance !== "undefined" && performance.now)
+      ? performance.now()
+      : Date.now();
+    var terminalAgeMs = Number(job && job.terminalAgeMs);
+    if (!Number.isFinite(terminalAgeMs) || terminalAgeMs < 0) {
+      return observedTimestamp;
+    }
+    return Math.max(0, observedTimestamp - terminalAgeMs);
+  }
+
   function recordTaskFirstRender(jobId, traceId, taskType, completionTimestamp) {
     var record = getTaskPerformance(jobId, traceId);
     if (!record) {
@@ -199,9 +210,29 @@
     if (!result || typeof result !== "object") {
       return { valid: false, message: "总结结果为空或不是有效对象。" };
     }
+    if (result.resultType !== "slide" && result.resultType !== "document") {
+      return { valid: false, message: "总结结果类型无效。" };
+    }
     if (result.resultType === "document") {
+      var hasDocumentEnvelope = (
+        typeof result.deckTitle === "string" &&
+        typeof result.documentSummary === "string" &&
+        typeof result.recommendedSlideCount === "number" &&
+        Array.isArray(result.slides) &&
+        result.slides.every(function (slide) {
+          return slide && typeof slide === "object" &&
+            typeof slide.index === "number" && slide.index > 0;
+        }) &&
+        typeof result.globalStyleAdvice === "string" &&
+        typeof result.plainText === "string" &&
+        (result.rawAnswer === null || typeof result.rawAnswer === "string") &&
+        (result.parseFallbackReason === null || typeof result.parseFallbackReason === "string")
+      );
+      if (!hasDocumentEnvelope) {
+        return { valid: false, message: "文档总结结果结构不完整。" };
+      }
       var hasDocumentStructure = Boolean(
-        (Array.isArray(result.slides) && result.slides.length > 0) ||
+        result.slides.length > 0 ||
         (result.deckTitle && String(result.deckTitle).trim()) ||
         (result.documentSummary && String(result.documentSummary).trim()) ||
         (result.plainText && String(result.plainText).trim()) ||
@@ -212,10 +243,22 @@
       }
       return { valid: true };
     }
+    var hasSlideEnvelope = (
+      typeof result.suggestedTitle === "string" &&
+      Array.isArray(result.bullets) &&
+      result.bullets.every(function (bullet) { return typeof bullet === "string"; }) &&
+      typeof result.conclusion === "string" &&
+      typeof result.plainText === "string" &&
+      (result.rawAnswer === null || typeof result.rawAnswer === "string") &&
+      (result.parseFallbackReason === null || typeof result.parseFallbackReason === "string")
+    );
+    if (!hasSlideEnvelope) {
+      return { valid: false, message: "单页总结结果结构不完整。" };
+    }
     var hasSlideContent = Boolean(
       (result.plainText && String(result.plainText).trim()) ||
       (result.suggestedTitle && String(result.suggestedTitle).trim()) ||
-      (Array.isArray(result.bullets) && result.bullets.length > 0) ||
+      result.bullets.length > 0 ||
       (result.conclusion && String(result.conclusion).trim()) ||
       (result.rawAnswer && String(result.rawAnswer).trim())
     );
@@ -229,19 +272,39 @@
     if (!result || typeof result !== "object") {
       return { valid: false, message: "结构审查结果为空或不是有效对象。" };
     }
+    var startSlide = result.reviewedRange && result.reviewedRange.startSlide;
+    var endSlide = result.reviewedRange && result.reviewedRange.endSlide;
+    var totalSlides = result.reviewedRange && result.reviewedRange.totalSlides;
     var hasRange = Boolean(
       result.reviewedRange &&
       typeof result.reviewedRange === "object" &&
-      typeof result.reviewedRange.startSlide === "number" &&
-      typeof result.reviewedRange.endSlide === "number"
+      Number.isInteger(startSlide) && startSlide > 0 &&
+      Number.isInteger(endSlide) && endSlide >= startSlide &&
+      Number.isInteger(totalSlides) && totalSlides >= endSlide
     );
+    var structuredLists = [
+      result.inferredChapters,
+      result.highPriorityIssues,
+      result.generalSuggestions,
+      result.slideRecommendations,
+      result.recommendedOutline,
+      result.pageRoles
+    ];
+    var hasStructureEnvelope = hasRange && structuredLists.every(function (items) {
+      return Array.isArray(items) && items.every(function (item) {
+        return item && typeof item === "object";
+      });
+    }) && typeof result.reviewConclusion === "string" && typeof result.plainText === "string";
+    if (!hasStructureEnvelope) {
+      return { valid: false, message: "结构审查结果范围或结构化字段不完整。" };
+    }
     var hasStructureData = Boolean(
-      hasRange ||
-      Array.isArray(result.pageRoles) ||
-      Array.isArray(result.highPriorityIssues) ||
-      Array.isArray(result.generalSuggestions) ||
-      Array.isArray(result.inferredChapters) ||
-      (result.reviewConclusion && String(result.reviewConclusion).trim())
+      result.pageRoles.length ||
+      result.highPriorityIssues.length ||
+      result.generalSuggestions.length ||
+      result.inferredChapters.length ||
+      (result.reviewConclusion && result.reviewConclusion.trim()) ||
+      (result.plainText && result.plainText.trim())
     );
     if (!hasStructureData) {
       return { valid: false, message: "结构审查结果缺少审查范围或结构化问题数据。" };
@@ -715,6 +778,10 @@
     byId("btn-run-primary").disabled = state.busy || state.workflowProfileMutationBusy;
     byId("btn-run-structure-review").disabled = state.busy || state.workflowProfileMutationBusy;
     renderProfileStrip();
+    renderProfileManager();
+    renderDirectServicesList();
+    renderTaskModelSelectionSection();
+    updateWorkflowEditorControls();
   }
 
   function setPptJobActionVisibility(job) {
@@ -1034,6 +1101,8 @@
   }
 
   function finishJob(jobId, result, targetDocSession) {
+    var traceId = arguments[3] || "";
+    var completionTimestamp = arguments[4];
     var pres = typeof getActivePresentation === "function" ? getActivePresentation() : null;
     var currentDocSession = (helpers.getDocumentSessionId && pres) ? helpers.getDocumentSessionId(pres) : state.documentSessionId;
     var jobSession = targetDocSession || currentDocSession;
@@ -1080,6 +1149,9 @@
     }
     state.result = result || {};
     renderResult(result || {});
+    if (typeof completionTimestamp === "number") {
+      recordTaskFirstRender(jobId, traceId, "ppt.slide_assistant", completionTimestamp);
+    }
     setStatus(statusText);
   }
 
@@ -1134,9 +1206,14 @@
         documentSessionId: docSession
       });
       if (job.status === "completed") {
-        var completionTimestamp = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
-        recordTaskFirstRender(jobId, body.traceId || (job && job.traceId), "ppt.slide_assistant", completionTimestamp);
-        finishJob(jobId, job.result || {}, docSession);
+        var completionTimestamp = getTerminalCompletionTimestamp(job);
+        finishJob(
+          jobId,
+          job.result || {},
+          docSession,
+          body.traceId || (job && job.traceId),
+          completionTimestamp
+        );
         return;
       }
       if (job.status === "failed") {
@@ -1254,9 +1331,8 @@
         documentSessionId: state.documentSessionId
       });
       if (job.status === "completed") {
-        var completionTimestamp = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
-        recordTaskFirstRender(jobId, traceId, "ppt.slide_assistant", completionTimestamp);
-        finishJob(jobId, job.result || {}, state.documentSessionId);
+        var completionTimestamp = getTerminalCompletionTimestamp(job);
+        finishJob(jobId, job.result || {}, state.documentSessionId, traceId, completionTimestamp);
         return;
       }
       var progress = helpers.describePptJobProgress(job, state.jobSourceMode, jobId);
@@ -1586,6 +1662,8 @@
   }
 
   function finishStructureJob(jobId, result, targetDocSession) {
+    var traceId = arguments[3] || "";
+    var completionTimestamp = arguments[4];
     var pres = typeof getActivePresentation === "function" ? getActivePresentation() : null;
     var currentDocSession = (helpers.getDocumentSessionId && pres) ? helpers.getDocumentSessionId(pres) : state.documentSessionId;
     var jobSession = targetDocSession || currentDocSession;
@@ -1630,6 +1708,9 @@
       return;
     }
     renderStructureResult(result || {});
+    if (typeof completionTimestamp === "number") {
+      recordTaskFirstRender(jobId, traceId, "ppt.structure_review", completionTimestamp);
+    }
     setStatus(statusText);
   }
 
@@ -1693,9 +1774,14 @@
       state.pollErrors = 0;
       saveStructureActiveJob({ jobId: jobId, startedAt: state.startedAt, documentSessionId: docSession });
       if (job.status === "completed") {
-        var completionTimestamp = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
-        recordTaskFirstRender(jobId, body.traceId || (job && job.traceId), "ppt.structure_review", completionTimestamp);
-        finishStructureJob(jobId, job.result || {}, docSession);
+        var completionTimestamp = getTerminalCompletionTimestamp(job);
+        finishStructureJob(
+          jobId,
+          job.result || {},
+          docSession,
+          body.traceId || (job && job.traceId),
+          completionTimestamp
+        );
         return;
       }
       if (job.status === "failed") {
@@ -1784,9 +1870,8 @@
       state.jobId = jobId;
       saveStructureActiveJob({ jobId: jobId, startedAt: state.startedAt, documentSessionId: docSession });
       if (job.status === "completed") {
-        var completionTimestamp = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
-        recordTaskFirstRender(jobId, traceId, "ppt.structure_review", completionTimestamp);
-        finishStructureJob(jobId, job.result || {}, docSession);
+        var completionTimestamp = getTerminalCompletionTimestamp(job);
+        finishStructureJob(jobId, job.result || {}, docSession, traceId, completionTimestamp);
         return;
       }
       progress = describeStructureProgress(job, jobId);
@@ -2671,7 +2756,7 @@
   }
 
   function updateWorkflowEditorControls() {
-    var disabled = state.workflowProfileMutationBusy;
+    var disabled = state.busy || state.workflowProfileMutationBusy;
     [
       "btn-back-workflow-editor",
       "workflow-editor-name",
@@ -3203,7 +3288,7 @@
     var target = event.target;
     var action = target && target.getAttribute("data-profile-action");
     var profileId = target && target.getAttribute("data-profile-id") || "";
-    if (!action || state.workflowProfileMutationBusy) {
+    if (!action || state.workflowProfileMutationBusy || state.busy) {
       return;
     }
     if (action === "retry") {
@@ -3577,7 +3662,7 @@
     var keyStatus = byId("direct-service-key-status");
     var btnClear = byId("btn-clear-direct-service-key");
     var errorBox = byId("direct-service-editor-error");
-    if (!serviceId || state.workflowProfileMutationBusy) {
+    if (!serviceId || state.workflowProfileMutationBusy || state.busy) {
       return;
     }
     if (typeof setWorkflowProfileMutationBusy === "function") {
@@ -3786,7 +3871,7 @@
     var serviceId = editor.serviceId;
     var revision = editor.revision;
     var statusNode = byId("direct-service-models-status");
-    if (!serviceId || state.workflowProfileMutationBusy) {
+    if (!serviceId || state.workflowProfileMutationBusy || state.busy) {
       return;
     }
     state.directServiceOperationId = Number(state.directServiceOperationId || 0) + 1;
@@ -4432,6 +4517,13 @@
     var taskKeys = (items[3] && items[3].data) || {};
     var longTasks = routes.longTaskCoordinator || {};
     var lines = ["最近一次任务诊断", ""];
+    var localPerformance = debug.traceId && typeof getTaskPerformance === "function"
+      ? getTaskPerformance(null, debug.traceId)
+      : null;
+    if (!localPerformance && typeof state !== "undefined" && state.lastTaskPerformance &&
+        (!debug.traceId || state.lastTaskPerformance.traceId === debug.traceId)) {
+      localPerformance = state.lastTaskPerformance;
+    }
 
     lines.push("- 前端版本：" + FRONTEND_BUILD_VERSION);
     lines.push("- 任务类型：" + (debug.taskType || "未记录"));
@@ -4498,20 +4590,20 @@
       }
     }
 
-    if (typeof state !== "undefined" && state.lastTaskPerformance) {
+    if (localPerformance) {
       lines.push("");
       lines.push("## 任务窗格本地耗时");
-      if (typeof state.lastTaskPerformance.clickToFeedbackMs === "number") {
-        lines.push("- 点击到反馈耗时：" + state.lastTaskPerformance.clickToFeedbackMs + " ms");
+      if (typeof localPerformance.clickToFeedbackMs === "number") {
+        lines.push("- 点击到反馈耗时：" + localPerformance.clickToFeedbackMs + " ms");
       }
-      if (typeof state.lastTaskPerformance.localExtractionMs === "number") {
-        lines.push("- 本地抽取耗时：" + state.lastTaskPerformance.localExtractionMs + " ms");
+      if (typeof localPerformance.localExtractionMs === "number") {
+        lines.push("- 本地抽取耗时：" + localPerformance.localExtractionMs + " ms");
       }
-      if (typeof state.lastTaskPerformance.clickToAdapterAcceptedMs === "number") {
-        lines.push("- 点击到后台接收耗时：" + state.lastTaskPerformance.clickToAdapterAcceptedMs + " ms");
+      if (typeof localPerformance.clickToAdapterAcceptedMs === "number") {
+        lines.push("- 点击到后台接收耗时：" + localPerformance.clickToAdapterAcceptedMs + " ms");
       }
-      if (typeof state.lastTaskPerformance.completionToFirstRenderMs === "number") {
-        lines.push("- 完成到首渲染耗时：" + state.lastTaskPerformance.completionToFirstRenderMs + " ms");
+      if (typeof localPerformance.completionToFirstRenderMs === "number") {
+        lines.push("- 完成到首渲染耗时：" + localPerformance.completionToFirstRenderMs + " ms");
       }
     }
 

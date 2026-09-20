@@ -2,17 +2,18 @@
 
 ## 当前功能实现：Issue #211 优化 PPT 任务毫秒诊断、结果校验与只读交互（2026-09-20）
 
+- **PR #223 审查修复**：结果门禁改为校验已知 `resultType`、完整结果信封、合法审查范围和结构化数组，同时保留后端明确支持的纯文本降级结果；长任务协调器新增单调 `terminalAgeMs`，任务窗格仅在所属会话的结果真实渲染后记录 `completionToFirstRenderMs`，不再为历史视图、其他文档或校验失败结果伪造首渲染耗时；单页/文档总结未配置模型统一记录 `providerOutcome = not_attempted`；运行中设置页所有写入口补齐 `state.busy` 门禁，诊断卡按 `traceId` 选择对应本地耗时。
 - **PPT 两类任务毫秒性能诊断扩展**：遵循 ADR-0132 Task 2 与 Issue #211 规格，将既有写作、审查与 Excel 性能诊断扩展至 PPT 两类核心任务（`ppt.slide_assistant` 幻灯片与文档智能总结、`ppt.structure_review` 结构审查）。长任务轮询接口与协调器终态诊断对外暴露统一单调毫秒指标（`elapsedMs`、`phaseElapsedMs`、`phaseDurationsMs`、`queueWaitMs`、`metrics`），并保留现有秒级兼容字段（`elapsedSeconds`、`phaseDurations`）；阻塞调用首包耗时严格为 `null`（`providerFirstVisibleMs = None`）。
 - **阶段耗时与真实上游结果捕获**：单页/文档总结与结构审查细分阶段（`preparing`、`provider_processing`、`parsing`），在发生模型超时或网络错误时真实记录 `providerOutcome`（`provider_timeout` 或 `provider_error`）及标准错误码，未配置模型时准确记录为 `not_attempted`。
-- **任务窗格全链路性能度量与高级诊断展示**：PPT 任务窗格在 `state.taskPerformanceByJobId` / `state.taskPerformanceByTraceId` 维护最多 50 条 LRU 性能记录，`state.lastTaskPerformance` 记录用户操作全生命周期毫秒耗时（点击到本地反馈 `clickToFeedbackMs`、本地数据准备 `localExtractionMs`、点击到 Adapter 接受请求 `clickToAdapterAcceptedMs`、完成到首渲染 `completionToFirstRenderMs`）。高级诊断卡片展示 `## 任务窗格本地耗时` 章节。
+- **任务窗格全链路性能度量与高级诊断展示**：PPT 任务窗格在 `state.taskPerformanceByJobId` / `state.taskPerformanceByTraceId` 维护最多 50 条按创建顺序有界淘汰的性能记录，记录用户操作全生命周期毫秒耗时（点击到本地反馈 `clickToFeedbackMs`、本地数据准备 `localExtractionMs`、点击到 Adapter 接受请求 `clickToAdapterAcceptedMs`、完成到首渲染 `completionToFirstRenderMs`）。高级诊断卡片按当前 `traceId` 展示对应的 `## 任务窗格本地耗时` 章节。
 - **总结与结构审查结果严格全结构化校验**：`validateSlideAssistantResult` 严格校验单页总结（有效标题、要点、结论或正文）与全篇文档总结（幻灯片列表、封面、摘要或正文）；`validateStructureReviewResult` 严格校验审查范围与结构化建议/问题数据。校验不通过时安全置为失败，绝不渲染伪造或残缺结果，不更新活动结果视图。
 - **运行中只读与管理入口交互隔离**：执行期间 `setRunDisabled(true)` 严格禁用会改变运行中任务的操作（来源模式切换、文件、幻灯片数量、指令输入、幻灯片范围、模型配置修改与重复提交）；同时保留设置/历史入口（`btn-open-settings`、`btn-open-history`）与既有结果复制（`btn-copy-result`、`btn-copy-structure-result`）等无冲突只读行为。在 `state.busy` 期间拦截直连服务新增/编辑/删除/模型覆盖保存等变更动作。
 - **后台任务完成会话隔离与历史无感查看**：`finishJob` 与 `finishStructureJob` 支持 `targetDocSession` 隔离，终态结果更新至对应演示文稿会话缓存；当用户正在查看历史（`state.historyOpen = true`）时，后台完成仅递增未读角标并提示“请返回查看”，绝不强制跳转覆盖当前历史视图。
 - **全量验证结论**：
-  - 本地 Docker Python 3.8 全量后端测试：`1496 passed / 55 skipped`；PPT 性能诊断专项 `5/5 passed`，PPT 全量测试 `123/123 passed`。
-  - 正式插件全量契约测试：`267/267 passed`（Docker 环境）；PPT 专项 `29/29 passed`（含性能诊断与只读交互专项 `7/7 passed`）。
+  - 麒麟 V10 ARM64 / Python 3.8 最终全量后端：`1484 passed / 55 skipped`；本地当前测试树为 `1497 passed / 54 skipped`，唯一额外失败是受限环境内嵌套启动 Chrome，已在沙箱外单独通过同一真实浏览器用例。
+  - 正式插件契约共 `268` 项：`267` 项非浏览器用例通过，`1` 项真实浏览器用例在沙箱外通过；PPT 专项 `30/30 passed`（性能诊断与只读交互专项 `8/8 passed`）。
   - `wps-addon` vitest 单元测试：`12/12 passed`，Vite 生产构建成功。
-  - Python 3.8 兼容性语法编译 `compileall` 与 `git diff --check` 全部通过。
+  - 真实 Chrome 下 PPT 任务窗格在 `320px`、`420px` 视口均无横向溢出；真实 WPS 交互仍未复测。
 
 ## 当前功能实现：Issue #210 优化 Excel 任务反馈、诊断与智能填写抽取（2026-09-20）
 
