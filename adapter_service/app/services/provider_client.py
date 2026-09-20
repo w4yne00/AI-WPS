@@ -3980,6 +3980,7 @@ class ProviderClient:
         task_auth: Dict,
         correction: bool = False,
         blocks: Optional[List[Dict]] = None,
+        progress_callback=None,
     ) -> object:
         if str(task_auth.get("accessMethod", "")) != ACCESS_DIRECT_MODEL:
             raise AdapterError(
@@ -4022,6 +4023,7 @@ class ProviderClient:
             max(self.settings.timeout_seconds, DOCUMENT_REVIEW_TIMEOUT_SECONDS),
             prompt_asset=prompt_asset,
             response_format=_full_document_review_chunk_response_format(),
+            progress_callback=progress_callback,
         )
         return FullDocumentReviewAnswer(
             str(body.get("answer", "")),
@@ -4034,6 +4036,7 @@ class ProviderClient:
         trace_id: str,
         task_auth: Dict,
         correction: bool = False,
+        progress_callback=None,
     ) -> object:
         if str(task_auth.get("accessMethod", "")) != ACCESS_DIRECT_MODEL:
             raise AdapterError(
@@ -4062,6 +4065,7 @@ class ProviderClient:
             max(self.settings.timeout_seconds, DOCUMENT_REVIEW_TIMEOUT_SECONDS),
             prompt_asset=prompt_asset,
             response_format=_full_document_review_aggregate_response_format(),
+            progress_callback=progress_callback,
         )
         return FullDocumentReviewAnswer(
             str(body.get("answer", "")),
@@ -5856,6 +5860,7 @@ class ProviderClient:
         prompt: str,
         task_auth: Optional[Dict] = None,
         output_token_budget: Optional[int] = None,
+        progress_callback=None,
     ) -> Dict:
         """Call the versioned format-semantics contract with hard budgets."""
         from copy import deepcopy
@@ -5937,6 +5942,7 @@ class ProviderClient:
                 input_data,
                 auth,
                 timeout_seconds=60,
+                progress_callback=progress_callback,
             )
         prompt = _format_semantic_prompt_with_schema(prompt, operation)
         FormatSemanticContract.require_input_budget(prompt)
@@ -5951,6 +5957,7 @@ class ProviderClient:
             image_files=input_data.get("image_files"),
             response_format=_format_semantic_response_format(operation),
             allow_response_format_fallback=True,
+            progress_callback=progress_callback,
         )
 
     def _post_workflow_format_semantics(
@@ -5960,6 +5967,7 @@ class ProviderClient:
         input_data: Dict,
         task_auth: Dict,
         timeout_seconds: int,
+        progress_callback=None,
     ) -> Dict:
         """Call Dify with only the fixed semantic inputs and read result_json."""
         provider_base_url = str(task_auth.get("providerBaseUrl", "")).rstrip("/")
@@ -6006,27 +6014,54 @@ class ProviderClient:
                 "X-Trace-Id": trace_id,
             },
         )
+        t_start = time.monotonic()
+        t_headers = None
+        t_complete = None
+
+        def publish_performance(parsed_at=None):
+            metrics = _provider_performance_metrics(
+                t_start,
+                headers_at=t_headers,
+                completed_at=t_complete,
+                parsed_at=parsed_at,
+            )
+            _publish_provider_performance(progress_callback, metrics)
+            merge_provider_debug(trace_id, {"performance": metrics})
+            return metrics
+
         try:
             with urllib_request.urlopen(req, timeout=timeout_seconds) as response:
-                raw_body = response.read().decode("utf-8")
+                t_headers = time.monotonic()
+                raw_bytes = response.read()
+                t_complete = time.monotonic()
+                raw_body = raw_bytes.decode("utf-8")
                 body = json.loads(raw_body)
         except error.HTTPError as exc:
+            t_headers = time.monotonic()
+            publish_performance()
             if exc.code in (401, 403):
                 raise ProviderAuthError("模型后台认证失败，请检查当前配置的 API Key。") from exc
             if exc.code == 429:
                 raise AdapterError("MODEL_RATE_LIMITED", "模型后台请求较多，请稍后重新提交。", status_code=429) from exc
             raise ProviderUnavailableError("模型后台返回 HTTP {0}。".format(exc.code)) from exc
         except error.URLError as exc:
+            publish_performance()
             reason = getattr(exc, "reason", "")
             if isinstance(reason, (TimeoutError, socket.timeout)) or "timed out" in str(reason).lower():
                 raise ProviderTimeoutError("模型处理超过当前任务等待时限。") from exc
             raise ProviderUnavailableError("无法访问模型后台，请检查服务地址和网络。") from exc
+        except (TimeoutError, socket.timeout) as exc:
+            publish_performance()
+            raise ProviderTimeoutError("模型处理超过当前任务等待时限。") from exc
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            publish_performance(time.monotonic())
             raise ProviderUnavailableError("模型后台返回了非 JSON 响应。") from exc
         except (IncompleteRead, RemoteDisconnected, ConnectionResetError, ConnectionAbortedError, BrokenPipeError) as exc:
+            publish_performance()
             raise ProviderMidStreamDisconnectError("模型后台在返回结果过程中断开连接。") from exc
         result_json = body.get("data", {}).get("outputs", {}).get("result_json") if isinstance(body, dict) else None
         if result_json is None:
+            publish_performance(time.monotonic())
             raise AdapterError(
                 "FORMAT_SEMANTIC_RESULT_JSON_MISSING",
                 "格式语义工作流未返回固定 result_json 输出。",
@@ -6036,23 +6071,27 @@ class ProviderClient:
             try:
                 result_json = json.loads(result_json)
             except json.JSONDecodeError as exc:
+                publish_performance(time.monotonic())
                 raise AdapterError(
                     "FORMAT_SEMANTIC_RESULT_JSON_INVALID",
                     "格式语义工作流的 result_json 不是有效 JSON。",
                     status_code=502,
                 ) from exc
         if not isinstance(result_json, dict):
+            publish_performance(time.monotonic())
             raise AdapterError(
                 "FORMAT_SEMANTIC_RESULT_JSON_INVALID",
                 "格式语义工作流的 result_json 必须是 JSON 对象。",
                 status_code=502,
             )
+        perf_metrics = publish_performance(time.monotonic())
         record_provider_debug(
             {
                 "traceId": trace_id,
                 "taskType": "word.format_review",
                 "url": url,
                 **debug_metadata,
+                "performance": perf_metrics,
                 "response": {"status": 200, "resultKeys": sorted(result_json.keys())},
             }
         )

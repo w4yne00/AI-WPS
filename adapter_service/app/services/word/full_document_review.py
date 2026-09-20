@@ -1,6 +1,7 @@
 import base64
 import binascii
 import hashlib
+import inspect
 import json
 import os
 import re
@@ -2068,6 +2069,18 @@ class FullDocumentReviewService:
                     status_code=409,
                 )
             state["callCount"] += 1
+            chunk_kwargs = {
+                "correction": correction,
+                "blocks": chunk["blocks"],
+            }
+            try:
+                sig = inspect.signature(self.provider_client.full_document_review_chunk)
+                if "progress_callback" in sig.parameters or any(
+                    p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+                ):
+                    chunk_kwargs["progress_callback"] = progress
+            except (TypeError, ValueError):
+                pass
             return self.provider_client.full_document_review_chunk(
                 chunk["sourceText"],
                 snapshot.get("traceId", ""),
@@ -2075,8 +2088,7 @@ class FullDocumentReviewService:
                 snapshot["documentType"],
                 snapshot["reviewPrompt"],
                 snapshot["taskAuth"],
-                correction=correction,
-                blocks=chunk["blocks"],
+                **chunk_kwargs,
             )
 
         def call_aggregate(payload: Dict, correction: bool = False) -> object:
@@ -2087,11 +2099,20 @@ class FullDocumentReviewService:
                     status_code=409,
                 )
             state["callCount"] += 1
+            agg_kwargs = {"correction": correction}
+            try:
+                sig = inspect.signature(self.provider_client.full_document_review_aggregate)
+                if "progress_callback" in sig.parameters or any(
+                    p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+                ):
+                    agg_kwargs["progress_callback"] = progress
+            except (TypeError, ValueError):
+                pass
             return self.provider_client.full_document_review_aggregate(
                 payload,
                 snapshot.get("traceId", ""),
                 snapshot["taskAuth"],
-                correction=correction,
+                **agg_kwargs,
             )
 
         try:
@@ -2139,6 +2160,8 @@ class FullDocumentReviewService:
                     state.get("limitedRanges", []),
                     state.get("aggregateResult"),
                 )
+                if hasattr(progress, "record_metric"):
+                    progress.record_metric("providerOutcome", "success")
                 return report
 
             chunk = state["pendingChunks"].pop(0)
@@ -2211,6 +2234,8 @@ class FullDocumentReviewService:
                 state.get("limitedRanges", []),
                 state.get("aggregateResult"),
             )
+            if hasattr(progress, "record_metric"):
+                progress.record_metric("providerOutcome", "success")
             return report
         except AdapterError as exc:
             if (

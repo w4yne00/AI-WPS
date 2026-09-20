@@ -29,6 +29,11 @@ function taskDiagnostics() {
       elapsedSeconds: 42,
       elapsedMs: 42350,
       queueWaitMs: 350,
+      phaseDurationsMs: {
+        extracting: 1200,
+        parsing: 50,
+        aggregating: 25
+      },
       metrics: {
         providerHeadersMs: 120,
         providerCompleteMs: 850,
@@ -93,6 +98,9 @@ function assertSanitized(text) {
     "超时数：7",
     "42",
     "42350",
+    "extracting 1200 ms",
+    "parsing 50 ms",
+    "aggregating 25 ms",
     "job-unique-42",
     "模型调用次数：2",
     "PROVIDER_TIMEOUT"

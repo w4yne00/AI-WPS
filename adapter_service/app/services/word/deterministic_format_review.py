@@ -1675,6 +1675,10 @@ class DeterministicFormatReviewService:
                 review_kwargs["image_assets"] = deepcopy(snapshot.get("imageAssets", []))
             if "image_asset_cleanup" in review_parameters:
                 review_kwargs["image_asset_cleanup"] = self.image_asset_store.delete_group
+            if "progress_callback" in review_parameters or any(
+                p.kind == inspect.Parameter.VAR_KEYWORD for p in review_parameters.values()
+            ):
+                review_kwargs["progress_callback"] = progress
             result = self.reviewer.review(request, **review_kwargs)
             if self.coordinator.is_cancel_requested(snapshot.get("jobId", ""), TASK_TYPE):
                 raise LongTaskCancelled()
@@ -1683,7 +1687,19 @@ class DeterministicFormatReviewService:
                 progress("provider_processing")
                 continuation = True
                 return LongTaskContinuation(snapshot, phase="provider_processing")
+            progress("aggregating")
             report = self._build_report(result, snapshot)
+            if hasattr(progress, "record_metric"):
+                report_summary = report.get("summary", {})
+                if not report_summary.get("aiAttempted"):
+                    provider_outcome = "not_attempted"
+                elif int(report_summary.get("aiRequestErrorCount", 0) or 0) > 0:
+                    provider_outcome = "provider_error"
+                elif report_summary.get("semanticStatus") == "completed":
+                    provider_outcome = "success"
+                else:
+                    provider_outcome = "degraded"
+                progress.record_metric("providerOutcome", provider_outcome)
             summary = report["summary"]
             return {
                 "summary": deepcopy(summary),

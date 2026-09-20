@@ -4,7 +4,7 @@ import threading
 import time
 from collections import deque
 from copy import deepcopy
-from typing import Callable, Deque, Dict, Optional, Set, Tuple
+from typing import Any, Callable, Deque, Dict, Optional, Set, Tuple
 
 from app.core.errors import AdapterError
 
@@ -831,13 +831,19 @@ class LongTaskCoordinator:
                     if current is not None and current["status"] == "running":
                         self._transition_phase_locked(current, phase, now)
 
-            def record_metric(ctrl_self, name: str, milliseconds: Optional[int]) -> None:
+            def record_metric(ctrl_self, name: str, value: Any) -> None:
                 with self._lock:
                     current = self._jobs.get(job_key)
                     if current is not None:
                         if "_metrics" not in current:
                             current["_metrics"] = {}
-                        current["_metrics"][name] = milliseconds
+                        current["_metrics"][name] = value
+
+            def set_diagnostic_error_code(ctrl_self, code: str) -> None:
+                with self._lock:
+                    current = self._jobs.get(job_key)
+                    if current is not None:
+                        current["_diagnosticErrorCode"] = str(code or "").strip()
 
             def record_provider_attempt(ctrl_self, attempt_metrics: Dict) -> None:
                 with self._lock:
@@ -1377,6 +1383,8 @@ class LongTaskCoordinator:
         if job.get("_allowRunningCancel") and not is_invalidated:
             public_job["cancelRequested"] = bool(job.get("_cancelRequested"))
         public_job.update(job.get("_publicMetadata", {}))
+        if "providerOutcome" in metrics:
+            public_job["providerOutcome"] = metrics["providerOutcome"]
         if effective_status in TERMINAL_STATUSES:
             public_job.pop("runningMessage", None)
         if is_invalidated:
@@ -1414,7 +1422,7 @@ class LongTaskCoordinator:
             remainder_phase=job.get("_lastTimedPhase"),
         )
         queue_wait_ms = durations_ms.get("queued", 0)
-        return {
+        diagnostic = {
             "jobId": job["jobId"],
             "traceId": job["traceId"],
             "taskType": job["taskType"],
@@ -1432,6 +1440,10 @@ class LongTaskCoordinator:
                 job.get("_diagnosticErrorCode") or error.get("code", "")
             ),
         }
+        provider_outcome = job.get("_metrics", {}).get("providerOutcome")
+        if provider_outcome is not None:
+            diagnostic["providerOutcome"] = provider_outcome
+        return diagnostic
 
 
 _SHARED_COORDINATOR = LongTaskCoordinator(

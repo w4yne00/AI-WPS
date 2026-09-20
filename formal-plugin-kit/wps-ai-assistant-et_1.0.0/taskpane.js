@@ -7321,13 +7321,18 @@
         var queueDesc = (typeof job.queueWaitMs === "number")
           ? ("，排队 " + job.queueWaitMs + " ms")
           : "";
+        var phaseDesc = Object.keys(job.phaseDurationsMs || {}).map(function (phase) {
+          return phase + " " + job.phaseDurationsMs[phase] + " ms";
+        }).join("、");
         lines.push(
           "- 最近任务 " + (job.jobId || "未记录") +
           (job.taskType ? "（" + job.taskType + "）" : "") +
           "：" + (job.status || "未记录") +
           "，耗时 " + elapsedDesc +
           queueDesc +
-          (job.errorCode ? "，错误码 " + job.errorCode : "")
+          (phaseDesc ? "，阶段 " + phaseDesc : "") +
+          (job.errorCode ? "，错误码 " + job.errorCode : "") +
+          (job.providerOutcome ? "，模型结果 " + job.providerOutcome : "")
         );
       });
     }
@@ -7335,6 +7340,9 @@
     if (debug.performance) {
       lines.push("");
       lines.push("## 模型服务耗时");
+      if (debug.performance.providerOutcome) {
+        lines.push("- 模型调用结果：" + debug.performance.providerOutcome);
+      }
       if (typeof debug.performance.providerAttempts === "number") {
         lines.push("- 模型调用次数：" + debug.performance.providerAttempts);
       }
