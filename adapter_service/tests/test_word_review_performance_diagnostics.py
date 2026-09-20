@@ -1,13 +1,15 @@
 import hashlib
+import json
 import os
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from app.core.errors import AdapterError, ProviderTimeoutError
 from app.core.models import WordDocumentRequest
 from app.services.long_task_coordinator import LongTaskCoordinator
+from app.services.provider_client import ProviderClient
 from app.services.word.document_review_jobs import DocumentReviewJobStore
 from app.services.word.document_reviewer import WordDocumentReviewer
 from app.services.word.full_document_review import FullDocumentReviewService
@@ -194,6 +196,99 @@ class WordReviewPerformanceDiagnosticsTests(unittest.TestCase):
         self.assertEqual(recent["errorCode"], "PROVIDER_UNREACHABLE")
         self.assertEqual(recent.get("providerOutcome"), "provider_error")
 
+    def test_workflow_format_semantics_publishes_blocking_provider_metrics(self):
+        class ProgressRecorder:
+            def __init__(self):
+                self.attempts = []
+
+            def record_provider_attempt(self, metrics):
+                self.attempts.append(metrics)
+
+        class FakeResponse:
+            status = 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return None
+
+            def read(self):
+                return json.dumps({
+                    "data": {
+                        "outputs": {
+                            "result_json": {"schemaVersion": "format_semantics.v1"},
+                        }
+                    }
+                }).encode("utf-8")
+
+        recorder = ProgressRecorder()
+        client = ProviderClient()
+        task_auth = {
+            "providerBaseUrl": "https://workflow.example.com/v1",
+            "providerChatPath": "/chat-messages",
+            "providerMode": "blocking",
+            "apiKey": "test-key",
+        }
+
+        with patch(
+            "app.services.provider_client.urllib_request.urlopen",
+            return_value=FakeResponse(),
+        ):
+            client._post_workflow_format_semantics(
+                "classify_role",
+                "trace-workflow-format-perf",
+                {"candidate_json": "{}"},
+                task_auth,
+                timeout_seconds=60,
+                progress_callback=recorder,
+            )
+
+        self.assertEqual(len(recorder.attempts), 1)
+        metrics = recorder.attempts[0]
+        self.assertIsInstance(metrics.get("providerHeadersMs"), int)
+        self.assertIsNone(metrics.get("providerFirstVisibleMs"))
+        self.assertIsInstance(metrics.get("providerCompleteMs"), int)
+        self.assertIsInstance(metrics.get("parseMs"), int)
+
+    def test_workflow_format_semantics_timeout_publishes_partial_metrics(self):
+        class ProgressRecorder:
+            def __init__(self):
+                self.attempts = []
+
+            def record_provider_attempt(self, metrics):
+                self.attempts.append(metrics)
+
+        recorder = ProgressRecorder()
+        client = ProviderClient()
+        task_auth = {
+            "providerBaseUrl": "https://workflow.example.com/v1",
+            "providerChatPath": "/chat-messages",
+            "providerMode": "blocking",
+            "apiKey": "test-key",
+        }
+
+        with patch(
+            "app.services.provider_client.urllib_request.urlopen",
+            side_effect=TimeoutError("timed out"),
+        ):
+            with self.assertRaises(ProviderTimeoutError):
+                client._post_workflow_format_semantics(
+                    "classify_role",
+                    "trace-workflow-format-timeout",
+                    {"candidate_json": "{}"},
+                    task_auth,
+                    timeout_seconds=60,
+                    progress_callback=recorder,
+                )
+
+        self.assertEqual(len(recorder.attempts), 1)
+        metrics = recorder.attempts[0]
+        self.assertIsNone(metrics.get("providerHeadersMs"))
+        self.assertIsNone(metrics.get("providerFirstVisibleMs"))
+        self.assertIsNone(metrics.get("providerCompleteMs"))
+        self.assertIsNone(metrics.get("parseMs"))
+
     def test_full_document_review_accumulates_chunk_and_aggregate_provider_metrics(self):
         service = FullDocumentReviewService(
             staging_root=Path(self.temp_dir.name) / "full-review",
@@ -329,7 +424,17 @@ class WordReviewPerformanceDiagnosticsTests(unittest.TestCase):
                     })
                 progress_callback("parsing")
             return {
-                "summary": {"totalIssues": 0, "paragraphIssues": 0, "tableIssues": 0, "figureIssues": 0, "pageSetupIssues": 0},
+                "summary": {
+                    "totalIssues": 0,
+                    "paragraphIssues": 0,
+                    "tableIssues": 0,
+                    "figureIssues": 0,
+                    "pageSetupIssues": 0,
+                    "aiAttempted": True,
+                    "aiRequestErrorCount": 1,
+                    "semanticStatus": "degraded",
+                    "aiFallbackReason": "provider_request_failed",
+                },
                 "issues": [],
                 "coverage": {},
                 "duplicateGroupCount": 0,
@@ -437,7 +542,7 @@ class WordReviewPerformanceDiagnosticsTests(unittest.TestCase):
         self.assertEqual(metrics.get("providerCompleteMs"), 250)
         self.assertEqual(metrics.get("parseMs"), 12)
         self.assertIsNone(metrics.get("providerFirstVisibleMs"))
-        self.assertEqual(metrics.get("providerOutcome"), "success")
+        self.assertEqual(metrics.get("providerOutcome"), "provider_error")
 
 
 if __name__ == "__main__":

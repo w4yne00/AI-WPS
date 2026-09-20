@@ -75,7 +75,10 @@ async function testDocumentReviewPerformanceLifecycle() {
     setTrace(traceId) { state.traceId = traceId; },
     setDocumentReviewJobId(jobId) { state.documentReviewJobId = jobId; },
     buildDocumentReviewClientJobId: () => "doc-review-client-1",
-    extractDocument: () => ({ plain_text: "测试文本", selectionMode: "document" }),
+    extractDocument: () => {
+      virtualTime += 30;
+      return { plain_text: "测试文本", selectionMode: "document" };
+    },
     getWritingPolicyScene: () => "auto",
     startDocumentReviewWaitFeedback: () => () => {},
     stopDocumentReviewWaitFeedback() {},
@@ -129,8 +132,9 @@ async function testDocumentReviewPerformanceLifecycle() {
   assert.ok(perf, "performance record should exist for document_review");
   assert.strictEqual(perf.taskType, "word.document_review");
   assert.strictEqual(typeof perf.clickToFeedbackMs, "number");
+  assert.strictEqual(perf.localExtractionMs, 30);
   assert.strictEqual(typeof perf.clickToAdapterAcceptedMs, "number");
-  assert.strictEqual(perf.clickToAdapterAcceptedMs, 120);
+  assert.strictEqual(perf.clickToAdapterAcceptedMs, 150);
 
   // 触发 requestAnimationFrame 提交首渲染耗时
   assert.strictEqual(perf.completionToFirstRenderMs, null);
@@ -181,17 +185,20 @@ async function testFullDocumentReviewPerformanceLifecycle() {
     setResult() {},
     setTrace(traceId) { state.traceId = traceId; },
     getWritingPolicyScene: () => "auto",
-    extractFullDocumentReviewBodyYielding: () => Promise.resolve({
-      documentId: "doc-1",
-      editSignal: 1,
-      reviewCharacterCount: 100,
-      contentSha256: "hash1",
-      structureSha256: "struct1",
-      blocks: [{}],
-      tableCount: 0,
-      cellCount: 0,
-      batches: [{}]
-    }),
+    extractFullDocumentReviewBodyYielding: () => {
+      virtualTime += 20;
+      return Promise.resolve({
+        documentId: "doc-1",
+        editSignal: 1,
+        reviewCharacterCount: 100,
+        contentSha256: "hash1",
+        structureSha256: "struct1",
+        blocks: [{}],
+        tableCount: 0,
+        cellCount: 0,
+        batches: [{}]
+      });
+    },
     ensureFullDocumentReviewPreparation() {},
     uploadFullDocumentReviewBatches: () => Promise.resolve(),
     saveFullDocumentReviewActiveJob() {},
@@ -254,8 +261,9 @@ async function testFullDocumentReviewPerformanceLifecycle() {
   assert.ok(perf, "performance record should exist for full_document_review");
   assert.strictEqual(perf.taskType, "word.document_review.full");
   assert.strictEqual(typeof perf.clickToFeedbackMs, "number");
+  assert.strictEqual(perf.localExtractionMs, 40);
   assert.strictEqual(typeof perf.clickToAdapterAcceptedMs, "number");
-  assert.strictEqual(perf.clickToAdapterAcceptedMs, 150);
+  assert.strictEqual(perf.clickToAdapterAcceptedMs, 190);
 
   // 首渲染耗时
   assert.strictEqual(perf.completionToFirstRenderMs, null);
@@ -304,24 +312,27 @@ async function testFormatReviewPerformanceLifecycle() {
     setPlainResult() {},
     setResult() {},
     setTrace(traceId) { state.traceId = traceId; },
-    extractDeterministicFormatReviewSnapshot: () => ({
-      documentId: "doc-fmt-1",
-      selectionMode: "document",
-      documentIdentity: { hostDocumentId: "host-1" },
-      editSequence: "1",
-      templateId: "tpl-1",
-      formatSnapshotSchemaVersion: "word.format_review.snapshot.v2",
-      formatFactSchemaVersion: "format_snapshot.v2",
-      pageSetup: {},
-      pageSetupFacts: {},
-      scope: {},
-      coverage: {},
-      contentSha256: "h1",
-      structureSha256: "s1",
-      formatSha256: "f1",
-      reviewCharacterCount: 50,
-      blocks: [{}]
-    }),
+    extractDeterministicFormatReviewSnapshot: () => {
+      virtualTime += 15;
+      return {
+        documentId: "doc-fmt-1",
+        selectionMode: "document",
+        documentIdentity: { hostDocumentId: "host-1" },
+        editSequence: "1",
+        templateId: "tpl-1",
+        formatSnapshotSchemaVersion: "word.format_review.snapshot.v2",
+        formatFactSchemaVersion: "format_snapshot.v2",
+        pageSetup: {},
+        pageSetupFacts: {},
+        scope: {},
+        coverage: {},
+        contentSha256: "h1",
+        structureSha256: "s1",
+        formatSha256: "f1",
+        reviewCharacterCount: 50,
+        blocks: [{}]
+      };
+    },
     ensureDeterministicFormatReviewPreparation() {},
     uploadDeterministicFormatReviewBatches: () => Promise.resolve(),
     exportDeterministicFormatReviewImageGroups: () => Promise.resolve(),
@@ -379,8 +390,9 @@ async function testFormatReviewPerformanceLifecycle() {
   assert.ok(perf, "performance record should exist for format_review");
   assert.strictEqual(perf.taskType, "word.format_review.deterministic");
   assert.strictEqual(typeof perf.clickToFeedbackMs, "number");
+  assert.strictEqual(perf.localExtractionMs, 30);
   assert.strictEqual(typeof perf.clickToAdapterAcceptedMs, "number");
-  assert.strictEqual(perf.clickToAdapterAcceptedMs, 90);
+  assert.strictEqual(perf.clickToAdapterAcceptedMs, 120);
 
   // 首渲染耗时
   assert.strictEqual(perf.completionToFirstRenderMs, null);
@@ -391,10 +403,142 @@ async function testFormatReviewPerformanceLifecycle() {
   assert.strictEqual(state.lastTaskPerformance, perf);
 }
 
+async function testFullDocumentReviewRenderFailureKeepsFirstRenderNull() {
+  let virtualTime = 4000;
+  const pendingFrames = [];
+  const state = {
+    documentSessionId: "doc-session-full-failure",
+    fullDocumentReviewJobId: "job-full-failure",
+    taskPerformanceByJobId: {},
+    taskPerformanceByTraceId: {},
+    taskPerformanceOrder: [],
+    lastTaskPerformance: null
+  };
+  const context = {
+    state,
+    performance: { now: () => virtualTime },
+    Date: { now: () => virtualTime },
+    helpers: { getDocumentSessionId: () => state.documentSessionId },
+    getActiveDocument: () => ({}),
+    setTrace() {},
+    cleanupFullDocumentReviewTerminal() {},
+    renderFullDocumentReviewEntry() {},
+    setActiveResultRecord() {},
+    renderFullDocumentReviewReport: () => Promise.reject(new Error("report failed")),
+    setStatus() {},
+    setResult() {},
+    describeFetchError: (error) => error.message,
+    isFullDocumentReviewPermanentPollError: () => false,
+    setTimeout() {},
+    requestAnimationFrame: (callback) => pendingFrames.push(callback),
+    DOCUMENT_REVIEW_POLL_REQUEST_TIMEOUT_MS: 30000,
+    DOCUMENT_REVIEW_POLL_INTERVAL_MS: 1000,
+    DOCUMENT_REVIEW_PHASE_TEXT: {},
+    request: (url) => Promise.resolve(url.includes("/report")
+      ? { data: { snapshot: {}, coverage: {} } }
+      : { traceId: "trace-full-failure", data: { status: "completed" } })
+  };
+  const fns = loadFunctions([
+    "getTaskPerformance",
+    "beginTaskPerformance",
+    "bindTaskPerformanceTrace",
+    "recordTaskFirstRender",
+    "pollFullDocumentReviewJob"
+  ], context);
+  const perf = fns.beginTaskPerformance(
+    "job-full-failure",
+    "word.document_review.full",
+    virtualTime,
+    0
+  );
+  fns.bindTaskPerformanceTrace(
+    "job-full-failure",
+    "trace-full-failure",
+    "job-full-failure"
+  );
+
+  fns.pollFullDocumentReviewJob("job-full-failure", state.documentSessionId);
+  for (let index = 0; index < 10; index += 1) {
+    await Promise.resolve();
+  }
+
+  assert.strictEqual(perf.completionToFirstRenderMs, null);
+  assert.strictEqual(pendingFrames.length, 0);
+}
+
+async function testFormatReviewReportFailureKeepsFirstRenderNull() {
+  let virtualTime = 5000;
+  const pendingFrames = [];
+  const state = {
+    documentSessionId: "doc-session-format-failure",
+    deterministicFormatReviewJobId: "job-format-failure",
+    currentMode: "formatReview",
+    taskPerformanceByJobId: {},
+    taskPerformanceByTraceId: {},
+    taskPerformanceOrder: [],
+    lastTaskPerformance: null
+  };
+  const context = {
+    state,
+    performance: { now: () => virtualTime },
+    Date: { now: () => virtualTime },
+    helpers: { getDocumentSessionId: () => state.documentSessionId },
+    getActiveDocument: () => ({}),
+    setTrace() {},
+    cleanupDeterministicFormatReviewTerminal() {},
+    loadDeterministicFormatReviewReport: () => Promise.reject(new Error("report failed")),
+    clearDeterministicFormatReviewPresentation() {},
+    setModelTaskBusy() {},
+    setDocumentReviewCancelVisible() {},
+    setStatus() {},
+    setPlainResult() {},
+    describeFetchError: (error) => error.message,
+    setTimeout() {},
+    requestAnimationFrame: (callback) => pendingFrames.push(callback),
+    DETERMINISTIC_FORMAT_REVIEW_REQUEST_TIMEOUT_MS: 30000,
+    DETERMINISTIC_FORMAT_REVIEW_POLL_INTERVAL_MS: 1000,
+    request: () => Promise.resolve({
+      traceId: "trace-format-failure",
+      data: { status: "completed" }
+    })
+  };
+  const fns = loadFunctions([
+    "getTaskPerformance",
+    "beginTaskPerformance",
+    "bindTaskPerformanceTrace",
+    "recordTaskFirstRender",
+    "pollDeterministicFormatReviewJob"
+  ], context);
+  const perf = fns.beginTaskPerformance(
+    "job-format-failure",
+    "word.format_review.deterministic",
+    virtualTime,
+    0
+  );
+  fns.bindTaskPerformanceTrace(
+    "job-format-failure",
+    "trace-format-failure",
+    "job-format-failure"
+  );
+
+  fns.pollDeterministicFormatReviewJob(
+    "job-format-failure",
+    state.documentSessionId
+  );
+  for (let index = 0; index < 10; index += 1) {
+    await Promise.resolve();
+  }
+
+  assert.strictEqual(perf.completionToFirstRenderMs, null);
+  assert.strictEqual(pendingFrames.length, 0);
+}
+
 Promise.all([
   testDocumentReviewPerformanceLifecycle(),
   testFullDocumentReviewPerformanceLifecycle(),
-  testFormatReviewPerformanceLifecycle()
+  testFormatReviewPerformanceLifecycle(),
+  testFullDocumentReviewRenderFailureKeepsFirstRenderNull(),
+  testFormatReviewReportFailureKeepsFirstRenderNull()
 ]).then(() => {
   console.log("All Word review performance lifecycle tests passed");
 }).catch((err) => {

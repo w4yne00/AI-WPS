@@ -472,6 +472,7 @@
       taskType: taskType,
       clickTimestamp: clickTimestamp,
       clickToFeedbackMs: clickToFeedbackMs,
+      localExtractionMs: null,
       clickToAdapterAcceptedMs: null,
       completionToFirstRenderMs: null
     };
@@ -2513,12 +2514,16 @@
         var queueDesc = (typeof job.queueWaitMs === "number")
           ? ("，排队 " + job.queueWaitMs + " ms")
           : "";
+        var phaseDesc = Object.keys(job.phaseDurationsMs || {}).map(function (phase) {
+          return phase + " " + job.phaseDurationsMs[phase] + " ms";
+        }).join("、");
         lines.push(
           "- 最近任务 " + (job.jobId || "未记录") +
           (job.taskType ? "（" + job.taskType + "）" : "") +
           "：" + (job.status || "未记录") +
           "，耗时 " + elapsedDesc +
           queueDesc +
+          (phaseDesc ? "，阶段 " + phaseDesc : "") +
           (job.errorCode ? "，错误码 " + job.errorCode : "") +
           (job.providerOutcome ? "，模型结果 " + job.providerOutcome : "")
         );
@@ -2555,6 +2560,9 @@
       lines.push("## 任务窗格本地耗时");
       if (typeof state.lastTaskPerformance.clickToFeedbackMs === "number") {
         lines.push("- 点击到反馈耗时：" + state.lastTaskPerformance.clickToFeedbackMs + " ms");
+      }
+      if (typeof state.lastTaskPerformance.localExtractionMs === "number") {
+        lines.push("- 本地抽取耗时：" + state.lastTaskPerformance.localExtractionMs + " ms");
       }
       if (typeof state.lastTaskPerformance.clickToAdapterAcceptedMs === "number") {
         lines.push("- 点击到后台接收耗时：" + state.lastTaskPerformance.clickToAdapterAcceptedMs + " ms");
@@ -9918,9 +9926,6 @@
                 recordTaskFirstRender(jobId, body.traceId || job.traceId || jobId, "word.document_review.full", completionTimestamp);
               }
             }).catch(function (error) {
-              if (typeof recordTaskFirstRender === "function") {
-                recordTaskFirstRender(jobId, body.traceId || job.traceId || jobId, "word.document_review.full", completionTimestamp);
-              }
               setStatus("全篇审查报告分页读取失败：" + describeFetchError(error));
             });
           } else if (typeof recordTaskFirstRender === "function") {
@@ -10024,7 +10029,8 @@
     var readiness = getFullDocumentReviewReadiness();
     var firstPass;
     var session = null;
-    var firstPassStartedAt = Date.now();
+    var firstPassStartedAt = null;
+    var localExtractionMs = 0;
     var currentDoc = (helpers.getDocumentSessionId && getActiveDocument) ? helpers.getDocumentSessionId(getActiveDocument()) : state.documentSessionId;
     var docDisplayName = (helpers.getDocumentDisplayName && getActiveDocument)
       ? helpers.getDocumentDisplayName(getActiveDocument())
@@ -10069,10 +10075,14 @@
     setStatus("正在执行第一遍轻量抽取...");
     var feedbackTimestamp = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
     var clickToFeedbackMs = Math.max(0, Math.round(feedbackTimestamp - clickTimestamp));
+    firstPassStartedAt = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
     return extractFullDocumentReviewBodyYielding().then(function (body) {
       firstPass = body;
       ensureFullDocumentReviewPreparation(firstPass.editSignal);
-      firstPass.firstPassDurationMs = Date.now() - firstPassStartedAt;
+      firstPass.firstPassDurationMs = Math.max(0, Math.round(
+        ((typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now()) - firstPassStartedAt
+      ));
+      localExtractionMs += firstPass.firstPassDurationMs;
       setStatus("正在创建全篇审查快照...");
       return request("/word/document-review/full/snapshots", {
         documentId: firstPass.documentId,
@@ -10095,11 +10105,14 @@
       return uploadFullDocumentReviewBatches(session, firstPass);
     }).then(function () {
       setStatus("正在执行第二遍轻量哈希验证...");
-      firstPass.secondPassStartedAt = Date.now();
+      firstPass.secondPassStartedAt = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
       ensureFullDocumentReviewPreparation(firstPass.editSignal);
       return extractFullDocumentReviewBodyYielding();
     }).then(function (secondPass) {
-      secondPass.secondPassDurationMs = Date.now() - firstPass.secondPassStartedAt;
+      secondPass.secondPassDurationMs = Math.max(0, Math.round(
+        ((typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now()) - firstPass.secondPassStartedAt
+      ));
+      localExtractionMs += secondPass.secondPassDurationMs;
       if (firstPass.contentSha256 !== secondPass.contentSha256 ||
           firstPass.structureSha256 !== secondPass.structureSha256 ||
           firstPass.reviewCharacterCount !== secondPass.reviewCharacterCount ||
@@ -10171,6 +10184,7 @@
           )
         : null;
       if (taskPerformance) {
+        taskPerformance.localExtractionMs = localExtractionMs;
         taskPerformance.clickToAdapterAcceptedMs = Math.max(0, Math.round(now - clickTimestamp));
       }
       if (typeof bindTaskPerformanceTrace === "function") {
@@ -10286,6 +10300,7 @@
 
   function runDocumentReview() {
     var clickTimestamp = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+    var localExtractionMs = 0;
     var scope;
     var currentDoc = (helpers.getDocumentSessionId && getActiveDocument) ? helpers.getDocumentSessionId(getActiveDocument()) : state.documentSessionId;
     var docDisplayName = (helpers.getDocumentDisplayName && getActiveDocument)
@@ -10331,7 +10346,11 @@
       var clientJobId;
       var startedAt;
       try {
+        var extractionStartedAt = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
         state.latestDocumentPayload = extractDocument(scope.selectionMode, null, DOCUMENT_REVIEW_EXTRACTION_OPTIONS);
+        localExtractionMs = Math.max(0, Math.round(
+          ((typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now()) - extractionStartedAt
+        ));
         state.latestDocumentPayload.writingPolicyScene = getWritingPolicyScene();
         state.latestSelectionMode = state.latestDocumentPayload.selectionMode;
         state.latestDocumentPayload.host = "wps";
@@ -10362,6 +10381,9 @@
             clickToFeedbackMs
           )
         : null;
+      if (taskPerformance) {
+        taskPerformance.localExtractionMs = localExtractionMs;
+      }
       if (helpers.claimTaskSlot) {
         helpers.claimTaskSlot(state.activeTaskSlots, "wps", "word.document_review", currentDoc, clientJobId);
       }
@@ -10710,9 +10732,6 @@
             setDocumentReviewCancelVisible(false, false);
             setStatus("确定性格式审查完成，但报告读取失败：" + describeFetchError(error));
             setPlainResult("本次格式审查已完成，但中文报告未能读取；旧结果不会复用，请重新审查。");
-          }
-          if (typeof recordTaskFirstRender === "function") {
-            recordTaskFirstRender(jobId, body.traceId || job.traceId || jobId, "word.format_review.deterministic", completionTimestamp);
           }
         });
         return;
@@ -11120,6 +11139,7 @@
 
   function runDeterministicFormatReview() {
     var clickTimestamp = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+    var localExtractionMs = 0;
     var scope;
     var firstPass;
     var session = null;
@@ -11173,7 +11193,11 @@
     var clickToFeedbackMs = Math.max(0, Math.round(feedbackTimestamp - clickTimestamp));
     setTimeout(function () {
       try {
+        var extractionStartedAt = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
         firstPass = extractDeterministicFormatReviewSnapshot(scope);
+        localExtractionMs += Math.max(0, Math.round(
+          ((typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now()) - extractionStartedAt
+        ));
         firstPass.batches = helpers.buildDeterministicFormatReviewBatches(firstPass, 3500);
         state.deterministicFormatReviewImageObjects = firstPass._imageObjects || {};
         ensureDeterministicFormatReviewPreparation(firstPass.editSequence, firstPass.documentIdentity);
@@ -11216,7 +11240,12 @@
         return new Promise(function (resolve, reject) {
           setTimeout(function () {
             try {
-              resolve(extractDeterministicFormatReviewSnapshot(scope));
+              var secondExtractionStartedAt = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+              var secondPass = extractDeterministicFormatReviewSnapshot(scope);
+              localExtractionMs += Math.max(0, Math.round(
+                ((typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now()) - secondExtractionStartedAt
+              ));
+              resolve(secondPass);
             } catch (error) {
               reject(error);
             }
@@ -11300,6 +11329,7 @@
             )
           : null;
         if (taskPerformance) {
+          taskPerformance.localExtractionMs = localExtractionMs;
           taskPerformance.clickToAdapterAcceptedMs = Math.max(0, Math.round(now - clickTimestamp));
         }
         if (typeof bindTaskPerformanceTrace === "function") {

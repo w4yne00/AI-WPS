@@ -1690,7 +1690,16 @@ class DeterministicFormatReviewService:
             progress("aggregating")
             report = self._build_report(result, snapshot)
             if hasattr(progress, "record_metric"):
-                progress.record_metric("providerOutcome", "success")
+                report_summary = report.get("summary", {})
+                if not report_summary.get("aiAttempted"):
+                    provider_outcome = "not_attempted"
+                elif int(report_summary.get("aiRequestErrorCount", 0) or 0) > 0:
+                    provider_outcome = "provider_error"
+                elif report_summary.get("semanticStatus") == "completed":
+                    provider_outcome = "success"
+                else:
+                    provider_outcome = "degraded"
+                progress.record_metric("providerOutcome", provider_outcome)
             summary = report["summary"]
             return {
                 "summary": deepcopy(summary),

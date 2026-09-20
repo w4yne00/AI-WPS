@@ -7321,12 +7321,16 @@
         var queueDesc = (typeof job.queueWaitMs === "number")
           ? ("，排队 " + job.queueWaitMs + " ms")
           : "";
+        var phaseDesc = Object.keys(job.phaseDurationsMs || {}).map(function (phase) {
+          return phase + " " + job.phaseDurationsMs[phase] + " ms";
+        }).join("、");
         lines.push(
           "- 最近任务 " + (job.jobId || "未记录") +
           (job.taskType ? "（" + job.taskType + "）" : "") +
           "：" + (job.status || "未记录") +
           "，耗时 " + elapsedDesc +
           queueDesc +
+          (phaseDesc ? "，阶段 " + phaseDesc : "") +
           (job.errorCode ? "，错误码 " + job.errorCode : "") +
           (job.providerOutcome ? "，模型结果 " + job.providerOutcome : "")
         );
