@@ -4046,6 +4046,67 @@
     };
   }
 
+  function monotonicNow() {
+    return (typeof performance !== "undefined" && performance && typeof performance.now === "function")
+      ? performance.now()
+      : Date.now();
+  }
+
+  function runChunkedRange(start, count, processItem, options) {
+    options = options || {};
+    var budgetMs = Number(options.budgetMs || 50);
+    var checkCancelled = options.checkCancelled;
+    var onProgress = options.onProgress;
+    var delayMs = typeof options.delayMs === "number" ? options.delayMs : 0;
+    var itemTimeAdvanceMs = Number(options.itemTimeAdvanceMs || 0);
+    var index = start;
+
+    return new Promise(function (resolve, reject) {
+      function step() {
+        try {
+          if (checkCancelled) {
+            checkCancelled();
+          }
+          var sliceStart = monotonicNow();
+          while (index <= count) {
+            processItem(index);
+            if (itemTimeAdvanceMs > 0 && typeof options.advanceTime === "function") {
+              options.advanceTime(itemTimeAdvanceMs);
+            }
+            index += 1;
+            if (index <= count) {
+              var elapsed = monotonicNow() - sliceStart;
+              if (elapsed >= budgetMs) {
+                if (onProgress) {
+                  onProgress(index - 1, count);
+                }
+                setTimeout(step, delayMs);
+                return;
+              }
+            }
+          }
+          if (onProgress) {
+            onProgress(count, count);
+          }
+          resolve();
+        } catch (err) {
+          reject(err);
+        }
+      }
+      step();
+    });
+  }
+
+  function runChunkedArray(array, processItem, options) {
+    var items = Array.isArray(array) ? array : [];
+    if (!items.length) {
+      return Promise.resolve();
+    }
+    return runChunkedRange(0, items.length - 1, function (idx) {
+      processItem(items[idx], idx);
+    }, options);
+  }
+
   function collectFullDocumentReviewTables(document, options) {
     var collection = getTableCollection(document);
     var tables = [];
@@ -4059,6 +4120,29 @@
       ));
     }
     return tables;
+  }
+
+  function collectFullDocumentReviewTablesYielding(document, options, loopOptions) {
+    var opts = options;
+    var lOpts = loopOptions;
+    if (options && !loopOptions && (options.budgetMs || options.checkCancelled || options.onProgress || options.itemTimeAdvanceMs)) {
+      lOpts = options;
+      opts = null;
+    }
+    var collection = getTableCollection(document);
+    var count = readCollectionCount(collection);
+    var tables = [];
+    return runChunkedRange(1, count, function (index) {
+      tables.push(readFullDocumentReviewTable(
+        getCollectionItem(collection, index),
+        index,
+        "",
+        [{ tableIndex: index, rowIndex: 0, columnIndex: 0 }],
+        opts
+      ));
+    }, lOpts).then(function () {
+      return tables;
+    });
   }
 
   function readFullDocumentReviewEditSignal(document) {
@@ -4660,6 +4744,147 @@
     return coverage;
   }
 
+  function collectDeterministicFormatReviewImages(document, paragraphs) {
+    var images = [];
+    var objects = {};
+    var sources = [
+      firstDefined(safeRead(document, "InlineShapes"), safeRead(document, "inlineShapes")),
+      firstDefined(safeRead(document, "Shapes"), safeRead(document, "shapes"))
+    ];
+    var paragraphList = Array.isArray(paragraphs) ? paragraphs : [];
+
+    function readImageObject(item, index, sourceType) {
+      if (!item) {
+        return;
+      }
+      var type = firstDefined(safeRead(item, "Type"), safeRead(item, "type"));
+      var typeText = String(type || "").toLowerCase();
+      var isFloatingPicture = sourceType !== "floating" ||
+        type === 13 || type === 11 || /picture|image|inlinepicture|inline_image/.test(typeText) ||
+        safeRead(item, "IsPicture") === true || safeRead(item, "isPicture") === true;
+      var hostId = String(firstDefined(
+        safeRead(item, "Id"), safeRead(item, "ID"), safeRead(item, "Name"), safeRead(item, "name")
+      ) || (sourceType + "-" + index));
+      var imageId = "wps-image-" + sha256Text(sourceType + ":" + hostId + ":" + index).slice(0, 24);
+      var paragraphIndex = Number(firstDefined(
+        safeRead(item, "ParagraphIndex"), safeRead(item, "paragraphIndex"),
+        safeRead(item, "AnchorParagraphIndex"), safeRead(item, "anchorParagraphIndex")
+      ) || 0);
+      if (!isFloatingPicture) {
+        return;
+      }
+      var altText = String(firstDefined(
+        safeRead(item, "AlternativeText"), safeRead(item, "AltText"), safeRead(item, "altText")
+      ) || "");
+      var nearbyParas = paragraphList.filter(function (paragraph) {
+        var indexValue = Number(paragraph && paragraph.index || 0);
+        return paragraphIndex > 0 && Math.abs(indexValue - paragraphIndex) <= 1 && paragraph.text;
+      });
+      var nearby = nearbyParas.map(function (paragraph) { return String(paragraph.text || ""); });
+      var hasCaption = nearby.some(function (text) {
+        return /^(图|figure)\s*[0-9０-９一二三四五六七八九十]+[：:.、\s]/i.test(text.trim());
+      });
+      var rangeSource = paragraphList.filter(function (paragraph) {
+        return Number(paragraph && paragraph.index || 0) === paragraphIndex;
+      })[0] || nearbyParas[0] || {};
+      var fact = {
+        imageId: imageId,
+        groupId: String(firstDefined(safeRead(item, "GroupID"), safeRead(item, "groupId")) || imageId),
+        fingerprint: sha256Text(sourceType + ":" + hostId + ":" + paragraphIndex),
+        captionStatus: hasCaption ? "present" : "missing",
+        associationStatus: "missing",
+        supported: true,
+        altText: altText.slice(0, 2000),
+        nearbyText: nearby.join(" ").slice(0, 4000),
+        paragraphIndex: paragraphIndex,
+        range: rangeSource.range || {}
+      };
+      images.push(fact);
+      objects[imageId] = item;
+    }
+
+    sources.forEach(function (collection, sourceIndex) {
+      var count = readCollectionCount(collection);
+      for (var index = 1; index <= count; index += 1) {
+        readImageObject(getCollectionItem(collection, index), index, sourceIndex === 0 ? "inline" : "floating");
+      }
+    });
+    return { facts: images, objects: objects };
+  }
+
+  function collectDeterministicFormatReviewImagesYielding(document, paragraphs, loopOptions) {
+    var images = [];
+    var objects = {};
+    var sources = [
+      firstDefined(safeRead(document, "InlineShapes"), safeRead(document, "inlineShapes")),
+      firstDefined(safeRead(document, "Shapes"), safeRead(document, "shapes"))
+    ];
+    var paragraphList = Array.isArray(paragraphs) ? paragraphs : [];
+
+    function readImageObject(item, index, sourceType) {
+      if (!item) {
+        return;
+      }
+      var type = firstDefined(safeRead(item, "Type"), safeRead(item, "type"));
+      var typeText = String(type || "").toLowerCase();
+      var isFloatingPicture = sourceType !== "floating" ||
+        type === 13 || type === 11 || /picture|image|inlinepicture|inline_image/.test(typeText) ||
+        safeRead(item, "IsPicture") === true || safeRead(item, "isPicture") === true;
+      var hostId = String(firstDefined(
+        safeRead(item, "Id"), safeRead(item, "ID"), safeRead(item, "Name"), safeRead(item, "name")
+      ) || (sourceType + "-" + index));
+      var imageId = "wps-image-" + sha256Text(sourceType + ":" + hostId + ":" + index).slice(0, 24);
+      var paragraphIndex = Number(firstDefined(
+        safeRead(item, "ParagraphIndex"), safeRead(item, "paragraphIndex"),
+        safeRead(item, "AnchorParagraphIndex"), safeRead(item, "anchorParagraphIndex")
+      ) || 0);
+      if (!isFloatingPicture) {
+        return;
+      }
+      var altText = String(firstDefined(
+        safeRead(item, "AlternativeText"), safeRead(item, "AltText"), safeRead(item, "altText")
+      ) || "");
+      var nearbyParas = paragraphList.filter(function (paragraph) {
+        var indexValue = Number(paragraph && paragraph.index || 0);
+        return paragraphIndex > 0 && Math.abs(indexValue - paragraphIndex) <= 1 && paragraph.text;
+      });
+      var nearby = nearbyParas.map(function (paragraph) { return String(paragraph.text || ""); });
+      var hasCaption = nearby.some(function (text) {
+        return /^(图|figure)\s*[0-9０-９一二三四五六七八九十]+[：:.、\s]/i.test(text.trim());
+      });
+      var rangeSource = paragraphList.filter(function (paragraph) {
+        return Number(paragraph && paragraph.index || 0) === paragraphIndex;
+      })[0] || nearbyParas[0] || {};
+      var fact = {
+        imageId: imageId,
+        groupId: String(firstDefined(safeRead(item, "GroupID"), safeRead(item, "groupId")) || imageId),
+        fingerprint: sha256Text(sourceType + ":" + hostId + ":" + paragraphIndex),
+        captionStatus: hasCaption ? "present" : "missing",
+        associationStatus: "missing",
+        supported: true,
+        altText: altText.slice(0, 2000),
+        nearbyText: nearby.join(" ").slice(0, 4000),
+        paragraphIndex: paragraphIndex,
+        range: rangeSource.range || {}
+      };
+      images.push(fact);
+      objects[imageId] = item;
+    }
+
+    var inlineCount = readCollectionCount(sources[0]);
+    var floatingCount = readCollectionCount(sources[1]);
+
+    return runChunkedRange(1, inlineCount, function (index) {
+      readImageObject(getCollectionItem(sources[0], index), index, "inline");
+    }, loopOptions).then(function () {
+      return runChunkedRange(1, floatingCount, function (index) {
+        readImageObject(getCollectionItem(sources[1], index), index, "floating");
+      }, loopOptions);
+    }).then(function () {
+      return { facts: images, objects: objects };
+    });
+  }
+
   function collectParagraphsFromText(text, options) {
     var collectOptions = normalizeCollectOptions(options);
     var normalized = String(text || "").replace(/\r/g, "\n");
@@ -4766,6 +4991,79 @@
     return collectParagraphsFromText(readDocumentText(document), collectOptions);
   }
 
+  function collectParagraphsYielding(document, options, loopOptions) {
+    var collectOptions = normalizeCollectOptions(options);
+    var collection = getParagraphCollection(document);
+    var count = readCollectionCount(collection);
+    if (collectOptions.maxParagraphs) {
+      count = Math.min(count, collectOptions.maxParagraphs);
+    }
+    var items = [];
+    return runChunkedRange(1, count, function (i) {
+      var paragraph = getCollectionItem(collection, i);
+      if (!paragraph) {
+        return;
+      }
+      var paragraphRange = resolveRange(paragraph);
+      if (collectOptions.excludeTableParagraphs) {
+        var containingTables = firstDefined(
+          safeRead(paragraphRange, "Tables"),
+          safeRead(paragraph, "Tables")
+        );
+        if (readCollectionCount(containingTables) > 0) {
+          return;
+        }
+      }
+      var font = readFont(paragraph);
+      var paragraphFormat = readParagraphFormat(paragraph);
+      var characterFormat = collectOptions.includeCharacterFormatSegments
+        ? extractHomogeneousFormatSegments(paragraphRange || paragraph, {
+          maxSegments: collectOptions.maxFormatSegments
+        })
+        : null;
+      var rawOutlineLevel = safeRead(paragraphFormat, "OutlineLevel");
+      if (typeof rawOutlineLevel === "undefined") {
+        rawOutlineLevel = safeRead(paragraphFormat, "outlineLevel");
+      }
+      var item = {
+        index: i,
+        text: limitTextLength(readText(paragraph), collectOptions.maxParagraphTextLength),
+        range: readParagraphRange(paragraph, i),
+        styleName: readStyleName(paragraph),
+        fontName: toSafeString(firstDefined(safeRead(font, "NameFarEast"), safeRead(font, "Name")), ""),
+        fontSize: normalizeFontSize(safeRead(font, "Size")),
+        bold: Boolean(safeRead(font, "Bold")),
+        italic: Boolean(safeRead(font, "Italic")),
+        underline: normalizeInteger(firstDefined(safeRead(font, "Underline"), null)),
+        alignment: normalizeAlignmentValue(safeRead(paragraphFormat, "Alignment"), ""),
+        lineSpacing: normalizeNumber(firstDefined(safeRead(paragraphFormat, "LineSpacing"), safeRead(paragraphFormat, "lineSpacing"), null)),
+        lineSpacingMode: normalizeWpsLineSpacingMode(firstDefined(
+          safeRead(paragraphFormat, "LineSpacingRule"), safeRead(paragraphFormat, "lineSpacingRule"), null
+        )),
+        firstLineIndent: normalizeNumber(firstDefined(safeRead(paragraphFormat, "FirstLineIndent"), safeRead(paragraphFormat, "firstLineIndent"), null)),
+        spaceBefore: normalizeNumber(firstDefined(safeRead(paragraphFormat, "SpaceBefore"), safeRead(paragraphFormat, "spaceBefore"), null)),
+        spaceAfter: normalizeNumber(firstDefined(safeRead(paragraphFormat, "SpaceAfter"), safeRead(paragraphFormat, "spaceAfter"), null)),
+        leftIndent: normalizeNumber(firstDefined(safeRead(paragraphFormat, "LeftIndent"), safeRead(paragraphFormat, "leftIndent"), null)),
+        rightIndent: normalizeNumber(firstDefined(safeRead(paragraphFormat, "RightIndent"), safeRead(paragraphFormat, "rightIndent"), null)),
+        formatSegments: characterFormat ? characterFormat.segments : [],
+        formatDataStatus: characterFormat ? characterFormat.dataStatus : "verified",
+        formatInsufficientReason: characterFormat ? characterFormat.insufficientReason || "" : ""
+      };
+      if (typeof rawOutlineLevel !== "undefined") {
+        item.outlineLevel = normalizeWpsOutlineLevel(rawOutlineLevel);
+      }
+      items.push(item);
+    }, loopOptions).then(function () {
+      if (items.length) {
+        return items;
+      }
+      if (collectOptions.avoidFallbackTextRead) {
+        return [];
+      }
+      return collectParagraphsFromText(readDocumentText(document), collectOptions);
+    });
+  }
+
   function collectFullDocumentReviewParagraphs(document) {
     var collection = getParagraphCollection(document);
     var count = readCollectionCount(collection);
@@ -4811,6 +5109,54 @@
       items.push(item);
     }
     return items;
+  }
+
+  function collectFullDocumentReviewParagraphsYielding(document, loopOptions) {
+    var collection = getParagraphCollection(document);
+    var count = readCollectionCount(collection);
+    var items = [];
+    return runChunkedRange(1, count, function (index) {
+      var paragraph = getCollectionItem(collection, index);
+      var range;
+      var containingTables;
+      var paragraphFormat;
+      var listFormat;
+      var text;
+      if (!paragraph) {
+        return;
+      }
+      range = resolveRange(paragraph);
+      containingTables = firstDefined(safeRead(range, "Tables"), safeRead(paragraph, "Tables"));
+      if (readCollectionCount(containingTables) > 0) {
+        return;
+      }
+      text = readText(paragraph).trim();
+      if (!text) {
+        return;
+      }
+      paragraphFormat = firstDefined(
+        safeRead(paragraph, "ParagraphFormat"), safeRead(range, "ParagraphFormat"), {}
+      );
+      listFormat = firstDefined(safeRead(paragraph, "ListFormat"), safeRead(range, "ListFormat"), {});
+      var rawOutlineLevel = safeRead(paragraphFormat, "OutlineLevel");
+      if (typeof rawOutlineLevel === "undefined") {
+        rawOutlineLevel = safeRead(paragraphFormat, "outlineLevel");
+      }
+      var item = {
+        index: index,
+        text: text,
+        listLabel: toSafeString(firstDefined(
+          safeRead(listFormat, "ListString"), safeRead(listFormat, "listString"),
+          safeRead(paragraph, "ListLabel"), safeRead(paragraph, "listLabel")
+        ), "")
+      };
+      if (typeof rawOutlineLevel !== "undefined") {
+        item.outlineLevel = normalizeWpsOutlineLevel(rawOutlineLevel);
+      }
+      items.push(item);
+    }, loopOptions).then(function () {
+      return items;
+    });
   }
 
   function collectParagraphsFromSelectionSources(selectionSources, selectedText, options) {
@@ -6484,14 +6830,21 @@
     getCollectionItem: getCollectionItem,
     getParagraphCollection: getParagraphCollection,
     collectFullDocumentReviewParagraphs: collectFullDocumentReviewParagraphs,
+    collectFullDocumentReviewParagraphsYielding: collectFullDocumentReviewParagraphsYielding,
     collectFullDocumentReviewTables: collectFullDocumentReviewTables,
+    collectFullDocumentReviewTablesYielding: collectFullDocumentReviewTablesYielding,
     collectFormatReviewCoverage: collectFormatReviewCoverage,
+    collectDeterministicFormatReviewImages: collectDeterministicFormatReviewImages,
+    collectDeterministicFormatReviewImagesYielding: collectDeterministicFormatReviewImagesYielding,
+    runChunkedRange: runChunkedRange,
+    runChunkedArray: runChunkedArray,
     collectWordAutoTocRegions: collectWordAutoTocRegions,
     collectWordManualAndSuspectedTocRegions: collectWordManualAndSuspectedTocRegions,
     isAutoTocField: isAutoTocField,
     extractHomogeneousFormatSegments: extractHomogeneousFormatSegments,
     readFullDocumentReviewEditSignal: readFullDocumentReviewEditSignal,
     collectParagraphs: collectParagraphs,
+    collectParagraphsYielding: collectParagraphsYielding,
     normalizeWpsOutlineLevel: normalizeWpsOutlineLevel,
     collectHeadingsFromParagraphs: collectHeadingsFromParagraphs,
     collectParagraphsFromSelectionSources: collectParagraphsFromSelectionSources,

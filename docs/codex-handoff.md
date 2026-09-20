@@ -1,5 +1,19 @@
 # Codex Handoff - AI-WPS
 
+## 当前功能实现：Issue #209 分片执行 Word 全篇与格式审查抽取（2026-09-20）
+
+- **Word 全篇与格式审查抽取分片让出事件循环**：遵循 ADR-0132 Task 1 与 Issue #209 规格，针对 Word 长文档在全篇审查（`word.document_review.full`）与确定性格式审查（`word.format_review.deterministic`）抽取阶段容易长时间阻塞 JS 单线程导致 WPS 界面挂起的问题，将段落、表格、图片盘点与格式区段抽取改造为按单调时钟时间预算（默认 32ms，目标 ≤ 50ms）分片执行。在片段之间使用宏任务 `setTimeout(step, 0)` 真正让出事件循环，让 UI 事件（取消点击、状态栏更新、重绘）能够及时响应。
+- **分片循环取消检查与编辑信号监测**：在每次分片恢复执行前，严格检查任务取消标志（`state.deterministicFormatReviewCancelRequested` / `state.reviewPreparationCancelled`）、当前活动文档会话一致性（`getActiveDocumentSessionId()`）及文档版本（`revision`）。一旦检测到用户点击取消或文档发生切换，抽取循环立即抛出 `CANCELLED` 异常并安全中断。
+- **取消后清理未提交快照与零模型外发**：抽取被取消时，任务窗格在 `catch` 块中立即调用 `discardFullDocumentReviewSnapshot` 或 `discardDeterministicFormatReviewSnapshot` 向 Adapter 发送 `DELETE /word/document-review/snapshots/{snapshot_id}` 或 `DELETE /word/format-review/snapshots/{snapshot_id}`，清理已在 Adapter 登记但未提交的快照，不创建后台审查长任务，不调用模型服务，不消耗 Token。
+- **跨运行时哈希与合同绝对保持一致**：分片抽取后得到的数据结构与原同步抽取 100% 等价。全篇审查的两遍哈希、审查字符数、段落与表格结构；格式审查的四项跨运行时权威哈希（`contentSha256`、`structureSha256`、`formatSha256`、`reviewCharacterCount`）、覆盖统计、图片外发门禁与报告合同与分片前完全一致。性能优化不扩大审查范围、不静默截断对象，也不降低信任门禁。
+- **测试替身向下兼容与向后兼容**：在 `taskpane.js` 中支持 `extractDeterministicFormatReviewSnapshotYielding` / `extractFullDocumentReviewBodyYielding` 异步流，若测试桩中未注入 yielding 版本，自动回退同步执行，保持既有 20-tick 单测精确兼容。
+- **全量验证结论**：
+  - 新增分片抽取专项测试 `formal-plugin-kit/tests/word-review-chunked-extraction.test.js`：8/8 通过，覆盖分片让出、单调进度、时间预算、取消响应、会话切换中断、未提交快照清理、四项哈希一致性以及同步回退分支。
+  - 正式插件全量契约测试 (`node --test formal-plugin-kit/tests/*.test.js`)：242/242 全部通过。
+  - `wps-addon` vitest 单元测试：12/12 全部通过，Vite 生产构建成功。
+  - Docker Python 3.8 全量后端测试 (`ai-wps-adapter-test:py38-node-git`)：1487 passed, 54 skipped。
+  - 代码格式与规范：`git diff --check` 通过。
+
 ## 当前功能实现：Issue #208 扩展 Word 审查任务性能诊断（2026-09-20）
 
 - **PR #220 审查修复**：三类 Word 审查任务新增独立 `localExtractionMs`，不再以“点击到 Adapter 接收”混代本地抽取；三宿主高级诊断展示近期任务的 `phaseDurationsMs`。格式审查工作流调用补齐成功与异常路径的阻塞 Provider 指标，确定性格式审查按真实语义结果记录 `success`、`not_attempted`、`degraded` 或 `provider_error`；报告读取失败不再伪造首渲染耗时。
