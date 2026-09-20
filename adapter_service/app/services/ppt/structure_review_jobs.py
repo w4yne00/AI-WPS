@@ -99,6 +99,7 @@ class PptStructureReviewJobStore:
                     "request": _copy_request(request),
                     "taskAuth": task_auth,
                     "jobId": job_id,
+                    "traceId": trace_id,
                     "host": host,
                     "documentSessionId": doc_session,
                 },

@@ -1339,6 +1339,11 @@ class LongTaskCoordinator:
         effective_status = "failed" if is_invalidated else job["status"]
         effective_phase = "failed" if is_invalidated else job["phase"]
         elapsed_ms = int(max(elapsed_until - job["_createdMonotonic"], 0.0) * 1000)
+        terminal_age_ms = (
+            int(max(now_mono - terminal_at, 0.0) * 1000)
+            if terminal_at is not None
+            else None
+        )
         phase_elapsed_ms = int(max(phase_elapsed, 0.0) * 1000)
         remainder_phase = (
             job.get("phase")
@@ -1366,6 +1371,7 @@ class LongTaskCoordinator:
                 for phase, duration in durations.items()
             },
             "elapsedMs": elapsed_ms,
+            "terminalAgeMs": terminal_age_ms,
             "phaseElapsedMs": phase_elapsed_ms,
             "phaseDurationsMs": phase_durations_ms,
             "queueWaitMs": queue_wait_ms,
