@@ -4,6 +4,7 @@
 import argparse
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
@@ -845,11 +846,70 @@ def audit_streaming_and_rollback_contract(root: Path) -> None:
     if not word_taskpane.is_file():
         raise DeliveryFailure("V0260_WORD_TASKPANE_MISSING")
     taskpane_text = word_taskpane.read_text(encoding="utf-8")
-    for marker in ("pollWritingJobEvents", "stopCurrentConsumer", "status === 404"):
+    for marker in (
+        "pollWritingJobEvents",
+        "stopCurrentConsumer",
+        "status === 404",
+        "writingJobUsesEvents(job)",
+        "writingJobUsesEvents(jobRecord)",
+        "writingJobUsesEvents(active)",
+    ):
         if marker not in taskpane_text:
             raise DeliveryFailure(
                 "V0260_STREAMING_FALLBACK_CONTRACT_MISSING {0}".format(marker)
             )
+
+    adapter_root = root / "packages/adapter-start-kit/adapter_service"
+    probe_env = dict(os.environ)
+    probe_env["PYTHONDONTWRITEBYTECODE"] = "1"
+    probe_env["PYTHONPATH"] = str(adapter_root) + os.pathsep + probe_env.get(
+        "PYTHONPATH", ""
+    )
+    probe = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import logging, os, threading; "
+                "logging.getLogger().addHandler(logging.NullHandler()); "
+                "from app.core.models import WordDocumentRequest; "
+                "from app.services.long_task_coordinator import LongTaskCoordinator; "
+                "from app.services.word.writing_jobs import SmartWriteJobStore; "
+                "cap={'status':'validated','serviceId':'direct_svc_test',"
+                "'serviceRevision':1,'serviceBaseUrl':'https://api.example.test/v1',"
+                "'apiKeyFingerprint':'sha256:test','modelName':'model-test',"
+                "'testedAt':'2026-09-20T00:00:00Z'}; "
+                "Worker=type('Worker',(),{"
+                "'snapshot_task_auth':lambda self:{'streamingCapability':cap},"
+                "'smart_write':lambda self,request,**kwargs:"
+                "(threading.Event().wait(5) or {'rewrittenText':'ok'})}); "
+                "payload={'documentId':'audit.docx','scene':'word',"
+                "'selectionMode':'selection','clientJobId':'audit-job-12345',"
+                "'documentSessionId':'audit-doc','host':'wps',"
+                "'content':{'plainText':'audit','paragraphs':[],'headings':[]},"
+                "'options':{}}; "
+                "request=(WordDocumentRequest.model_validate(payload) "
+                "if hasattr(WordDocumentRequest,'model_validate') "
+                "else WordDocumentRequest.parse_obj(payload)); "
+                "os.environ['AI_WPS_ENABLE_DIRECT_STREAMING']='1'; "
+                "coordinator=LongTaskCoordinator(max_running=1,max_queued=1); "
+                "job=SmartWriteJobStore(worker=Worker(),coordinator=coordinator).start("
+                "request,'audit-trace'); "
+                "assert job.get('streamingEnabled') is True; "
+                "stored=coordinator._jobs[('word.smart_write',job['jobId'])]; "
+                "assert stored['_allowRunningCancel'] is True; "
+                "assert stored['_snapshot']['taskAuth']['directStreamingEnabled'] is True"
+            ),
+        ],
+        cwd=adapter_root,
+        env=probe_env,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    if probe.returncode != 0:
+        raise DeliveryFailure("V0260_STREAMING_RUNTIME_CONTRACT_FAILED")
 
 
 def audit(root: Path, archive: Optional[Path], checksum_file: Optional[Path], expected_name: Optional[str]) -> None:

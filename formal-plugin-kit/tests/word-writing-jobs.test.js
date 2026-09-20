@@ -180,6 +180,7 @@ async function testConcurrentWritingPerformanceStaysIsolated() {
     "getTaskPerformance",
     "beginTaskPerformance",
     "bindTaskPerformanceTrace",
+    "writingJobUsesEvents",
     "startWritingJob"
   ], context);
 

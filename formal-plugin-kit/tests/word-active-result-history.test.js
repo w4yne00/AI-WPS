@@ -557,6 +557,10 @@ function testCrossDocumentResumeIsolation() {
     }
   });
 
+  ctx.writingJobUsesEvents = vm.runInNewContext(
+    `(${functionSource("writingJobUsesEvents")}\n)`,
+    ctx
+  );
   ctx.resumeWritingActiveJob = vm.runInNewContext(
     `(${functionSource("resumeWritingActiveJob")}\n)`,
     ctx

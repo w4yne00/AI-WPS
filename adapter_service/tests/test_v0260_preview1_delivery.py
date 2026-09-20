@@ -1465,6 +1465,12 @@ def test_preview_acceptance_template_covers_nine_tasks_and_pending_status(tmp_pa
     assert "AI_WPS_ENABLE_DIRECT_STREAMING" in acceptance
     assert 'streamingCapability == "validated"' in acceptance
     assert "关闭特性即时回滚" in acceptance
+    assert "每个试点任务、每个模型组合至少 30 次" in acceptance
+    assert "blocking/streaming 对照" in acceptance
+    assert "原始测试时间" in acceptance
+    assert "p50/p95/p99" in acceptance
+    assert "完整生成回归" in acceptance
+    assert "原始证据编号" in acceptance
 
 
 def test_preview_audit_rejects_missing_streaming_module(tmp_path):
@@ -1528,3 +1534,45 @@ def test_preview_audit_rejects_missing_streaming_module(tmp_path):
     )
     assert rejected2.returncode != 0
     assert "V0260_STREAMING_MODULE_MISSING" in rejected2.stdout
+
+
+def test_preview_audit_rejects_broken_streaming_capability_integration(tmp_path):
+    delivery = _prepare_delivery(tmp_path)
+    audit = delivery / "scripts/audit_v0260_preview1_delivery.py"
+    writing_jobs = (
+        delivery
+        / "packages/adapter-start-kit/adapter_service/app/services/word/writing_jobs.py"
+    )
+    original = writing_jobs.read_text(encoding="utf-8")
+    broken = original.replace(
+        "and streaming_capability_validated(\n"
+        "                    task_auth.get(\"streamingCapability\")\n"
+        "                )",
+        "and task_auth.get(\"streamingCapability\") == \"validated\"",
+    )
+    assert broken != original
+    writing_jobs.write_text(broken, encoding="utf-8")
+
+    generated = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "packaging/audit_phase1_delivery.py"),
+            str(delivery),
+            "--write-hashes",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert generated.returncode == 0, generated.stdout + generated.stderr
+
+    rejected = subprocess.run(
+        [sys.executable, str(audit), str(delivery)],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert rejected.returncode != 0
+    assert "V0260_STREAMING_RUNTIME_CONTRACT_FAILED" in rejected.stdout

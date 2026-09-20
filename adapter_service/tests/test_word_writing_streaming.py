@@ -396,7 +396,7 @@ class ProviderClientDirectStreamingIntegrationTests(unittest.TestCase):
         self.assertLess(time.monotonic() - cancel_started, 0.5)
         self.assertTrue(response.closed)
 
-    def test_post_direct_task_uses_streaming_when_feature_enabled_and_validated(self):
+    def test_post_direct_task_uses_frozen_streaming_protocol_when_validated(self):
         from unittest.mock import patch
         from urllib.error import HTTPError
         from app.services.provider_client import ProviderClient
@@ -408,7 +408,16 @@ class ProviderClientDirectStreamingIntegrationTests(unittest.TestCase):
             "providerBaseUrl": "https://api.openai.com/v1",
             "apiKey": "sk-test12345",
             "modelName": "gpt-4o",
-            "streamingCapability": "validated",
+            "streamingCapability": {
+                "status": "validated",
+                "serviceId": "direct_svc_test",
+                "serviceRevision": 1,
+                "serviceBaseUrl": "https://api.openai.com/v1",
+                "apiKeyFingerprint": "sha256:test",
+                "modelName": "gpt-4o",
+                "testedAt": "2026-09-20T00:00:00Z",
+            },
+            "directStreamingEnabled": True,
             "contextWindowTokens": 100000,
             "maxOutputTokens": 4096,
         }
@@ -444,7 +453,7 @@ class ProviderClientDirectStreamingIntegrationTests(unittest.TestCase):
             sent_requests.append(req)
             return FakeHTTPResponse([sse_payload])
 
-        with patch.dict("os.environ", {"AI_WPS_ENABLE_DIRECT_STREAMING": "1"}), patch("urllib.request.urlopen", fake_urlopen):
+        with patch.dict("os.environ", {"AI_WPS_ENABLE_DIRECT_STREAMING": "0"}), patch("urllib.request.urlopen", fake_urlopen):
             res = client._post_direct_task(
                 task_type="word.smart_write",
                 trace_id="trace-stream-direct-1",

@@ -174,3 +174,67 @@ test("4. old wps-addon prototype does not implement streaming or pollWritingJobE
   }
   scan(addonDir);
 });
+
+test("5. blocking job snapshot bypasses an available events endpoint and persists the protocol", async () => {
+  let eventPollCalls = 0;
+  let statusPollCalls = 0;
+  const savedJobs = [];
+  const state = {
+    activeTaskSlots: {},
+    currentMode: "smartWrite",
+    directStreamingEnabled: false,
+  };
+  const context = {
+    Date,
+    performance: { now: () => 10 },
+    WRITING_POLL_REQUEST_TIMEOUT_MS: 35000,
+    state,
+    helpers: {
+      isTaskSlotBusy: () => false,
+      claimTaskSlot() {},
+      getDocumentSessionId: () => "doc-blocking",
+      getDocumentDisplayName: () => "阻塞任务.docx",
+    },
+    getActiveDocument: () => ({}),
+    setModelTaskBusy() {},
+    setStatus() {},
+    writingTaskLabel: () => "智能编写",
+    buildWritingClientJobId: () => "job-blocking",
+    setWritingJob() {},
+    beginTaskPerformance: () => ({ clickTimestamp: 0, clickToAdapterAcceptedMs: null }),
+    setActiveWritingJobRecord() {},
+    saveWritingActiveJob: (job) => savedJobs.push(job),
+    writingJobPath: () => "/word/smart-write/jobs",
+    request: () => Promise.resolve({
+      traceId: "trace-blocking",
+      data: {
+        jobId: "job-blocking",
+        status: "running",
+        streamingEnabled: false,
+      },
+    }),
+    bindTaskPerformanceTrace() {},
+    setTrace() {},
+    renderWritingJobProgress() {},
+    stopWritingWaitFeedback() {},
+    startWritingWaitFeedback() {},
+    pollWritingJobEvents() {
+      eventPollCalls += 1;
+    },
+    pollWritingJob() {
+      statusPollCalls += 1;
+    },
+    isFatalWritingPollError: () => false,
+    failWritingJob() {
+      assert.fail("blocking job must not fail");
+    },
+  };
+
+  const fns = loadFunctions(["writingJobUsesEvents", "startWritingJob"], context);
+  fns.startWritingJob({}, "word.smart_write", "smartWrite", "doc-blocking", "阻塞任务.docx");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.strictEqual(eventPollCalls, 0);
+  assert.strictEqual(statusPollCalls, 1);
+  assert.strictEqual(savedJobs[savedJobs.length - 1].streamingEnabled, false);
+});

@@ -51,7 +51,10 @@ from app.services.direct_services import (
     DirectServiceStore,
     normalize_service_base_url,
 )
-from app.core.features import direct_streaming_enabled
+from app.core.features import (
+    direct_streaming_enabled,
+    streaming_capability_validated,
+)
 from app.services.direct_text_stream import read_direct_text_stream
 from app.services.ppt.document_text_extractor import extract_staged_document_text
 from app.services.word.image_semantics import ImageSemanticConfigStore
@@ -3098,10 +3101,17 @@ class ProviderClient:
                     "image_url": {"url": self._image_data_uri(image)},
                 })
             user_content = content_parts
+        streaming_enabled = (
+            bool(resolved_task_auth.get("directStreamingEnabled"))
+            if "directStreamingEnabled" in resolved_task_auth
+            else direct_streaming_enabled()
+        )
         should_stream = bool(
             allow_streaming_fallback
-            and direct_streaming_enabled()
-            and resolved_task_auth.get("streamingCapability") == "validated"
+            and streaming_enabled
+            and streaming_capability_validated(
+                resolved_task_auth.get("streamingCapability")
+            )
             and task_type in ("word.smart_write", "word.smart_imitation")
             and response_format is None
         )

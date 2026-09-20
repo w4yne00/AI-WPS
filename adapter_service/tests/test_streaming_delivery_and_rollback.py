@@ -39,8 +39,16 @@ def make_request(
 
 
 class FakeWorker:
-    def __init__(self, streaming_capability="validated"):
-        self.streaming_capability = streaming_capability
+    def __init__(self, streaming_capability=None):
+        self.streaming_capability = streaming_capability or {
+            "status": "validated",
+            "serviceId": "direct_svc_test",
+            "serviceRevision": 1,
+            "serviceBaseUrl": "https://api.openai.com/v1",
+            "apiKeyFingerprint": "sha256:test",
+            "modelName": "gpt-4o",
+            "testedAt": "2026-09-20T00:00:00Z",
+        }
         self.calls = []
 
     def snapshot_task_auth(self):
@@ -78,13 +86,14 @@ class StreamingDeliveryAndRollbackTests(unittest.TestCase):
     def test_flag_disabled_forces_blocking_and_queued_only_cancellation(self):
         """When feature flag is disabled, new writing jobs use blocking execution without running cancellation."""
         coordinator = LongTaskCoordinator()
-        worker = FakeWorker(streaming_capability="validated")
+        worker = FakeWorker()
         store = SmartWriteJobStore(worker=worker, coordinator=coordinator)
         request = make_request("client-job-flag-off-123")
 
         with patch.dict(os.environ, {"AI_WPS_ENABLE_DIRECT_STREAMING": "0"}):
             job = store.start(request, "trace-flag-off")
             self.assertIsNotNone(job)
+            self.assertFalse(job["streamingEnabled"])
             internal_job = coordinator._jobs.get(("word.smart_write", job["jobId"]))
             self.assertIsNotNone(internal_job)
             # allow_running_cancel must be False when feature flag is off
@@ -93,16 +102,20 @@ class StreamingDeliveryAndRollbackTests(unittest.TestCase):
     def test_running_job_preserves_submission_snapshot_if_flag_toggled_mid_run(self):
         """A running job submitted with streaming keeps its cancellation capability even if flag is disabled mid-run."""
         coordinator = LongTaskCoordinator()
-        worker = FakeWorker(streaming_capability="validated")
+        worker = FakeWorker()
         store = SmartWriteJobStore(worker=worker, coordinator=coordinator)
         request = make_request("client-job-snapshot-test-123")
 
         # Start with streaming enabled
         with patch.dict(os.environ, {"AI_WPS_ENABLE_DIRECT_STREAMING": "1"}):
             job = store.start(request, "trace-snapshot-test")
+            self.assertTrue(job["streamingEnabled"])
             internal_job = coordinator._jobs.get(("word.smart_write", job["jobId"]))
             self.assertIsNotNone(internal_job)
             self.assertTrue(internal_job["_allowRunningCancel"])
+            self.assertTrue(
+                internal_job["_snapshot"]["taskAuth"]["directStreamingEnabled"]
+            )
 
         # Now flag is toggled to 0
         with patch.dict(os.environ, {"AI_WPS_ENABLE_DIRECT_STREAMING": "0"}):
