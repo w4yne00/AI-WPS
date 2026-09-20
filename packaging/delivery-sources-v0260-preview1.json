@@ -65,6 +65,11 @@
     },
     {
       "type": "file",
+      "source": "docs/operations/runtime-config.md",
+      "target": "docs/operations/runtime-config.md"
+    },
+    {
+      "type": "file",
       "source": "packaging/reference-workflows/excel-smart-fill-v2.yml",
       "target": "reference-workflows/excel-smart-fill-v2.yml"
     },

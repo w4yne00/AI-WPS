@@ -1,5 +1,23 @@
 # Codex Handoff - AI-WPS
 
+## 当前功能实现：Issue #212 整合流式性能优化交付与回滚合同（2026-09-20）
+
+- **交付白名单与候选门禁整合**：遵循 ADR-0132 Task 8 与 Issue #212 规格，将完成的交互文本流式（Word 智能编写与智能仿写）、毫秒级性能诊断（Word/Excel/PPT 九类任务）和任务窗格优化正式纳入交付白名单与候选门禁。在 `packaging/delivery-sources-v0260-preview1.json` 中补齐 `docs/operations/runtime-config.md`（`direct_text_stream.py` 位于白名单中），确保组装交付树完整包含流式运行时与配置说明。
+- **运维配置与回滚合同完备文档化**：`docs/operations/runtime-config.md` 增设“交互文本流式、毫秒性能诊断与回滚合同”独立章节，详尽规范特性环境变量（`AI_WPS_ENABLE_DIRECT_STREAMING`，默认 `0`）、五元组流式能力探针判定与任务快照冻结、阻塞降级回退机制、运行中任务取消边界（上游 socket 立即 `shutdown`、未提交快照即刻清理、零模型调用与零 Token 浪费）、脱敏诊断规范、资源与耗时边界守护（256 事件环、512 KiB 纯文本快照、5 MiB 总响应体超限即止 `MODEL_RESPONSE_SIZE_LIMIT`、25s 长轮询超时、50ms/4KiB DOM 节流渲染与 30px 阈值智能跟随滚动）。
+- **零破坏性迁移的即时关闭与平滑降级**：
+  - **特性即时回滚**：当环境配置 `AI_WPS_ENABLE_DIRECT_STREAMING=0` 时，后续新任务直接走原有阻塞调用与 3 秒状态短轮询；运行中任务按提交时快照安全收敛，零破坏性数据迁移；
+  - **任务窗格自动降级**：当 `/events` 长轮询接口返回 404（旧版 Adapter）或连续 3 次长轮询失败时，正式任务窗格无感回退至 3 秒状态短轮询，不破坏文档会话、不重置配置存储、不清理历史；
+  - **字段向后兼容**：新增 `streamingCapability` 为附加属性，旧版 Adapter 安全忽略，历史配置载入时安全默认赋予 `not_checked`；
+  - **只读预览不可写回不变量**：取消与失败保留内存只读预览以供查看与复制，严格禁用写回（`applyEnabled = false`）且不归档历史（`history_store` 零条目）。
+- **交付审计脚本与候选门禁增补**：`packaging/audit_v0260_preview1_delivery.py` 增补 `audit_streaming_and_rollback_contract(root)`，严格校验交付产物中流式服务模块 `direct_text_stream.py`、运维说明与边界常量、目标机验收文档章节以及任务窗格降级调用；`packaging/v0260-preview1-delivery.md` 与 `packaging/v0260-preview1-target-machine-acceptance.md` 补全对应说明与核验项。
+- **旧原型独立性保障**：旧 `wps-addon` 原型严格不增加流式实现与 `/events` 轮询逻辑，保持既有测试与构建完全独立、互不干扰。
+- **全量验证结论**：
+  - 本地 Docker Python 3.8 全量后端测试：`1505 passed / 54 skipped`；流式交付与回滚专项 `6/6 passed`，交付生命周期与审计专项 `37/37 passed`；
+  - 正式插件全量契约测试：`272/272 passed`；流式交付与降级专项 `4/4 passed`；
+  - `wps-addon` vitest 单元测试：`12/12 passed`，Vite 生产构建成功；
+  - Python 3.8 语法兼容性扫描 200 个文件全部通过，`git diff --check` 无格式异常；
+  - 候选状态保持 `candidate`，目标机真机验收（Kylin V10 SP1 ARM64 / WPS 12.1.2）维持 `manual-pending`（绑定 Issue #154），说明自动化测试不替代真实环境人工复测。
+
 ## 当前功能实现：Issue #211 优化 PPT 任务毫秒诊断、结果校验与只读交互（2026-09-20）
 
 - **PR #223 审查修复**：结果门禁改为校验已知 `resultType`、完整结果信封、合法审查范围和结构化数组，同时保留后端明确支持的纯文本降级结果；长任务协调器新增单调 `terminalAgeMs`，任务窗格仅在所属会话的结果真实渲染后记录 `completionToFirstRenderMs`，不再为历史视图、其他文档或校验失败结果伪造首渲染耗时；单页/文档总结未配置模型统一记录 `providerOutcome = not_attempted`；运行中设置页所有写入口补齐 `state.busy` 门禁，诊断卡按 `traceId` 选择对应本地耗时。

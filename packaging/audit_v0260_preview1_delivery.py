@@ -808,6 +808,50 @@ def audit_archive_checksum(
         raise DeliveryFailure("V0260_ARCHIVE_CHECKSUM_MISMATCH")
 
 
+def audit_streaming_and_rollback_contract(root: Path) -> None:
+    stream_module = (
+        root
+        / "packages/adapter-start-kit/adapter_service/app/services/direct_text_stream.py"
+    )
+    if not stream_module.is_file():
+        raise DeliveryFailure("V0260_STREAMING_MODULE_MISSING")
+
+    runtime_config = root / "docs/operations/runtime-config.md"
+    if not runtime_config.is_file():
+        raise DeliveryFailure("V0260_RUNTIME_CONFIG_DOC_MISSING")
+    config_text = runtime_config.read_text(encoding="utf-8")
+    for marker in (
+        "AI_WPS_ENABLE_DIRECT_STREAMING",
+        "streamingCapability",
+        "512 KiB",
+        "5 MiB",
+        "MODEL_RESPONSE_SIZE_LIMIT",
+        "providerOutcome",
+        "providerFirstVisibleMs",
+    ):
+        if marker not in config_text:
+            raise DeliveryFailure(
+                "V0260_STREAMING_RUNTIME_CONFIG_MISSING {0}".format(marker)
+            )
+
+    acceptance_doc = root / "docs/v0260-preview1-target-machine-acceptance.md"
+    if not acceptance_doc.is_file():
+        raise DeliveryFailure("V0260_TARGET_ACCEPTANCE_DOC_MISSING")
+    acceptance_text = acceptance_doc.read_text(encoding="utf-8")
+    if "交互流式、毫秒诊断与回滚目标机验收" not in acceptance_text:
+        raise DeliveryFailure("V0260_STREAMING_ACCEPTANCE_SECTION_MISSING")
+
+    word_taskpane = root / "packages/wps-ai-assistant_1.0.0/taskpane.js"
+    if not word_taskpane.is_file():
+        raise DeliveryFailure("V0260_WORD_TASKPANE_MISSING")
+    taskpane_text = word_taskpane.read_text(encoding="utf-8")
+    for marker in ("pollWritingJobEvents", "stopCurrentConsumer", "status === 404"):
+        if marker not in taskpane_text:
+            raise DeliveryFailure(
+                "V0260_STREAMING_FALLBACK_CONTRACT_MISSING {0}".format(marker)
+            )
+
+
 def audit(root: Path, archive: Optional[Path], checksum_file: Optional[Path], expected_name: Optional[str]) -> None:
     if not root.is_dir():
         raise DeliveryFailure("V0260_DELIVERY_ROOT_MISSING")
@@ -820,6 +864,7 @@ def audit(root: Path, archive: Optional[Path], checksum_file: Optional[Path], ex
     audit_smart_fill_write_contract(root)
     audit_experience_contract(root)
     audit_smart_fill_reference_workflow(root)
+    audit_streaming_and_rollback_contract(root)
     audit_installer(root)
     audit_lifecycle(root)
     audit_current_identity_references(root)
