@@ -5071,19 +5071,6 @@
     state.smartFillCancelRequested = false;
     state.smartFillExtractionInFlight = !state.smartFillRetryItemId;
     setSmartFillInterruptedRetryVisible(false);
-    if (!state.smartFillRetryItemId) {
-      state.smartFillResult = null;
-      state.smartFillPreview = null;
-      state.smartFillEditBaselineAddress = "";
-      state.smartFillDraftItems = [];
-      state.excelSmartFillCompletedJobId = "";
-      if (state.activeSmartFillResultsBySession) {
-        delete state.activeSmartFillResultsBySession[docSessionId];
-      }
-      if (state.activeSmartFillStatesBySession) {
-        delete state.activeSmartFillStatesBySession[docSessionId];
-      }
-    }
     clearExcelSmartFillActiveJob(null, docSessionId);
     taskSession.recoveryPending = false;
     taskSession.jobId = clientJobId;
@@ -5092,7 +5079,6 @@
     taskSession.resumeExpected = true;
     startedAt = taskSession.pollStartedAt;
     saveCurrentSmartFillSessionState(docSessionId);
-    saveExcelSmartFillActiveJob({ jobId: clientJobId, startedAt: startedAt, documentSessionId: docSessionId });
     byId("result-view-switch").hidden = true;
 
     var payloadPromise;
@@ -5179,10 +5165,28 @@
       if (taskSession.jobId !== clientJobId) {
         return;
       }
+      if (!state.smartFillRetryItemId) {
+        state.smartFillResult = null;
+        state.smartFillPreview = null;
+        state.smartFillEditBaselineAddress = "";
+        state.smartFillDraftItems = [];
+        state.excelSmartFillCompletedJobId = "";
+        if (state.activeSmartFillResultsBySession) {
+          delete state.activeSmartFillResultsBySession[docSessionId];
+        }
+        if (state.activeSmartFillStatesBySession) {
+          delete state.activeSmartFillStatesBySession[docSessionId];
+        }
+      }
       payload = preparedPayload;
       setScopeLine(summarizeSmartFillSource(payload.source));
       setStatus("正在提交智能填写请求...");
       setPlainResult("正在等待模型后台生成智能填写预览。");
+      saveExcelSmartFillActiveJob({
+        jobId: clientJobId,
+        startedAt: startedAt,
+        documentSessionId: docSessionId
+      });
       stopWaiting = startExcelSmartFillWaitFeedback();
       (function (stopFeedback) {
         stopWaiting = function () {

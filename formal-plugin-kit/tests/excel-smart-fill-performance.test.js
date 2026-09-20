@@ -138,6 +138,43 @@ test("helpers: extractExcelSmartFillSourcePayloadYielding yields macrotasks and 
   }
 });
 
+test("helpers: wide smart-fill rows stay within the 50ms synchronous slice target", async () => {
+  let virtualTime = 0;
+  let sliceStartedAt = 0;
+  const sliceDurations = [];
+  const originalPerformance = global.performance;
+  const originalSetTimeout = global.setTimeout;
+
+  global.performance = { now: () => virtualTime };
+  global.setTimeout = (fn) => {
+    sliceDurations.push(virtualTime - sliceStartedAt);
+    sliceStartedAt = virtualTime;
+    process.nextTick(fn);
+    return 1;
+  };
+
+  try {
+    const range = buildMockRange(2, 50, () => {
+      virtualTime += 2;
+    });
+
+    await helpers.extractExcelSmartFillSourcePayloadYielding(range, {
+      workbookId: "wb-wide-row",
+      budgetMs: 32
+    });
+    sliceDurations.push(virtualTime - sliceStartedAt);
+
+    assert.ok(sliceDurations.length > 1, "wide rows must yield before the row is complete");
+    assert.ok(
+      Math.max(...sliceDurations) < 50,
+      `maximum synchronous slice must stay below 50ms, got ${Math.max(...sliceDurations)}ms`
+    );
+  } finally {
+    global.performance = originalPerformance;
+    global.setTimeout = originalSetTimeout;
+  }
+});
+
 // 3. 分片抽取安全检查：公式遮蔽、隐藏/合并单元格校验保持一致
 test("helpers: extractExcelSmartFillSourcePayloadYielding masks formulas and validates merged/hidden", async () => {
   // 公式单元格遮蔽测试
@@ -356,8 +393,8 @@ test("taskpane: runExcelSmartFillAction provides immediate UI feedback (<100ms) 
   }
 });
 
-// 6. 准备与抽取期间取消：严禁向 Adapter 发起长任务，不产生模型任务、零结果、零历史
-test("taskpane: runExcelSmartFillAction cancels during extraction without submitting to adapter", async () => {
+// 6. 准备与抽取期间取消：严禁向 Adapter 发起长任务，不产生新结果或历史，并保留既有预览
+test("taskpane: runExcelSmartFillAction cancels during extraction without creating an active adapter job", async () => {
   let virtualTime = 1000;
   const elements = {};
   const byId = (id) => {
@@ -377,6 +414,11 @@ test("taskpane: runExcelSmartFillAction cancels during extraction without submit
   let slotClaimed = false;
   let slotReleased = false;
   let adapterRequested = false;
+  let activeJobSaved = false;
+  const previousResult = {
+    schemaVersion: "excel.smart_fill.v2",
+    items: [{ itemId: "sf_previous", status: "completed", value: "既有预览" }]
+  };
 
   const state = {
     currentMode: "excelSmartFill",
@@ -388,7 +430,7 @@ test("taskpane: runExcelSmartFillAction cancels during extraction without submit
     modelTasksAllowed: true,
     workflowProfileMutationBusy: false,
     smartFillInstruction: "",
-    smartFillResult: null,
+    smartFillResult: previousResult,
     smartFillCancelRequested: false,
     smartFillExtractionInFlight: false,
     taskPerformanceByJobId: {},
@@ -444,7 +486,7 @@ test("taskpane: runExcelSmartFillAction cancels during extraction without submit
     setSmartFillInterruptedRetryVisible: () => {},
     setExcelSmartFillCancelVisible: () => {},
     saveCurrentSmartFillSessionState: () => {},
-    saveExcelSmartFillActiveJob: () => {},
+    saveExcelSmartFillActiveJob: () => { activeJobSaved = true; },
     clearExcelSmartFillActiveJob: () => {},
     summarizeSmartFillSource: () => "A1:C20",
     setScopeLine: () => {},
@@ -488,7 +530,12 @@ test("taskpane: runExcelSmartFillAction cancels during extraction without submit
   assert.ok(slotClaimed, "task slot must have been claimed");
   assert.ok(slotReleased, "task slot must be released upon cancellation");
   assert.strictEqual(adapterRequested, false, "Adapter request MUST NOT be called when cancelled during extraction");
-  assert.strictEqual(state.smartFillResult, null, "No result should be saved when cancelled");
+  assert.strictEqual(activeJobSaved, false, "preparation must not persist a recoverable adapter job");
+  assert.strictEqual(
+    state.smartFillResult,
+    previousResult,
+    "cancelling a new extraction must preserve the existing read-only preview"
+  );
 });
 
 // 7. 抽取中途切换工作簿：严禁提交旧来源至新会话

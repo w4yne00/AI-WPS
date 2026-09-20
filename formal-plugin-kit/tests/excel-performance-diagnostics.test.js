@@ -390,4 +390,3 @@ test("runExcelFormulaAction tracks clickToFeedbackMs, localExtractionMs, clickTo
   assert.strictEqual(perf.clickToAdapterAcceptedMs, 135);
   assert.strictEqual(perf.completionToFirstRenderMs, 20);
 });
-

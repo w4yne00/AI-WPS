@@ -2776,19 +2776,17 @@
     summary = metadata.summary;
 
     var rowIndex = 1;
+    var columnIndex = 1;
+    var rowValues = [];
     return runChunkedSteps(function () {
       if (rowIndex > rows) {
         return true;
       }
-      var rowValues = [];
-      var columnIndex;
-      for (columnIndex = 1; columnIndex <= columns; columnIndex += 1) {
-        cell = getCell(rowIndex, columnIndex);
-        if (!cell) {
-          hasUnreadSafety = true;
-          rowValues.push("");
-          continue;
-        }
+      cell = getCell(rowIndex, columnIndex);
+      if (!cell) {
+        hasUnreadSafety = true;
+        rowValues.push("");
+      } else {
         hiddenState = readSmartFillBooleanState(cell, ["Hidden", "hidden"]);
         rowState = readSmartFillPropertyState(cell, ["EntireRow", "entireRow"], true);
         columnState = readSmartFillPropertyState(cell, ["EntireColumn", "entireColumn"], true);
@@ -2826,6 +2824,10 @@
         }
         rowValues.push(displayed);
       }
+      columnIndex += 1;
+      if (columnIndex <= columns) {
+        return false;
+      }
       if (rowIndex === 1) {
         headers = rowValues;
       } else {
@@ -2841,6 +2843,8 @@
         });
       }
       rowIndex += 1;
+      columnIndex = 1;
+      rowValues = [];
       return false;
     }, lOpts).then(function () {
       if (hasUnreadSafety) {
