@@ -52,6 +52,11 @@
     historyOpen: false,
     historyItems: [],
     historyUnreadCount: 0,
+    slideAssistantResultsBySession: {},
+    taskPerformanceByJobId: {},
+    taskPerformanceByTraceId: {},
+    taskPerformanceOrder: [],
+    lastTaskPerformance: null,
     profiles: { activeProfileId: "", profiles: [] },
     profilesByTask: {},
     selectedProfileId: "",
@@ -96,6 +101,152 @@
 
   function byId(id) {
     return document.getElementById(id);
+  }
+
+  function getTaskPerformance(jobId, traceId) {
+    var byJobId = state.taskPerformanceByJobId || {};
+    var byTraceId = state.taskPerformanceByTraceId || {};
+    if (jobId && byJobId[jobId]) {
+      return byJobId[jobId];
+    }
+    if (traceId && byTraceId[traceId]) {
+      return byTraceId[traceId];
+    }
+    return null;
+  }
+
+  function beginTaskPerformance(jobId, taskType, clickTimestamp, clickToFeedbackMs) {
+    state.taskPerformanceByJobId = state.taskPerformanceByJobId || {};
+    state.taskPerformanceByTraceId = state.taskPerformanceByTraceId || {};
+    state.taskPerformanceOrder = state.taskPerformanceOrder || [];
+    var record = {
+      jobId: jobId,
+      traceId: "",
+      taskType: taskType,
+      clickTimestamp: clickTimestamp,
+      clickToFeedbackMs: clickToFeedbackMs,
+      localExtractionMs: null,
+      clickToAdapterAcceptedMs: null,
+      completionToFirstRenderMs: null
+    };
+    state.taskPerformanceByJobId[jobId] = record;
+    state.taskPerformanceOrder.push(jobId);
+    while (state.taskPerformanceOrder.length > 50) {
+      var expiredJobId = state.taskPerformanceOrder.shift();
+      var expired = state.taskPerformanceByJobId[expiredJobId];
+      if (expired && expired.traceId) {
+        delete state.taskPerformanceByTraceId[expired.traceId];
+      }
+      delete state.taskPerformanceByJobId[expiredJobId];
+    }
+    state.lastTaskPerformance = record;
+    return record;
+  }
+
+  function bindTaskPerformanceTrace(jobId, traceId, resolvedJobId) {
+    var record = getTaskPerformance(jobId, traceId);
+    if (!record) {
+      return null;
+    }
+    if (resolvedJobId) {
+      state.taskPerformanceByJobId[resolvedJobId] = record;
+      if (jobId && resolvedJobId !== jobId) {
+        delete state.taskPerformanceByJobId[jobId];
+        for (var index = 0; index < state.taskPerformanceOrder.length; index += 1) {
+          if (state.taskPerformanceOrder[index] === jobId) {
+            state.taskPerformanceOrder[index] = resolvedJobId;
+            break;
+          }
+        }
+      }
+      record.jobId = resolvedJobId;
+    }
+    if (traceId) {
+      record.traceId = traceId;
+      state.taskPerformanceByTraceId[traceId] = record;
+    }
+    return record;
+  }
+
+  function selectTaskPerformance(jobId, traceId) {
+    var record = getTaskPerformance(jobId, traceId);
+    state.lastTaskPerformance = record;
+    return record;
+  }
+
+  function recordTaskFirstRender(jobId, traceId, taskType, completionTimestamp) {
+    var record = getTaskPerformance(jobId, traceId);
+    if (!record) {
+      record = beginTaskPerformance(jobId || traceId, taskType, null, null);
+    }
+    bindTaskPerformanceTrace(jobId || record.jobId, traceId, jobId || record.jobId);
+    var commitMetric = function () {
+      var firstRenderTimestamp = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+      record.completionToFirstRenderMs = Math.max(0, Math.round(firstRenderTimestamp - completionTimestamp));
+      record.taskType = taskType;
+      if (state.traceId === record.traceId || (!state.traceId && state.lastTaskPerformance === record)) {
+        state.lastTaskPerformance = record;
+      }
+    };
+    if (typeof requestAnimationFrame === "function") {
+      requestAnimationFrame(commitMetric);
+    } else {
+      setTimeout(commitMetric, 0);
+    }
+  }
+
+  function validateSlideAssistantResult(result) {
+    if (!result || typeof result !== "object") {
+      return { valid: false, message: "总结结果为空或不是有效对象。" };
+    }
+    if (result.resultType === "document") {
+      var hasDocumentStructure = Boolean(
+        (Array.isArray(result.slides) && result.slides.length > 0) ||
+        (result.deckTitle && String(result.deckTitle).trim()) ||
+        (result.documentSummary && String(result.documentSummary).trim()) ||
+        (result.plainText && String(result.plainText).trim()) ||
+        (result.rawAnswer && String(result.rawAnswer).trim())
+      );
+      if (!hasDocumentStructure) {
+        return { valid: false, message: "文档总结结果缺少幻灯片、摘要或正文内容。" };
+      }
+      return { valid: true };
+    }
+    var hasSlideContent = Boolean(
+      (result.plainText && String(result.plainText).trim()) ||
+      (result.suggestedTitle && String(result.suggestedTitle).trim()) ||
+      (Array.isArray(result.bullets) && result.bullets.length > 0) ||
+      (result.conclusion && String(result.conclusion).trim()) ||
+      (result.rawAnswer && String(result.rawAnswer).trim())
+    );
+    if (!hasSlideContent) {
+      return { valid: false, message: "单页总结结果缺少有效标题、要点或结论。" };
+    }
+    return { valid: true };
+  }
+
+  function validateStructureReviewResult(result) {
+    if (!result || typeof result !== "object") {
+      return { valid: false, message: "结构审查结果为空或不是有效对象。" };
+    }
+    var hasRange = Boolean(
+      result.reviewedRange &&
+      typeof result.reviewedRange === "object" &&
+      typeof result.reviewedRange.startSlide === "number" &&
+      typeof result.reviewedRange.endSlide === "number"
+    );
+    var hasStructureData = Boolean(
+      hasRange ||
+      Array.isArray(result.pageRoles) ||
+      Array.isArray(result.highPriorityIssues) ||
+      Array.isArray(result.generalSuggestions) ||
+      Array.isArray(result.inferredChapters) ||
+      (result.reviewConclusion && String(result.reviewConclusion).trim())
+    );
+    if (!hasStructureData) {
+      return { valid: false, message: "结构审查结果缺少审查范围或结构化问题数据。" };
+    }
+    return { valid: true };
   }
 
   function setNodeTextIfChanged(node, value) {
@@ -553,7 +704,6 @@
       "ppt-slide-count",
       "ppt-slide-instruction",
       "task-model-config-trigger",
-      "btn-open-settings",
       "btn-run-structure-review",
       "ppt-structure-start-slide",
       "ppt-structure-end-slide"
@@ -877,24 +1027,46 @@
     );
   }
 
-  function schedulePoll(jobId, delay) {
+  function schedulePoll(jobId, delay, targetDocSession) {
     setTimeout(function () {
-      pollPptSlideJob(jobId);
+      pollPptSlideJob(jobId, targetDocSession);
     }, delay);
   }
 
-  function finishJob(jobId, result) {
-    clearActiveJob(jobId);
+  function finishJob(jobId, result, targetDocSession) {
+    var pres = typeof getActivePresentation === "function" ? getActivePresentation() : null;
+    var currentDocSession = (helpers.getDocumentSessionId && pres) ? helpers.getDocumentSessionId(pres) : state.documentSessionId;
+    var jobSession = targetDocSession || currentDocSession;
+    clearActiveJob(jobId, jobSession);
     releaseTaskSlotsForJob(jobId);
-    state.jobId = "";
-    state.jobSourceMode = "";
-    state.resumeExpected = false;
-    setPptJobActionVisibility(null);
-    setRunDisabled(false);
+    if (state.jobId === jobId) {
+      state.jobId = "";
+      state.jobSourceMode = "";
+      state.resumeExpected = false;
+      setPptJobActionVisibility(null);
+      setRunDisabled(false);
+    }
+    var validation = typeof validateSlideAssistantResult === "function"
+      ? validateSlideAssistantResult(result)
+      : { valid: true };
+    if (!validation.valid) {
+      failJob(jobId, validation.message, "总结结果校验失败", jobSession);
+      return;
+    }
+    if (!state.slideAssistantResultsBySession) {
+      state.slideAssistantResultsBySession = {};
+    }
+    state.slideAssistantResultsBySession[jobSession] = result || {};
+
     var statusText = (result && result.resultType === "document" ? "文档总结已完成。" : "当前页总结已完成。");
     if (result && result.historyNotice) {
       statusText += "（" + result.historyNotice + "）";
     }
+
+    if (currentDocSession && jobSession && currentDocSession !== jobSession) {
+      return;
+    }
+
     if (state.historyOpen) {
       state.historyUnreadCount = (state.historyUnreadCount || 0) + 1;
       updateHistoryBadge();
@@ -906,28 +1078,42 @@
       state.result = result || {};
       return;
     }
+    state.result = result || {};
     renderResult(result || {});
     setStatus(statusText);
   }
 
-  function failJob(jobId, message, statusMessage) {
+  function failJob(jobId, message, statusMessage, targetDocSession) {
+    var pres = typeof getActivePresentation === "function" ? getActivePresentation() : null;
+    var currentDocSession = (helpers.getDocumentSessionId && pres) ? helpers.getDocumentSessionId(pres) : state.documentSessionId;
+    var jobSession = targetDocSession || currentDocSession;
     var failureMessage = safeText(message) || "后台任务执行失败。";
-    clearActiveJob(jobId);
+    clearActiveJob(jobId, jobSession);
     releaseTaskSlotsForJob(jobId);
-    state.jobId = "";
-    state.jobSourceMode = "";
-    state.resumeExpected = false;
+    if (state.jobId === jobId) {
+      state.jobId = "";
+      state.jobSourceMode = "";
+      state.resumeExpected = false;
+      setPptJobActionVisibility(null);
+      setRunDisabled(false);
+    }
+    if (state.slideAssistantResultsBySession) {
+      delete state.slideAssistantResultsBySession[jobSession];
+    }
+    if (currentDocSession && jobSession && currentDocSession !== jobSession) {
+      return;
+    }
     state.result = null;
-    setPptJobActionVisibility(null);
-    setRunDisabled(false);
     setStatus((statusMessage || "总结失败") + "：" + failureMessage);
     setPlainResult(failureMessage);
   }
 
-  function pollPptSlideJob(jobId) {
+  function pollPptSlideJob(jobId, targetDocSession) {
     if (!jobId || state.jobId !== jobId) {
       return;
     }
+    var pres = typeof getActivePresentation === "function" ? getActivePresentation() : null;
+    var docSession = targetDocSession || (helpers.getDocumentSessionId && pres ? helpers.getDocumentSessionId(pres) : state.documentSessionId);
     request(
       "/ppt/slide-assistant/jobs/" + encodeURIComponent(jobId) +
         (state.resumeExpected ? "?resume=1" : ""),
@@ -945,18 +1131,20 @@
         startedAt: state.startedAt,
         sourceMode: state.jobSourceMode || state.sourceMode,
         stage: "job",
-        documentSessionId: state.documentSessionId
+        documentSessionId: docSession
       });
       if (job.status === "completed") {
-        finishJob(jobId, job.result || {});
+        var completionTimestamp = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+        recordTaskFirstRender(jobId, body.traceId || (job && job.traceId), "ppt.slide_assistant", completionTimestamp);
+        finishJob(jobId, job.result || {}, docSession);
         return;
       }
       if (job.status === "failed") {
-        failJob(jobId, job.error && job.error.message, "总结失败");
+        failJob(jobId, job.error && job.error.message, "总结失败", docSession);
         return;
       }
       if (job.status === "cancelled") {
-        failJob(jobId, "任务已取消。", "智能总结已取消");
+        failJob(jobId, "任务已取消。", "智能总结已取消", docSession);
         return;
       }
       var progress = helpers.describePptJobProgress(
@@ -967,7 +1155,7 @@
       setStatus(progress.status);
       setPptJobActionVisibility(job);
       showProgressText(progress.detail);
-      schedulePoll(jobId, PPT_SLIDE_POLL_INTERVAL_MS);
+      schedulePoll(jobId, PPT_SLIDE_POLL_INTERVAL_MS, docSession);
     }).catch(function (error) {
       var elapsed = Date.now() - (state.startedAt || Date.now());
       var within;
@@ -976,7 +1164,7 @@
       }
       state.pollErrors += 1;
       if (error && error.adapterCode === "PPT_SLIDE_JOB_INTERRUPTED") {
-        clearActiveJob(jobId);
+        clearActiveJob(jobId, docSession);
         releaseTaskSlotsForJob(jobId);
         state.jobId = "";
         state.jobSourceMode = "";
@@ -990,7 +1178,7 @@
         return;
       }
       if (isFatalPollError(error)) {
-        failJob(jobId, error.message, "状态查询失败");
+        failJob(jobId, error.message, "状态查询失败", docSession);
         return;
       }
       within = state.pollErrors <= PPT_SLIDE_POLL_MAX_ERRORS && elapsed <= PPT_SLIDE_POLL_MAX_WAIT_MS;
@@ -999,7 +1187,7 @@
         startedAt: state.startedAt,
         sourceMode: state.jobSourceMode || state.sourceMode,
         stage: "job",
-        documentSessionId: state.documentSessionId
+        documentSessionId: docSession
       });
       setStatus(within
         ? "状态查询暂时未连接本地 adapter，继续等待模型后台..."
@@ -1007,12 +1195,16 @@
       showProgressText("任务编号已保留，不会重复提交。\n最近错误：" + error.message);
       schedulePoll(
         jobId,
-        within ? PPT_SLIDE_POLL_ERROR_RETRY_DELAY_MS : PPT_SLIDE_POLL_SLOW_RETRY_DELAY_MS
+        within ? PPT_SLIDE_POLL_ERROR_RETRY_DELAY_MS : PPT_SLIDE_POLL_SLOW_RETRY_DELAY_MS,
+        docSession
       );
     });
   }
 
   function submitPptSlideJob(payload) {
+    var perf = (arguments.length > 1 && arguments[1])
+      ? arguments[1]
+      : (typeof getTaskPerformance === "function" && payload && payload.clientJobId ? getTaskPerformance(payload.clientJobId) : null);
     var readiness = typeof validateActiveDirectTaskSelection === "function"
       ? validateActiveDirectTaskSelection("ppt.slide_assistant")
       : { valid: true };
@@ -1043,38 +1235,47 @@
     ).then(function (body) {
       var job = body.data || {};
       var jobId = job.jobId || clientJobId;
+      var traceId = body.traceId || (job && job.traceId) || "";
+      if (perf) {
+        var acceptedTimestamp = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+        perf.clickToAdapterAcceptedMs = Math.max(0, Math.round(acceptedTimestamp - perf.clickTimestamp));
+        bindTaskPerformanceTrace(clientJobId, traceId, jobId);
+      }
       if (state.jobId !== clientJobId) {
         return;
       }
       state.jobId = jobId;
       saveActiveJob({
         jobId: jobId,
-        traceId: body.traceId || "",
+        traceId: traceId,
         startedAt: state.startedAt,
         sourceMode: state.jobSourceMode,
         stage: "job",
         documentSessionId: state.documentSessionId
       });
       if (job.status === "completed") {
-        finishJob(jobId, job.result || {});
+        var completionTimestamp = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+        recordTaskFirstRender(jobId, traceId, "ppt.slide_assistant", completionTimestamp);
+        finishJob(jobId, job.result || {}, state.documentSessionId);
         return;
       }
       var progress = helpers.describePptJobProgress(job, state.jobSourceMode, jobId);
       setStatus(progress.status);
       setPptJobActionVisibility(job);
       showProgressText(progress.detail);
-      pollPptSlideJob(jobId);
+      pollPptSlideJob(jobId, state.documentSessionId);
     }).catch(function (error) {
       if (isFatalPollError(error)) {
-        failJob(clientJobId, error.message, "提交失败");
+        failJob(clientJobId, error.message, "提交失败", state.documentSessionId);
         return;
       }
       setStatus("提交响应未确认，正在按任务编号恢复查询...");
-      pollPptSlideJob(clientJobId);
+      pollPptSlideJob(clientJobId, state.documentSessionId);
     });
   }
 
   function runCurrentSlideSummary() {
+    var clickTimestamp = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
     var pres = getActivePresentation();
     var docSession = helpers.getDocumentSessionId ? helpers.getDocumentSessionId(pres) : "doc_default";
     var docName = helpers.getDocumentDisplayName ? helpers.getDocumentDisplayName(pres) : "当前演示文稿";
@@ -1088,12 +1289,20 @@
 
     setRunDisabled(true);
     setStatus("正在读取当前幻灯片...");
+    var feedbackTimestamp = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+    var clickToFeedbackMs = Math.max(0, Math.round(feedbackTimestamp - clickTimestamp));
+    var clientJobId = buildPptSlideClientJobId("slide");
+    var perf = beginTaskPerformance(clientJobId, "ppt.slide_assistant", clickTimestamp, clickToFeedbackMs);
+
     setTimeout(function () {
       var payload;
       var instruction;
       var bodyCount;
+      var extractStart = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
       try {
         payload = helpers.extractPresentationSlide(getWppApplication(), PPT_EXTRACTION_LIMITS);
+        var extractEnd = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+        perf.localExtractionMs = Math.max(0, Math.round(extractEnd - extractStart));
         instruction = safeText(byId("ppt-slide-instruction").value);
         bodyCount = (payload.slide.textBlocks || []).join("").replace(/\s/g, "").length;
         setSummary(payload);
@@ -1109,12 +1318,12 @@
         showProgressText("正在准备提交当前页总结...");
         payload.sourceMode = "slide";
         payload.userInstruction = instruction.slice(0, 1000);
-        payload.clientJobId = buildPptSlideClientJobId("slide");
+        payload.clientJobId = clientJobId;
         payload.documentDisplayName = docName;
         if (helpers.claimTaskSlot) {
           helpers.claimTaskSlot(state.activeTaskSlots, "wpp", state.workflowTaskType, docSession, payload.clientJobId);
         }
-        submitPptSlideJob(payload);
+        submitPptSlideJob(payload, perf);
       } catch (error) {
         setRunDisabled(false);
         setStatus("读取失败");
@@ -1126,6 +1335,7 @@
   }
 
   function runDocumentSummary() {
+    var clickTimestamp = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
     var pres = getActivePresentation();
     var docSession = helpers.getDocumentSessionId ? helpers.getDocumentSessionId(pres) : "doc_default";
     var docName = helpers.getDocumentDisplayName ? helpers.getDocumentDisplayName(pres) : "当前演示文稿";
@@ -1161,6 +1371,11 @@
       helpers.claimTaskSlot(state.activeTaskSlots, "wpp", state.workflowTaskType, docSession, clientJobId);
     }
     setRunDisabled(true);
+    setStatus("正在读取文档...");
+    var feedbackTimestamp = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+    var clickToFeedbackMs = Math.max(0, Math.round(feedbackTimestamp - clickTimestamp));
+    var perf = beginTaskPerformance(clientJobId, "ppt.slide_assistant", clickTimestamp, clickToFeedbackMs);
+
     saveActiveJob({
       jobId: clientJobId,
       sourceMode: "document",
@@ -1168,9 +1383,11 @@
       startedAt: Date.now(),
       documentSessionId: docSession
     });
-    setStatus("正在读取文档...");
     showProgressText("正在读取文档并准备上传，请稍候。");
+    var readStart = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
     readFileAsBase64(file).then(function (contentBase64) {
+      var readEnd = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+      perf.localExtractionMs = Math.max(0, Math.round(readEnd - readStart));
       setStatus("正在上传文档到本地 adapter...");
       return request("/ppt/document-files", {
         fileName: file.name,
@@ -1202,13 +1419,13 @@
         userInstruction: instruction,
         clientJobId: clientJobId,
         documentDisplayName: docName
-      });
+      }, perf);
     }).catch(function (error) {
       releaseTaskSlotsForJob(clientJobId);
       if (state.jobId) {
         return;
       }
-      clearActiveJob(clientJobId);
+      clearActiveJob(clientJobId, docSession);
       setRunDisabled(false);
       setStatus("文档上传失败：" + error.message);
       setPlainResult("文档上传失败：" + error.message);
@@ -1380,6 +1597,13 @@
       setStructureJobActionVisibility(null);
       setRunDisabled(false);
     }
+    var validation = typeof validateStructureReviewResult === "function"
+      ? validateStructureReviewResult(result)
+      : { valid: true };
+    if (!validation.valid) {
+      failStructureJob(jobId, validation.message, "结构审查结果校验失败", jobSession);
+      return;
+    }
     if (!state.structureResultsBySession) {
       state.structureResultsBySession = {};
     }
@@ -1469,6 +1693,8 @@
       state.pollErrors = 0;
       saveStructureActiveJob({ jobId: jobId, startedAt: state.startedAt, documentSessionId: docSession });
       if (job.status === "completed") {
+        var completionTimestamp = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+        recordTaskFirstRender(jobId, body.traceId || (job && job.traceId), "ppt.structure_review", completionTimestamp);
         finishStructureJob(jobId, job.result || {}, docSession);
         return;
       }
@@ -1520,6 +1746,9 @@
   }
 
   function submitStructureReviewJob(payload) {
+    var perf = (arguments.length > 1 && arguments[1])
+      ? arguments[1]
+      : (typeof getTaskPerformance === "function" && payload && payload.clientJobId ? getTaskPerformance(payload.clientJobId) : null);
     var readiness = typeof validateActiveDirectTaskSelection === "function"
       ? validateActiveDirectTaskSelection("ppt.structure_review")
       : { valid: true };
@@ -1542,6 +1771,12 @@
     }).then(function (body) {
       var job = body.data || {};
       var jobId = job.jobId || clientJobId;
+      var traceId = body.traceId || (job && job.traceId) || "";
+      if (perf) {
+        var acceptedTimestamp = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+        perf.clickToAdapterAcceptedMs = Math.max(0, Math.round(acceptedTimestamp - perf.clickTimestamp));
+        bindTaskPerformanceTrace(clientJobId, traceId, jobId);
+      }
       var progress;
       if (state.jobId !== clientJobId) {
         return;
@@ -1549,6 +1784,8 @@
       state.jobId = jobId;
       saveStructureActiveJob({ jobId: jobId, startedAt: state.startedAt, documentSessionId: docSession });
       if (job.status === "completed") {
+        var completionTimestamp = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+        recordTaskFirstRender(jobId, traceId, "ppt.structure_review", completionTimestamp);
         finishStructureJob(jobId, job.result || {}, docSession);
         return;
       }
@@ -1568,6 +1805,7 @@
   }
 
   function runPptStructureReview() {
+    var clickTimestamp = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
     var startSlide;
     var endSlide;
     var pres;
@@ -1577,8 +1815,8 @@
       setStatus("Adapter 当前处于恢复模式，模型任务已被安全阻止。");
       return;
     }
-    if (state.workflowProfileMutationBusy) {
-      setStatus("模型配置正在更新，请稍后再运行结构审查。");
+    if (state.workflowProfileMutationBusy || state.busy) {
+      setStatus("任务或模型配置正在处理中，请稍后再运行结构审查。");
       return;
     }
     pres = typeof getActivePresentation === "function" ? getActivePresentation() : null;
@@ -1599,10 +1837,16 @@
     endSlide = safeText(byId("ppt-structure-end-slide").value);
     setRunDisabled(true);
     setStatus("正在只读提取 PPT 页面结构...");
+    var feedbackTimestamp = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+    var clickToFeedbackMs = Math.max(0, Math.round(feedbackTimestamp - clickTimestamp));
+    var clientJobId = buildPptSlideClientJobId("structure");
+    var perf = beginTaskPerformance(clientJobId, "ppt.structure_review", clickTimestamp, clickToFeedbackMs);
+
     byId("structure-result-output").textContent = "正在读取页码、主标题和可选副标题。";
     setTimeout(function () {
       var payload;
       var titledCount;
+      var extractStart = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
       try {
         payload = helpers.extractPresentationStructure(
           getWppApplication(),
@@ -1616,13 +1860,15 @@
             maxFallbackSlides: PPT_STRUCTURE_MAX_FALLBACK_SLIDES
           }
         );
+        var extractEnd = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+        perf.localExtractionMs = Math.max(0, Math.round(extractEnd - extractStart));
         titledCount = payload.slides.filter(function (slide) { return Boolean(slide.title); }).length;
         byId("ppt-structure-end-slide").value = String(payload.scope.endSlide);
         byId("ppt-structure-summary").textContent =
           "将审查第 " + payload.scope.startSlide + "-" + payload.scope.endSlide + " 页" +
           " ｜ 已识别主标题 " + titledCount + "/" + payload.slides.length + " 页" +
           " ｜ 演示文稿共 " + payload.scope.totalSlides + " 页";
-        payload.clientJobId = buildPptSlideClientJobId("structure");
+        payload.clientJobId = clientJobId;
         payload.documentSessionId = docSession;
         payload.documentDisplayName = docName;
         payload.host = "wpp";
@@ -1633,7 +1879,7 @@
         if (helpers.claimTaskSlot) {
           helpers.claimTaskSlot(state.activeTaskSlots, "wpp", PPT_STRUCTURE_WORKFLOW_TASK_TYPE, docSession, payload.clientJobId);
         }
-        submitStructureReviewJob(payload);
+        submitStructureReviewJob(payload, perf);
       } catch (error) {
         setRunDisabled(false);
         setStatus("读取失败：" + error.message);
@@ -2307,7 +2553,7 @@
     if (!manager) {
       return;
     }
-    byId("btn-new-workflow-profile").disabled = state.workflowProfileMutationBusy ||
+    byId("btn-new-workflow-profile").disabled = state.busy || state.workflowProfileMutationBusy ||
       Boolean(state.profiles.loadError);
     if (state.profiles.loadError) {
       html.push('<div class="workflow-load-error"><p class="workflow-profile-error">无法读取工作流配置：' +
@@ -2324,7 +2570,7 @@
       var id = escaped(profile.id);
       var active = profile.id === state.profiles.activeProfileId;
       var status = active ? "当前" : (profile.complete ? "配置完整" : "配置不完整");
-      var disabled = state.workflowProfileMutationBusy ? ' disabled' : '';
+      var disabled = (state.busy || state.workflowProfileMutationBusy) ? ' disabled' : '';
       html.push('<div class="workflow-profile-list-row" data-profile-id="' + id + '">');
       html.push('<div class="workflow-profile-copy"><div class="workflow-profile-name-line"><strong>' +
         escaped(profile.name || "未命名配置") + '</strong><span class="workflow-profile-state">' +
@@ -3106,12 +3352,13 @@
       return;
     }
     if (btnNew) {
-      btnNew.disabled = (state.directServices || []).length >= 5;
+      btnNew.disabled = state.busy || state.workflowProfileMutationBusy || (state.directServices || []).length >= 5;
     }
     if (!state.directServices || state.directServices.length === 0) {
       list.innerHTML = '<p class="direct-services-empty-state">尚未建立直连模型配置。</p>';
       return;
     }
+    var actionDisabled = (state.busy || state.workflowProfileMutationBusy) ? ' disabled' : '';
     state.directServices.forEach(function (svc) {
       var id = escapeWorkflowText(svc.id);
       var modelText = svc.defaultModel ? (" · 默认模型：" + escapeWorkflowText(svc.defaultModel)) : "";
@@ -3126,14 +3373,17 @@
       rows.push('<p class="workflow-profile-note">' + escapeWorkflowText(catalogText) + '</p>');
       rows.push('</div>');
       rows.push('<div class="workflow-profile-actions">');
-      rows.push('<button type="button" class="ghost-action mini-button" data-direct-action="edit" data-direct-id="' + id + '">编辑</button>');
-      rows.push('<button type="button" class="ghost-action mini-button danger-action" data-direct-action="delete" data-direct-id="' + id + '">删除</button>');
+      rows.push('<button type="button" class="ghost-action mini-button" data-direct-action="edit" data-direct-id="' + id + '"' + actionDisabled + '>编辑</button>');
+      rows.push('<button type="button" class="ghost-action mini-button danger-action" data-direct-action="delete" data-direct-id="' + id + '"' + actionDisabled + '>删除</button>');
       rows.push('</div></div>');
     });
     list.innerHTML = rows.join("");
   }
 
   function openDirectServiceEditor(mode, serviceId) {
+    if (state.busy || state.workflowProfileMutationBusy) {
+      return;
+    }
     var isCreate = mode === "create";
     var svc = isCreate ? null : findDirectService(serviceId);
     var title = byId("direct-service-editor-title");
@@ -3378,7 +3628,7 @@
   }
 
   function saveDirectServiceEditor() {
-    if (state.workflowProfileMutationBusy) {
+    if (state.workflowProfileMutationBusy || state.busy) {
       return;
     }
     var editor = state.directServiceEditor || {};
@@ -3728,7 +3978,7 @@
 
   function confirmDirectServiceDelete() {
     var candidate = state.directServiceDeleteCandidate;
-    if (!candidate || state.workflowProfileMutationBusy) {
+    if (!candidate || state.workflowProfileMutationBusy || state.busy) {
       return;
     }
     if (typeof setWorkflowProfileMutationBusy === "function") {
@@ -3769,7 +4019,7 @@
   function handleDirectServiceAction(event) {
     var action = event.target.getAttribute("data-direct-action");
     var serviceId = event.target.getAttribute("data-direct-id") || "";
-    if (!action || state.workflowProfileMutationBusy) {
+    if (!action || state.workflowProfileMutationBusy || state.busy) {
       return;
     }
     if (action === "edit") {
@@ -3899,9 +4149,20 @@
         statusNode.textContent = "";
       }
     }
+    var mutationDisabled = Boolean(state.busy || state.workflowProfileMutationBusy);
+    select.disabled = mutationDisabled;
+    if (modelSelect) modelSelect.disabled = mutationDisabled;
+    if (tempInput) tempInput.disabled = mutationDisabled;
+    if (maxOutInput) maxOutInput.disabled = mutationDisabled;
+    if (contextInput) contextInput.disabled = mutationDisabled;
+    if (byId("btn-save-task-model-selection")) byId("btn-save-task-model-selection").disabled = mutationDisabled;
+    if (byId("btn-validate-task-model-selection")) byId("btn-validate-task-model-selection").disabled = mutationDisabled;
   }
 
   function handleTaskDirectServiceSelectChange() {
+    if (state.busy || state.workflowProfileMutationBusy) {
+      return;
+    }
     var select = byId("ppt-task-direct-service-select");
     var serviceId = select ? select.value : "";
     var paramsDiv = byId("ppt-task-direct-params");
@@ -4038,7 +4299,7 @@
     var taskType = getSettingsWorkflowTaskType();
     var statusNode = byId("ppt-task-model-validation-status");
     var currentSvc = findDirectService(draft.serviceId);
-    if (!draft.serviceId || state.workflowProfileMutationBusy) {
+    if (!draft.serviceId || state.workflowProfileMutationBusy || state.busy) {
       setStatus("请先选择直连服务。");
       return;
     }
@@ -4234,6 +4495,23 @@
       }
       if (typeof debug.performance.parseMs === "number") {
         lines.push("- 解析耗时：" + debug.performance.parseMs + " ms");
+      }
+    }
+
+    if (typeof state !== "undefined" && state.lastTaskPerformance) {
+      lines.push("");
+      lines.push("## 任务窗格本地耗时");
+      if (typeof state.lastTaskPerformance.clickToFeedbackMs === "number") {
+        lines.push("- 点击到反馈耗时：" + state.lastTaskPerformance.clickToFeedbackMs + " ms");
+      }
+      if (typeof state.lastTaskPerformance.localExtractionMs === "number") {
+        lines.push("- 本地抽取耗时：" + state.lastTaskPerformance.localExtractionMs + " ms");
+      }
+      if (typeof state.lastTaskPerformance.clickToAdapterAcceptedMs === "number") {
+        lines.push("- 点击到后台接收耗时：" + state.lastTaskPerformance.clickToAdapterAcceptedMs + " ms");
+      }
+      if (typeof state.lastTaskPerformance.completionToFirstRenderMs === "number") {
+        lines.push("- 完成到首渲染耗时：" + state.lastTaskPerformance.completionToFirstRenderMs + " ms");
       }
     }
 

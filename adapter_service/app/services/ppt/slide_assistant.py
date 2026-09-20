@@ -1,7 +1,7 @@
 import re
 from typing import Dict, Optional
 
-from app.core.errors import AdapterError
+from app.core.errors import AdapterError, ProviderTimeoutError
 from app.core.models import PptSlideAssistantRequest
 from app.services.ppt.document_files import PptDocumentFileStore
 from app.services.provider_client import ProviderClient
@@ -145,13 +145,36 @@ class PptSlideAssistant:
             provider_kwargs = {"progress_callback": progress_callback}
             if task_auth is not None:
                 provider_kwargs["task_auth"] = task_auth
-            return self.provider_client.ppt_document_summary(
+            result = self.provider_client.ppt_document_summary(
                 staged,
                 request.requested_slide_count,
                 (request.user_instruction or "")[:PPT_MAX_USER_INSTRUCTION_LENGTH],
                 trace_id,
                 **provider_kwargs,
             )
+            if progress_callback:
+                progress_callback("parsing")
+            if hasattr(progress_callback, "record_metric"):
+                progress_callback.record_metric("providerOutcome", "success")
+            return result
+        except ProviderTimeoutError:
+            if hasattr(progress_callback, "set_diagnostic_error_code"):
+                progress_callback.set_diagnostic_error_code("PROVIDER_TIMEOUT")
+            if hasattr(progress_callback, "record_metric"):
+                progress_callback.record_metric("providerOutcome", "provider_timeout")
+            raise
+        except AdapterError as exc:
+            if hasattr(progress_callback, "set_diagnostic_error_code"):
+                progress_callback.set_diagnostic_error_code(exc.code)
+            if hasattr(progress_callback, "record_metric"):
+                progress_callback.record_metric("providerOutcome", "provider_error")
+            raise
+        except Exception:
+            if hasattr(progress_callback, "set_diagnostic_error_code"):
+                progress_callback.set_diagnostic_error_code("PPT_SLIDE_JOB_FAILED")
+            if hasattr(progress_callback, "record_metric"):
+                progress_callback.record_metric("providerOutcome", "provider_error")
+            raise
         finally:
             if delete_after:
                 self.document_file_store.delete(staged)
@@ -178,13 +201,37 @@ class PptSlideAssistant:
         provider_kwargs = {"progress_callback": progress_callback}
         if task_auth is not None:
             provider_kwargs["task_auth"] = task_auth
-        provider_result = self.provider_client.ppt_slide_assistant(
-            context,
-            user_instruction,
-            mode,
-            trace_id,
-            **provider_kwargs,
-        )
+        try:
+            provider_result = self.provider_client.ppt_slide_assistant(
+                context,
+                user_instruction,
+                mode,
+                trace_id,
+                **provider_kwargs,
+            )
+            if progress_callback:
+                progress_callback("parsing")
+            if hasattr(progress_callback, "record_metric"):
+                progress_callback.record_metric("providerOutcome", "success")
+        except ProviderTimeoutError:
+            if hasattr(progress_callback, "set_diagnostic_error_code"):
+                progress_callback.set_diagnostic_error_code("PROVIDER_TIMEOUT")
+            if hasattr(progress_callback, "record_metric"):
+                progress_callback.record_metric("providerOutcome", "provider_timeout")
+            raise
+        except AdapterError as exc:
+            if hasattr(progress_callback, "set_diagnostic_error_code"):
+                progress_callback.set_diagnostic_error_code(exc.code)
+            if hasattr(progress_callback, "record_metric"):
+                progress_callback.record_metric("providerOutcome", "provider_error")
+            raise
+        except Exception:
+            if hasattr(progress_callback, "set_diagnostic_error_code"):
+                progress_callback.set_diagnostic_error_code("PPT_SLIDE_JOB_FAILED")
+            if hasattr(progress_callback, "record_metric"):
+                progress_callback.record_metric("providerOutcome", "provider_error")
+            raise
+
         return {
             "resultType": "slide",
             "modeUsed": mode,

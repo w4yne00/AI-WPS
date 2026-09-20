@@ -2,7 +2,7 @@ import re
 from copy import deepcopy
 from typing import Callable, Dict, List, Optional, Tuple
 
-from app.core.errors import AdapterError
+from app.core.errors import AdapterError, ProviderTimeoutError
 from app.core.models import PptStructureReviewRequest
 from app.services.provider_client import ProviderClient
 
@@ -706,10 +706,35 @@ class PptStructureReviewer:
                 trace_id=trace_id,
                 **kwargs
             )
+            if progress_callback:
+                progress_callback("parsing")
+            if hasattr(progress_callback, "record_metric"):
+                progress_callback.record_metric("providerOutcome", "success")
+        except ProviderTimeoutError:
+            if hasattr(progress_callback, "set_diagnostic_error_code"):
+                progress_callback.set_diagnostic_error_code("PROVIDER_TIMEOUT")
+            if hasattr(progress_callback, "record_metric"):
+                progress_callback.record_metric("providerOutcome", "provider_timeout")
+            raise
         except AdapterError as exc:
-            if getattr(exc, "code", "") != "MODEL_CONFIG_INCOMPLETE":
+            if getattr(exc, "code", "") == "MODEL_CONFIG_INCOMPLETE":
+                if progress_callback:
+                    progress_callback("parsing")
+                if hasattr(progress_callback, "record_metric"):
+                    progress_callback.record_metric("providerOutcome", "not_attempted")
+                model = _unconfigured_model_result()
+            else:
+                if hasattr(progress_callback, "set_diagnostic_error_code"):
+                    progress_callback.set_diagnostic_error_code(exc.code)
+                if hasattr(progress_callback, "record_metric"):
+                    progress_callback.record_metric("providerOutcome", "provider_error")
                 raise
-            model = _unconfigured_model_result()
+        except Exception:
+            if hasattr(progress_callback, "set_diagnostic_error_code"):
+                progress_callback.set_diagnostic_error_code("PPT_STRUCTURE_JOB_FAILED")
+            if hasattr(progress_callback, "record_metric"):
+                progress_callback.record_metric("providerOutcome", "provider_error")
+            raise
         scope = normalized.scope
         omitted_pages = {
             slide.index

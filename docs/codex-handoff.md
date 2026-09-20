@@ -1,5 +1,19 @@
 # Codex Handoff - AI-WPS
 
+## 当前功能实现：Issue #211 优化 PPT 任务毫秒诊断、结果校验与只读交互（2026-09-20）
+
+- **PPT 两类任务毫秒性能诊断扩展**：遵循 ADR-0132 Task 2 与 Issue #211 规格，将既有写作、审查与 Excel 性能诊断扩展至 PPT 两类核心任务（`ppt.slide_assistant` 幻灯片与文档智能总结、`ppt.structure_review` 结构审查）。长任务轮询接口与协调器终态诊断对外暴露统一单调毫秒指标（`elapsedMs`、`phaseElapsedMs`、`phaseDurationsMs`、`queueWaitMs`、`metrics`），并保留现有秒级兼容字段（`elapsedSeconds`、`phaseDurations`）；阻塞调用首包耗时严格为 `null`（`providerFirstVisibleMs = None`）。
+- **阶段耗时与真实上游结果捕获**：单页/文档总结与结构审查细分阶段（`preparing`、`provider_processing`、`parsing`），在发生模型超时或网络错误时真实记录 `providerOutcome`（`provider_timeout` 或 `provider_error`）及标准错误码，未配置模型时准确记录为 `not_attempted`。
+- **任务窗格全链路性能度量与高级诊断展示**：PPT 任务窗格在 `state.taskPerformanceByJobId` / `state.taskPerformanceByTraceId` 维护最多 50 条 LRU 性能记录，`state.lastTaskPerformance` 记录用户操作全生命周期毫秒耗时（点击到本地反馈 `clickToFeedbackMs`、本地数据准备 `localExtractionMs`、点击到 Adapter 接受请求 `clickToAdapterAcceptedMs`、完成到首渲染 `completionToFirstRenderMs`）。高级诊断卡片展示 `## 任务窗格本地耗时` 章节。
+- **总结与结构审查结果严格全结构化校验**：`validateSlideAssistantResult` 严格校验单页总结（有效标题、要点、结论或正文）与全篇文档总结（幻灯片列表、封面、摘要或正文）；`validateStructureReviewResult` 严格校验审查范围与结构化建议/问题数据。校验不通过时安全置为失败，绝不渲染伪造或残缺结果，不更新活动结果视图。
+- **运行中只读与管理入口交互隔离**：执行期间 `setRunDisabled(true)` 严格禁用会改变运行中任务的操作（来源模式切换、文件、幻灯片数量、指令输入、幻灯片范围、模型配置修改与重复提交）；同时保留设置/历史入口（`btn-open-settings`、`btn-open-history`）与既有结果复制（`btn-copy-result`、`btn-copy-structure-result`）等无冲突只读行为。在 `state.busy` 期间拦截直连服务新增/编辑/删除/模型覆盖保存等变更动作。
+- **后台任务完成会话隔离与历史无感查看**：`finishJob` 与 `finishStructureJob` 支持 `targetDocSession` 隔离，终态结果更新至对应演示文稿会话缓存；当用户正在查看历史（`state.historyOpen = true`）时，后台完成仅递增未读角标并提示“请返回查看”，绝不强制跳转覆盖当前历史视图。
+- **全量验证结论**：
+  - 本地 Docker Python 3.8 全量后端测试：`1496 passed / 55 skipped`；PPT 性能诊断专项 `5/5 passed`，PPT 全量测试 `123/123 passed`。
+  - 正式插件全量契约测试：`267/267 passed`（Docker 环境）；PPT 专项 `29/29 passed`（含性能诊断与只读交互专项 `7/7 passed`）。
+  - `wps-addon` vitest 单元测试：`12/12 passed`，Vite 生产构建成功。
+  - Python 3.8 兼容性语法编译 `compileall` 与 `git diff --check` 全部通过。
+
 ## 当前功能实现：Issue #210 优化 Excel 任务反馈、诊断与智能填写抽取（2026-09-20）
 
 - **PR #222 审查修复**：智能填写 yielding 抽取由整行步进下沉为单元格游标步进，50 列宽表不再等整行完成后才检查 32ms 预算；来源抽取、取消或会话切换失败时保留既有只读预览；可恢复活动任务只在来源冻结与会话复核成功、即将提交 Adapter 时落盘，分片准备期重载不再轮询不存在的后台任务。同步修复测试文件末尾空行门禁。
