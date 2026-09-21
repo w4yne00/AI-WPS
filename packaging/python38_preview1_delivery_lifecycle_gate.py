@@ -220,6 +220,106 @@ def stop_adapter(environment: Dict[str, str]) -> None:
         )
 
 
+def adapter_process_is_running(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def running_adapter_pid(environment: Dict[str, str]) -> int:
+    pid_path = Path(environment["AI_WPS_INSTALL_ROOT"]) / "var/run/adapter.pid"
+    require(pid_path.is_file(), "ADAPTER_PID_MISSING")
+    value = pid_path.read_text(encoding="utf-8").strip()
+    require(value.isdigit(), "ADAPTER_PID_INVALID")
+    pid = int(value)
+    require(adapter_process_is_running(pid), "ADAPTER_PROCESS_NOT_RUNNING")
+    return pid
+
+
+def seed_upgrade_replacement_sentinels(environment: Dict[str, str]):
+    install_root = Path(environment["AI_WPS_INSTALL_ROOT"])
+    roots = [install_root / "current"]
+    jsaddons = Path(environment["WPS_JSADDONS_DIR"])
+    roots.extend(
+        jsaddons / plugin_name
+        for plugin_name in (
+            "wps-ai-assistant_1.0.0",
+            "wps-ai-assistant-et_1.0.0",
+            "wps-ai-assistant-wpp_1.0.0",
+        )
+    )
+    sentinels = []
+    for root in roots:
+        require(root.is_dir(), "UPGRADE_REPLACEMENT_ROOT_MISSING {0}".format(root))
+        sentinel = root / ".upgrade-replacement-sentinel"
+        sentinel.write_text("old-generation\n", encoding="utf-8")
+        sentinels.append(sentinel)
+    return sentinels
+
+
+def verify_upgrade_replacement(sentinels) -> None:
+    require(
+        all(not sentinel.exists() for sentinel in sentinels),
+        "UPGRADE_FILES_NOT_REPLACED",
+    )
+
+
+def seed_upgrade_persistent_data(environment: Dict[str, str]):
+    install_root = Path(environment["AI_WPS_INSTALL_ROOT"])
+    state_root = install_root / "state"
+    modern_key = state_root / "provider_api_keys/upgrade-sentinel"
+    modern_key.parent.mkdir(parents=True, exist_ok=True)
+    modern_key.write_bytes(b"modern-key-preserve\n")
+    modern_key.chmod(0o600)
+    history = install_root / "var/history/upgrade-sentinel.json"
+    history.parent.mkdir(parents=True, exist_ok=True)
+    history.write_bytes(b'{"history":"preserve"}\n')
+    backup = install_root / "backups/upgrade-sentinel.bin"
+    backup.parent.mkdir(parents=True, exist_ok=True)
+    backup.write_bytes(b"backup-preserve\n")
+    paths = (
+        state_root / "provider_api_key",
+        modern_key,
+        state_root / "writing_policies.db",
+        history,
+        backup,
+    )
+    for path in paths:
+        require(path.is_file(), "UPGRADE_PERSISTENT_FILE_MISSING {0}".format(path))
+    return {path: path.read_bytes() for path in paths}
+
+
+def verify_upgrade_persistent_data(expected) -> None:
+    require(
+        all(path.is_file() and path.read_bytes() == content for path, content in expected.items()),
+        "UPGRADE_PERSISTENT_DATA_CHANGED",
+    )
+
+
+def verify_upgrade_rollback_replacement(sentinels) -> None:
+    require(
+        all(
+            sentinel.is_file()
+            and sentinel.read_text(encoding="utf-8") == "old-generation\n"
+            for sentinel in sentinels
+        ),
+        "UPGRADE_ROLLBACK_FILES_NOT_RESTORED",
+    )
+
+
+def verify_latest_transaction_rolled_back(environment: Dict[str, str]) -> None:
+    transaction_dir = Path(environment["AI_WPS_INSTALL_ROOT"]) / "var/transactions"
+    transactions = list(transaction_dir.glob("*.json"))
+    require(bool(transactions), "UPGRADE_ROLLBACK_TRANSACTION_MISSING")
+    latest = max(transactions, key=lambda path: path.stat().st_mtime_ns)
+    payload = json.loads(latest.read_text(encoding="utf-8"))
+    require(payload.get("status") == "rolled_back", "UPGRADE_TRANSACTION_NOT_ROLLED_BACK")
+
+
 def verify_install(environment: Dict[str, str]) -> None:
     install_root = Path(environment["AI_WPS_INSTALL_ROOT"])
     current = install_root / "current"
@@ -304,7 +404,8 @@ def run_preview_upgrade(delivery_root: Path, temp_root: Path, reserve_port) -> N
     root = temp_root / "preview-upgrade"
     environment = install_environment(root, *reserve_install_ports(reserve_port))
     run_installer(delivery_root, environment)
-    stop_adapter(environment)
+    old_pid = running_adapter_pid(environment)
+    replacement_sentinels = seed_upgrade_replacement_sentinels(environment)
     state_root = Path(environment["AI_WPS_INSTALL_ROOT"]) / "state"
     adapter_path = state_root / "adapter.json"
     adapter_content = b'{"previewSentinel":"preserve-me"}\n'
@@ -313,10 +414,29 @@ def run_preview_upgrade(delivery_root: Path, temp_root: Path, reserve_port) -> N
     key_content = b"preview-key-ref\n"
     key_path.write_bytes(key_content)
     key_path.chmod(0o600)
+    persistent_data = seed_upgrade_persistent_data(environment)
 
     result = run_installer(delivery_root, environment)
     try:
         verify_install(environment)
+        new_pid = running_adapter_pid(environment)
+        require(new_pid != old_pid, "UPGRADE_ADAPTER_PID_NOT_REPLACED")
+        require(
+            not adapter_process_is_running(old_pid),
+            "UPGRADE_OLD_ADAPTER_STILL_RUNNING",
+        )
+        verify_upgrade_replacement(replacement_sentinels)
+        markers = (
+            "adapter_state_transition_lock=stopped",
+            "release_generation=switched",
+            "adapter_start=uvicorn",
+        )
+        positions = tuple(result.stdout.find(marker) for marker in markers)
+        require(
+            all(position >= 0 for position in positions)
+            and positions == tuple(sorted(positions)),
+            "UPGRADE_INSTALL_SEQUENCE_INVALID",
+        )
         require("ai_wps_install_done=true" in result.stdout, "PREVIEW_UPGRADE_NOT_DONE")
         preserved_config = json.loads(adapter_path.read_text(encoding="utf-8"))
         expected_config = json.loads(adapter_content.decode("utf-8"))
@@ -330,6 +450,25 @@ def run_preview_upgrade(delivery_root: Path, temp_root: Path, reserve_port) -> N
             "PREVIEW_CONFIG_NOT_PRESERVED",
         )
         require(key_path.read_bytes() == key_content, "PREVIEW_KEY_NOT_PRESERVED")
+        verify_upgrade_persistent_data(persistent_data)
+
+        rollback_sentinels = seed_upgrade_replacement_sentinels(environment)
+        stable_pid = new_pid
+        run_installer(
+            delivery_root,
+            environment,
+            expected_returncode=1,
+            updates={"AI_WPS_TRANSACTION_FAIL_AFTER": "after_switch:word_plugin"},
+        )
+        rollback_pid = running_adapter_pid(environment)
+        require(rollback_pid != stable_pid, "UPGRADE_ROLLBACK_PID_NOT_REPLACED")
+        require(
+            not adapter_process_is_running(stable_pid),
+            "UPGRADE_FAILED_CANDIDATE_STILL_RUNNING",
+        )
+        verify_upgrade_rollback_replacement(rollback_sentinels)
+        verify_upgrade_persistent_data(persistent_data)
+        verify_latest_transaction_rolled_back(environment)
     finally:
         stop_adapter(environment)
     print("lifecycle_scenario=preview_upgrade passed")

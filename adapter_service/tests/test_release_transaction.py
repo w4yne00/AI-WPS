@@ -705,6 +705,28 @@ exit 22
                 ],
             )
 
+            preflight_script = installer_dir / "preflight_candidate.sh"
+            ready_preflight = preflight_script.read_text(encoding="utf-8")
+            preflight_script.write_text(
+                "#!/usr/bin/env bash\nexit 17\n",
+                encoding="utf-8",
+            )
+            running_environment = dict(environment)
+            running_environment["FAKE_CURRENT_READY"] = "1"
+            failed_before_switch = subprocess.run(
+                ["bash", str(installer_dir / "install_phase1.sh")],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=running_environment,
+            )
+            self.assertNotEqual(failed_before_switch.returncode, 0)
+            self.assertEqual(
+                (root / "adapter-start.log").read_text(encoding="utf-8").splitlines(),
+                ["generation-one", "generation-one"],
+            )
+            preflight_script.write_text(ready_preflight, encoding="utf-8")
+
             for plugin_name in (
                 "wps-ai-assistant_1.0.0",
                 "wps-ai-assistant-et_1.0.0",
@@ -755,7 +777,7 @@ exit 22
             self.assertEqual(statuses, ["committed", "rolled_back"])
             self.assertEqual(
                 (root / "adapter-start.log").read_text(encoding="utf-8").splitlines(),
-                ["generation-one", "generation-two", "generation-one"],
+                ["generation-one", "generation-one", "generation-two", "generation-one"],
             )
 
             (scripts / "check_health.sh").write_text(
