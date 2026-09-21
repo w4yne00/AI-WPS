@@ -37,14 +37,32 @@ class RuntimePaths:
     shared_state_enabled: bool
 
 
+def _installed_layout_root(program_root: Path) -> Optional[Path]:
+    try:
+        resolved_root = program_root.resolve()
+        releases_dir = resolved_root.parent
+        if releases_dir.name != "releases":
+            return None
+        install_root = releases_dir.parent
+        current = install_root / "current"
+        if not current.is_symlink() or current.resolve() != resolved_root:
+            return None
+        return install_root
+    except OSError:
+        return None
+
+
 def resolve_runtime_paths(program_root: Optional[Path] = None) -> RuntimePaths:
     root = Path(program_root) if program_root is not None else PROGRAM_ROOT
     configured_state_dir = _configured_path("AI_WPS_STATE_DIR")
     configured_backup_dir = _configured_path("AI_WPS_BACKUP_DIR")
     configured_var_dir = _configured_path("AI_WPS_VAR_DIR")
+    inferred_install_root = (
+        _installed_layout_root(root) if configured_state_dir is None else None
+    )
 
-    if configured_state_dir is not None:
-        state_dir = configured_state_dir
+    if configured_state_dir is not None or inferred_install_root is not None:
+        state_dir = configured_state_dir or inferred_install_root / "state"
         layout_root = state_dir.parent
         config_path = state_dir / "adapter.json"
         local_api_key_path = state_dir / "provider_api_key"

@@ -891,7 +891,7 @@ def audit_streaming_and_rollback_contract(root: Path) -> None:
                 "request=(WordDocumentRequest.model_validate(payload) "
                 "if hasattr(WordDocumentRequest,'model_validate') "
                 "else WordDocumentRequest.parse_obj(payload)); "
-                "os.environ['AI_WPS_ENABLE_DIRECT_STREAMING']='1'; "
+                "os.environ.pop('AI_WPS_ENABLE_DIRECT_STREAMING',None); "
                 "coordinator=LongTaskCoordinator(max_running=1,max_queued=1); "
                 "job=SmartWriteJobStore(worker=Worker(),coordinator=coordinator).start("
                 "request,'audit-trace'); "

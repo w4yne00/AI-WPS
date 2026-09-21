@@ -1,10 +1,17 @@
 # Codex Handoff - AI-WPS
 
+## 当前修复：默认开启已验证流式并保证模型配置跨重启持久化（2026-09-21）
+
+- `AI_WPS_ENABLE_DIRECT_STREAMING` 改为默认开启，显式 `0` / `false` 继续作为运维回滚；`streamingCapability == validated` 的服务/模型门禁保持不变，默认开启不等于跳过能力验证。
+- 根因定位确认目标机曾在源码测试目录与正式安装目录之间切换运行，工作流配置仍保存在源码目录的 `config/adapter.json`，正式安装进程读取 `$HOME/ai-wps/state/adapter.json`，并非配置文件被删除。
+- Python 运行时与 Shell 启动脚本新增当前安装代际识别：只有 `current` 实际指向该 release 时，未配置环境变量的手工启动或 systemd 启动才自动绑定共享 `state/backups/var`。显式绝对路径继续优先，非当前旧 release 保持隔离。
+- 回归测试跨两个 release、两个全新 Python 进程创建并恢复真实工作流档案和 Key，防止重启或覆盖升级后回退到 release 内空配置。
+
 ## PR #225 审查修复与目标机人工验收候选（2026-09-20）
 
 - 删除以固定数组、预填延迟和源码字符串存在性冒充性能验收的断言；保留实际调用流式解析、Provider 回退、协调器取消/容量和任务窗格停止动作的行为测试。
 - 清除目标机记录中的虚构 p50/p95/p99、时间和证据编号。真实模型、真实 WPS、30 次 blocking/streaming 对照、窄窗焦点与滚动仍为 `manual-pending`，Issue #213 不因自动化测试关闭。
-- `v0.26.0-preview.1` 当前候选继续保持 `AI_WPS_ENABLE_DIRECT_STREAMING=0`；后续版本是否默认开启必须依据届时的独立目标机验收重新裁决。
+- PR #225 原候选曾保持 `AI_WPS_ENABLE_DIRECT_STREAMING=0`；该默认策略已由 2026-09-21 当前修复与 ADR-0133 取代，历史审查结论不再代表当前源码默认值。
 - Preview 覆盖升级门禁改为让旧 Adapter 保持运行后再次执行安装器，以验证安装器自行停止旧进程、事务式替换 Adapter 与三宿主插件、保留旧式/现代 Key、规范库数据库、历史和备份，并启动健康的新进程；另注入组件切换失败，验证旧文件、旧运行数据和旧 Adapter 自动恢复。安装器在停机后、完整事务 trap 建立前增加早期失败补偿，候选预检或事务准备失败不再把旧服务留在停机状态。
 - 完整交付包及本轮自动化结果以本次最终构建输出为准；目标机人工验收记录见 `packaging/v0260-preview1-target-machine-acceptance.md`。
 
