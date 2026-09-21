@@ -43,10 +43,10 @@ class FeatureAvailabilityTests(unittest.TestCase):
 
         self.assertTrue(deterministic_format_review_enabled())
 
-    def test_direct_streaming_disabled_by_default(self) -> None:
-        self.assertFalse(direct_streaming_enabled())
+    def test_direct_streaming_enabled_by_default(self) -> None:
+        self.assertTrue(direct_streaming_enabled())
 
-    def test_direct_streaming_enabled_only_when_explicitly_set_to_one(self) -> None:
+    def test_direct_streaming_can_be_disabled_explicitly(self) -> None:
         os.environ["AI_WPS_ENABLE_DIRECT_STREAMING"] = "1"
         self.assertTrue(direct_streaming_enabled())
         os.environ["AI_WPS_ENABLE_DIRECT_STREAMING"] = "true"

@@ -67,12 +67,12 @@ class FakeWorker:
 
 
 class StreamingDeliveryAndRollbackTests(unittest.TestCase):
-    def test_feature_flag_disabled_by_default_and_toggle(self):
-        """Feature flag is disabled by default (or '0'), and switches on when '1'."""
+    def test_feature_flag_enabled_by_default_and_explicit_zero_rolls_back(self):
+        """Streaming is on by default, while explicit zero keeps the rollback path."""
         with patch.dict(os.environ, {}, clear=True):
             if "AI_WPS_ENABLE_DIRECT_STREAMING" in os.environ:
                 del os.environ["AI_WPS_ENABLE_DIRECT_STREAMING"]
-            self.assertFalse(direct_streaming_enabled())
+            self.assertTrue(direct_streaming_enabled())
 
         with patch.dict(os.environ, {"AI_WPS_ENABLE_DIRECT_STREAMING": "0"}):
             self.assertFalse(direct_streaming_enabled())

@@ -52,10 +52,32 @@ runtime_path_contains_control_character() (
   return 1
 )
 
+infer_adapter_install_root() {
+  local kit_root="$1"
+  local physical_root releases_dir install_root current_root
+  [ -d "$kit_root" ] || return 1
+  physical_root="$(cd -P "$kit_root" && pwd -P)" || return 1
+  releases_dir="$(dirname "$physical_root")"
+  [ "$(basename "$releases_dir")" = "releases" ] || return 1
+  install_root="$(dirname "$releases_dir")"
+  [ -L "$install_root/current" ] || return 1
+  current_root="$(cd -P "$install_root/current" && pwd -P)" || return 1
+  [ "$current_root" = "$physical_root" ] || return 1
+  printf '%s\n' "$install_root"
+}
+
 resolve_adapter_runtime_paths() {
   local kit_root="$1"
   local state_dir="${AI_WPS_STATE_DIR:-}"
   local configured_var_dir="${AI_WPS_VAR_DIR:-}"
+  local inferred_install_root=""
+
+  if [ -z "$state_dir" ]; then
+    inferred_install_root="$(infer_adapter_install_root "$kit_root" || true)"
+    if [ -n "$inferred_install_root" ]; then
+      state_dir="$inferred_install_root/state"
+    fi
+  fi
 
   validate_adapter_runtime_path "AI_WPS_STATE_DIR" "$state_dir"
   validate_adapter_runtime_path "AI_WPS_BACKUP_DIR" "${AI_WPS_BACKUP_DIR:-}"
@@ -64,6 +86,7 @@ resolve_adapter_runtime_paths() {
   if [ -n "$state_dir" ]; then
     local layout_root
     layout_root="$(dirname "$state_dir")"
+    AI_WPS_STATE_DIR="$state_dir"
     AI_WPS_BACKUP_DIR="${AI_WPS_BACKUP_DIR:-$layout_root/backups}"
     AI_WPS_VAR_DIR="${AI_WPS_VAR_DIR:-$layout_root/var}"
     ADAPTER_TRANSACTION_DIR="$AI_WPS_VAR_DIR/transactions"

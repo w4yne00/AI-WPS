@@ -1639,3 +1639,85 @@ def test_preview_audit_rejects_broken_streaming_capability_integration(tmp_path)
     )
     assert rejected.returncode != 0
     assert "V0260_STREAMING_RUNTIME_CONTRACT_FAILED" in rejected.stdout
+
+
+def test_preview_audit_rejects_removed_streaming_capability_gate(tmp_path):
+    delivery = _prepare_delivery(tmp_path)
+    audit = delivery / "scripts/audit_v0260_preview1_delivery.py"
+    writing_jobs = (
+        delivery
+        / "packages/adapter-start-kit/adapter_service/app/services/word/writing_jobs.py"
+    )
+    original = writing_jobs.read_text(encoding="utf-8")
+    broken = original.replace(
+        "and streaming_capability_validated(\n"
+        "                    task_auth.get(\"streamingCapability\")\n"
+        "                )",
+        "and True",
+    )
+    assert broken != original
+    writing_jobs.write_text(broken, encoding="utf-8")
+
+    generated = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "packaging/audit_phase1_delivery.py"),
+            str(delivery),
+            "--write-hashes",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert generated.returncode == 0, generated.stdout + generated.stderr
+
+    rejected = subprocess.run(
+        [sys.executable, str(audit), str(delivery)],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert rejected.returncode != 0
+    assert "V0260_STREAMING_RUNTIME_CONTRACT_FAILED" in rejected.stdout
+
+
+def test_preview_audit_rejects_disabled_streaming_default(tmp_path):
+    delivery = _prepare_delivery(tmp_path)
+    audit = delivery / "scripts/audit_v0260_preview1_delivery.py"
+    features = (
+        delivery
+        / "packages/adapter-start-kit/adapter_service/app/core/features.py"
+    )
+    original = features.read_text(encoding="utf-8")
+    broken = original.replace(
+        'os.environ.get(DIRECT_STREAMING_ENV, "1")',
+        'os.environ.get(DIRECT_STREAMING_ENV, "")',
+    )
+    assert broken != original
+    features.write_text(broken, encoding="utf-8")
+
+    generated = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "packaging/audit_phase1_delivery.py"),
+            str(delivery),
+            "--write-hashes",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert generated.returncode == 0, generated.stdout + generated.stderr
+
+    rejected = subprocess.run(
+        [sys.executable, str(audit), str(delivery)],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert rejected.returncode != 0
+    assert "V0260_STREAMING_RUNTIME_CONTRACT_FAILED" in rejected.stdout

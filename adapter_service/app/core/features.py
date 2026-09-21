@@ -26,7 +26,7 @@ DIRECT_STREAMING_ENV = "AI_WPS_ENABLE_DIRECT_STREAMING"
 
 
 def direct_streaming_enabled() -> bool:
-    return os.environ.get(DIRECT_STREAMING_ENV, "").strip() == "1"
+    return os.environ.get(DIRECT_STREAMING_ENV, "1").strip() == "1"
 
 
 def streaming_capability_validated(value) -> bool:

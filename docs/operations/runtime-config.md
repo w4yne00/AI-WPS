@@ -60,8 +60,8 @@ over `AI_WPS_STATE_DIR` for the writing-policy database only.
 ### 1. 特性开关 (Feature Flag)
 
 - `AI_WPS_ENABLE_DIRECT_STREAMING`: 直连模型流式增量生成与运行中取消特性开关。
-  - **默认状态**：未设置或设为 `0` / `false` 时完全禁用，所有直连任务保持阻塞式执行与 3 秒短轮询。
-  - **启用状态**：显式设置为 `1` 时启用 Word 智能编写与智能仿写直连模型的流式增量生成。
+  - **默认状态**：未设置或设为 `1` 时启用 Word 智能编写与智能仿写的直连流式能力；当前服务和模型仍须具有 `validated` 能力记录，否则安全使用阻塞路径。
+  - **关闭状态**：显式设置为 `0` 或 `false` 时完全禁用，新提交任务使用阻塞调用与 3 秒短轮询。
   - **FastAPI / Standalone 对等性**：双运行时在 `GET /config` 的 `features.directStreamingEnabled` 中对等暴露该布尔值。
 
 ### 2. 模型流式能力验证与快照冻结 (Streaming Capability)
@@ -110,8 +110,14 @@ over `AI_WPS_STATE_DIR` for the writing-policy database only.
 
 ### 8. 发布裁决与默认启用规则 (Release Adjudication)
 
-- **当前发布裁决（Issue #213 / ADR-0132）**：
+- **当前发布裁决（ADR-0133）**：
   - 自动化合同测试仅验证流式协议、取消、回退和确定性边界；真实模型、真实 WPS、每个模型组合至少 30 次采样及 p50/p95/p99 门禁仍为 `manual-pending`。
   - 但因目标机现场未配置公网商业大模型服务，真实供应商直连流式的真实网络延迟与长效稳定性尚未建立完整现场证据，且真实 WPS 12.1.2 客户端的端到端人机交互受限于环境仍维持 `manual-pending`（绑定 Issue #154）。
-  - 根据门禁规则第 11 条：“只有全部门槛通过并记录证据后，才能提出后续版本默认开启；否则保持显式 feature flag”。
-  - **当前候选裁决**：`v0.26.0-preview.1` 保持 `AI_WPS_ENABLE_DIRECT_STREAMING=0`（默认关闭）。流式能力仅在显式配置环境变量 `=1` 时启用；后续版本须根据新的目标机验收证据重新裁决。
+  - ADR-0133 已取代 ADR-0132 中“完成全部现场证据后才能默认开启总开关”的首候选前提。现场性能采样继续决定目标机验收状态，但不再是产品默认开关的前置条件。
+  - **当前默认策略**：流式总开关默认开启，`AI_WPS_ENABLE_DIRECT_STREAMING=0` 保留为即时回滚；每个服务修订和模型仍须通过真实能力验证。真实 WPS、真实模型和每组合至少 30 次性能采样继续保持 `manual-pending`，不得用默认开启替代验收结论。
+
+### 9. 安装代际与共享状态路径
+
+- `$TARGET_HOME/ai-wps/current` 指向当前 `releases/<版本>`；配置、模型/工作流 Key 和规范库固定保存在 `$TARGET_HOME/ai-wps/state`，备份和运行文件分别位于 `backups` 与 `var`。
+- 当前 release 通过手工脚本、安装器或 systemd 启动时，即使没有显式设置 `AI_WPS_STATE_DIR`，也会根据 `current` 指针自动解析共享路径。重启 Adapter、重启操作系统或覆盖升级不得切换到 release 内的空配置。
+- 显式绝对路径变量优先于自动解析；非当前 release 不自动接入共享状态，避免旧代码误改当前配置。

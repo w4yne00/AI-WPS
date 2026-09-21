@@ -29,6 +29,11 @@ AI_WPS_VAR_DIR="$HOME/ai-wps-phase1/var" \
 bash scripts/install_autostart.sh 18100
 ```
 
+当脚本位于标准安装布局 `$HOME/ai-wps/current`（实际指向
+`releases/<版本>`）时，即使未显式设置上述变量，也会自动绑定同一安装根下的
+`state/`、`backups/` 和 `var/`。因此 systemd 重启或操作系统重启不会回退读取
+release 内的空配置；自定义安装布局仍应显式提供绝对路径。
+
 运行目录变量必须是绝对路径且不得包含控制字符；允许路径包含空格，安装脚本会按
 systemd 语法引用和转义。变量值不会展开 `~`，请使用 `$HOME`。
 

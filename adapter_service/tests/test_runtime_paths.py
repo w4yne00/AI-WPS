@@ -445,6 +445,268 @@ class RuntimePathContractTests(unittest.TestCase):
             self.assertEqual(paths.transaction_dir, install_root / "var" / "transactions")
             self.assertTrue(paths.shared_state_enabled)
 
+    def test_installed_release_switch_preserves_workflow_config_without_environment(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            install_root = Path(temp_dir) / "ai-wps"
+            releases = install_root / "releases"
+            release_one = releases / "0.26.0-preview.1"
+            release_two = releases / "0.26.0-preview.2"
+            for release in (release_one, release_two):
+                shutil.copytree(
+                    ROOT / "adapter_service/app",
+                    release / "adapter_service/app",
+                )
+            current = install_root / "current"
+            current.symlink_to(Path("releases") / release_one.name)
+
+            environment = dict(os.environ)
+            for name in (
+                "AI_WPS_STATE_DIR",
+                "AI_WPS_BACKUP_DIR",
+                "AI_WPS_VAR_DIR",
+            ):
+                environment.pop(name, None)
+            environment["PYTHONPATH"] = str(current / "adapter_service")
+            create_profile = (
+                "import json\n"
+                "from app.core.config import default_config_path\n"
+                "from app.services.workflow_profiles import WorkflowProfileStore\n"
+                "store=WorkflowProfileStore()\n"
+                "profile=store.create_profile('word.smart_write','重启保留配置','secret',activate=True)\n"
+                "print(json.dumps({'config':str(default_config_path()),'id':profile['id']}))\n"
+            )
+            created = subprocess.run(
+                [os.sys.executable, "-c", create_profile],
+                cwd=str(current / "adapter_service"),
+                env=environment,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(created.returncode, 0, created.stderr)
+            created_payload = json.loads(created.stdout.splitlines()[-1])
+            self.assertEqual(
+                Path(created_payload["config"]),
+                install_root / "state/adapter.json",
+            )
+
+            current.unlink()
+            current.symlink_to(Path("releases") / release_two.name)
+            read_profile = (
+                "import json\n"
+                "from app.core.config import default_config_path\n"
+                "from app.core.runtime_paths import resolve_runtime_paths\n"
+                "from app.services.workflow_profiles import WorkflowProfileStore\n"
+                "data=WorkflowProfileStore().list_for_task('word.smart_write')\n"
+                "profile=data['profiles'][0]\n"
+                "key_path=resolve_runtime_paths().api_key_dir/profile['apiKeyRef']\n"
+                "print(json.dumps({'config':str(default_config_path()),'count':data['profileCount'],'active':data['activeProfileId'],'keyConfigured':profile['keyConfigured'],'keyMatches':key_path.read_text(encoding='utf-8').strip()=='secret'}))\n"
+            )
+            restored = subprocess.run(
+                [os.sys.executable, "-c", read_profile],
+                cwd=str(current / "adapter_service"),
+                env=environment,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(restored.returncode, 0, restored.stderr)
+            restored_payload = json.loads(restored.stdout.splitlines()[-1])
+            self.assertEqual(
+                Path(restored_payload["config"]),
+                install_root / "state/adapter.json",
+            )
+            self.assertEqual(restored_payload["count"], 1)
+            self.assertEqual(restored_payload["active"], created_payload["id"])
+            self.assertTrue(restored_payload["keyConfigured"])
+            self.assertTrue(restored_payload["keyMatches"])
+
+    def test_shell_runtime_paths_infer_shared_install_layout_without_environment(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            install_root = Path(temp_dir) / "ai-wps"
+            release = install_root / "releases/0.26.0-preview.1"
+            release.mkdir(parents=True)
+            current = install_root / "current"
+            current.symlink_to(Path("releases") / release.name)
+            environment = dict(os.environ)
+            for name in (
+                "AI_WPS_STATE_DIR",
+                "AI_WPS_BACKUP_DIR",
+                "AI_WPS_VAR_DIR",
+            ):
+                environment.pop(name, None)
+            environment.update(
+                {
+                    "RUNTIME_PATHS": str(
+                        ROOT / "adapter-start-kit/scripts/runtime_paths.sh"
+                    ),
+                    "KIT_ROOT": str(release),
+                }
+            )
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    'source "$RUNTIME_PATHS"; '
+                    'resolve_adapter_runtime_paths "$KIT_ROOT"; '
+                    'printf "%s\\n%s\\n%s\\n" "$AI_WPS_STATE_DIR" '
+                    '"$AI_WPS_BACKUP_DIR" "$AI_WPS_VAR_DIR"',
+                ],
+                env=environment,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(
+                result.stdout.splitlines(),
+                [
+                    str(install_root / "state"),
+                    str(install_root / "backups"),
+                    str(install_root / "var"),
+                ],
+            )
+
+    def test_python_installed_layout_keeps_old_release_isolated_and_explicit_paths_win(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            install_root = Path(temp_dir) / "ai-wps"
+            old_release = install_root / "releases/0.26.0-preview.1"
+            current_release = install_root / "releases/0.26.0-preview.2"
+            old_release.mkdir(parents=True)
+            current_release.mkdir(parents=True)
+            current = install_root / "current"
+            current.symlink_to(Path("releases") / current_release.name)
+
+            with patch.dict(os.environ, {}, clear=True):
+                current_paths = resolve_runtime_paths(current_release)
+                old_paths = resolve_runtime_paths(old_release)
+            self.assertEqual(current_paths.config_path, install_root / "state/adapter.json")
+            self.assertTrue(current_paths.shared_state_enabled)
+            self.assertEqual(old_paths.config_path, old_release / "config/adapter.json")
+            self.assertFalse(old_paths.shared_state_enabled)
+
+            explicit_state = Path(temp_dir) / "explicit/state"
+            explicit_backup = Path(temp_dir) / "explicit/backups"
+            explicit_var = Path(temp_dir) / "explicit/var"
+            with patch.dict(
+                os.environ,
+                {
+                    "AI_WPS_STATE_DIR": str(explicit_state),
+                    "AI_WPS_BACKUP_DIR": str(explicit_backup),
+                    "AI_WPS_VAR_DIR": str(explicit_var),
+                },
+                clear=True,
+            ):
+                explicit_paths = resolve_runtime_paths(current_release)
+            self.assertEqual(explicit_paths.config_path, explicit_state / "adapter.json")
+            self.assertEqual(explicit_paths.backup_dir, explicit_backup)
+            self.assertEqual(explicit_paths.var_dir, explicit_var)
+            self.assertTrue(explicit_paths.shared_state_enabled)
+
+            state_only = Path(temp_dir) / "state-only/state"
+            with patch.dict(
+                os.environ,
+                {"AI_WPS_STATE_DIR": str(state_only)},
+                clear=True,
+            ):
+                state_only_paths = resolve_runtime_paths(current_release)
+            self.assertEqual(state_only_paths.config_path, state_only / "adapter.json")
+            self.assertEqual(state_only_paths.backup_dir, state_only.parent / "backups")
+            self.assertEqual(state_only_paths.var_dir, state_only.parent / "var")
+
+    def test_shell_installed_layout_keeps_old_release_isolated_and_explicit_paths_win(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            install_root = Path(temp_dir) / "ai-wps"
+            old_release = install_root / "releases/0.26.0-preview.1"
+            current_release = install_root / "releases/0.26.0-preview.2"
+            old_release.mkdir(parents=True)
+            current_release.mkdir(parents=True)
+            (install_root / "current").symlink_to(
+                Path("releases") / current_release.name
+            )
+            base_environment = dict(os.environ)
+            for name in (
+                "AI_WPS_STATE_DIR",
+                "AI_WPS_BACKUP_DIR",
+                "AI_WPS_VAR_DIR",
+            ):
+                base_environment.pop(name, None)
+            base_environment["RUNTIME_PATHS"] = str(
+                ROOT / "adapter-start-kit/scripts/runtime_paths.sh"
+            )
+            command = (
+                'source "$RUNTIME_PATHS"; resolve_adapter_runtime_paths "$KIT_ROOT"; '
+                'printf "%s\\n%s\\n%s\\n" "${AI_WPS_STATE_DIR:-}" '
+                '"$AI_WPS_BACKUP_DIR" "$AI_WPS_VAR_DIR"'
+            )
+
+            old_environment = dict(base_environment)
+            old_environment["KIT_ROOT"] = str(old_release)
+            old_result = subprocess.run(
+                ["bash", "-c", command],
+                env=old_environment,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(old_result.returncode, 0, old_result.stderr)
+            self.assertEqual(
+                old_result.stdout.splitlines(),
+                ["", str(old_release / "backups"), str(old_release)],
+            )
+
+            explicit_state = Path(temp_dir) / "explicit/state"
+            explicit_backup = Path(temp_dir) / "explicit/backups"
+            explicit_var = Path(temp_dir) / "explicit/var"
+            explicit_environment = dict(base_environment)
+            explicit_environment.update(
+                {
+                    "KIT_ROOT": str(current_release),
+                    "AI_WPS_STATE_DIR": str(explicit_state),
+                    "AI_WPS_BACKUP_DIR": str(explicit_backup),
+                    "AI_WPS_VAR_DIR": str(explicit_var),
+                }
+            )
+            explicit_result = subprocess.run(
+                ["bash", "-c", command],
+                env=explicit_environment,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(explicit_result.returncode, 0, explicit_result.stderr)
+            self.assertEqual(
+                explicit_result.stdout.splitlines(),
+                [str(explicit_state), str(explicit_backup), str(explicit_var)],
+            )
+
+            state_only = Path(temp_dir) / "state-only/state"
+            state_only_environment = dict(base_environment)
+            state_only_environment.update(
+                {
+                    "KIT_ROOT": str(current_release),
+                    "AI_WPS_STATE_DIR": str(state_only),
+                }
+            )
+            state_only_result = subprocess.run(
+                ["bash", "-c", command],
+                env=state_only_environment,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(
+                state_only_result.returncode, 0, state_only_result.stderr
+            )
+            self.assertEqual(
+                state_only_result.stdout.splitlines(),
+                [
+                    str(state_only),
+                    str(state_only.parent / "backups"),
+                    str(state_only.parent / "var"),
+                ],
+            )
+
     def test_missing_path_configuration_preserves_legacy_layout(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             program_root = Path(temp_dir) / "adapter-start-kit"
