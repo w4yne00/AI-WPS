@@ -108,7 +108,7 @@ class WritingJobStoreTests(unittest.TestCase):
             worker.calls[0][2],
             {
                 "configurationId": "snapshot-config",
-                "directStreamingEnabled": False,
+                "directStreamingEnabled": True,
             },
         )
 
