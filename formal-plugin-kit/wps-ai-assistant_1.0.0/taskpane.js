@@ -1305,6 +1305,7 @@
     var output = byId("result-output");
     output.hidden = false;
     output.classList.remove("plain-output");
+    output.classList.remove("streaming-preview-wait");
     if (helpers.renderMarkdown) {
       output.innerHTML = helpers.renderMarkdown(text);
     } else {
@@ -7088,6 +7089,7 @@
     state.copyText = markdown;
     output.hidden = false;
     output.classList.remove("plain-output");
+    output.classList.remove("streaming-preview-wait");
 
     if (!issues.length) {
       setResult(markdown, markdown);
@@ -7986,11 +7988,17 @@
       return;
     }
     if (writingJobUsesEvents(job)) {
+      var streamingPrompt;
       if (job.status === "queued") {
-        setPlainResult(label + "已进入队列。开始生成后，正文会逐步出现在这里。\n排队位置：第 " + (job.queuePosition || 1) + " 位");
+        streamingPrompt = label + "已进入队列。开始生成后，正文会逐步出现在这里。\n排队位置：第 " + (job.queuePosition || 1) + " 位";
+      } else if (job.cancelRequested || job.phase === "stopping") {
+        streamingPrompt = "正在停止生成。已出现的文字会保留，供查看和复制。";
+      } else if (job.canCancel) {
+        streamingPrompt = "正在生成增量文本预览。正文会逐步出现在这里。\n可以停止生成；已出现的文字只能查看和复制，还不是最终结果。";
       } else {
-        setPlainResult("正在生成增量文本预览。正文会逐步出现在这里。\n可以停止生成；已出现的文字只能查看和复制，还不是最终结果。");
+        streamingPrompt = "正在生成增量文本预览。正文会逐步出现在这里。\n已出现的文字只能查看和复制，还不是最终结果。";
       }
+      setPlainResult(streamingPrompt);
       if (output) {
         output.classList.add("streaming-preview-wait");
       }

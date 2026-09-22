@@ -1484,6 +1484,75 @@ async function testStreamingResultPreviewUsesInteractivePromptInsteadOfCountdown
   clearFns.setPlainResult("排队任务已取消，未调用模型后台。");
   assert.strictEqual(clearedOutput.textContent, "排队任务已取消，未调用模型后台。");
   assert.ok(!clearedOutput.classList.contains("streaming-preview-wait"));
+
+  const failedOutput = createMockElement("result-output");
+  failedOutput.classList.add("streaming-preview-wait");
+  const failedFns = loadFunctions(["setResult"], {
+    state: { copyText: "" },
+    helpers: {},
+    byId(id) { return id === "result-output" ? failedOutput : null; }
+  });
+  failedFns.setResult("后台任务执行失败。");
+  assert.strictEqual(failedOutput.textContent, "后台任务执行失败。");
+  assert.ok(!failedOutput.classList.contains("streaming-preview-wait"));
+
+  const reviewOutput = createMockElement("result-output");
+  reviewOutput.classList.add("streaming-preview-wait");
+  const reviewFns = loadFunctions(["renderDocumentReviewInteractive"], {
+    state: { copyText: "", documentReviewData: { reportId: "r1" } },
+    byId(id) { return id === "result-output" ? reviewOutput : null; },
+    renderGroupedDocumentReview: () => "审查记录",
+    getDocumentReviewCategory: () => "typo",
+    DOCUMENT_REVIEW_CATEGORY_ORDER: ["typo"],
+    DOCUMENT_REVIEW_CATEGORY_TEXT: { typo: "错别字" },
+    escapeHtmlText: (value) => String(value || ""),
+    getDocumentReviewStatus: () => "open",
+    REVIEW_SEVERITY_TEXT: { medium: "中" },
+    getDocumentReviewStatusText: () => "待处理",
+    setResult() {},
+    setReviewRecordActionsVisible() {}
+  });
+  reviewFns.renderDocumentReviewInteractive({
+    documentType: "technical_solution",
+    scope: "selection",
+    summary: "审查完成。",
+    issues: [{ severity: "medium", location: "正文", problem: "用词", suggestion: "改为正式表述" }]
+  });
+  assert.ok(String(reviewOutput.innerHTML).includes("文档审查结果"));
+  assert.ok(!reviewOutput.classList.contains("streaming-preview-wait"));
+
+  const eventOutput = createMockElement("result-output");
+  const eventFns = loadWritingProgress(eventOutput, {
+    directStreamingEnabled: true,
+    documentSessionId: "doc-1",
+    writingJobId: "job-event-wait",
+    writingJobPreviews: {}
+  });
+  eventFns.renderWritingJobProgress({
+    phase: "streaming",
+    elapsedSeconds: 3
+  }, "word.smart_write", "job-event-wait");
+  assert.ok(eventOutput.textContent.includes("正在生成增量文本预览"), eventOutput.textContent);
+  assert.ok(!eventOutput.textContent.includes("停止生成"), eventOutput.textContent);
+  assertNoCountdown(eventOutput.textContent);
+
+  const stoppingOutput = createMockElement("result-output");
+  const stoppingFns = loadWritingProgress(stoppingOutput, {
+    directStreamingEnabled: true,
+    documentSessionId: "doc-1",
+    writingJobId: "job-stopping",
+    writingJobPreviews: {}
+  });
+  stoppingFns.renderWritingJobProgress({
+    status: "running",
+    phase: "stopping",
+    streamingEnabled: true,
+    canCancel: true,
+    elapsedSeconds: 11
+  }, "word.smart_write", "job-stopping");
+  assert.ok(stoppingOutput.textContent.includes("正在停止"), stoppingOutput.textContent);
+  assert.ok(!stoppingOutput.textContent.includes("可以停止生成"), stoppingOutput.textContent);
+  assertNoCountdown(stoppingOutput.textContent);
 }
 
 async function main() {
