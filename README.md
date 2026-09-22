@@ -16,10 +16,10 @@ Product page: [English](https://w4yne00.github.io/AI-WPS/en.html) · [中文](ht
 | Version rule number | `AI-WPS-WORD-EXCEL-PPT-0.26.0-preview.1` |
 | Phase | `P1` platform foundation + Word + Excel + PPT |
 | Runtime target | Kylin V10 ARM, Python 3.8, WPS native JS add-in |
-| Delivery status | Automated candidate `20260917-e3b896c` is recorded as `candidate`; Issue #154 target-machine acceptance remains `manual-pending` |
+| Delivery status | Automated candidate `20260922-a0d6f5d` is recorded as `candidate`; Issue #154 target-machine acceptance remains `manual-pending` |
 | Baseline | `v0.25.3-alpha` target-machine acceptance is `target-accepted` under Issue #59 |
 
-`v0.26.0-preview.1` aggregates stable Excel task feedback, output-only Smart Fill previews, automatic/manual/suspected TOC handling and location-grouped format issues in Word, plus compact model-configuration entries for all nine tasks. The current automated candidate is [`ai-wps-delivery-20260917-e3b896c-v0260-preview1.tar.gz`](./dist-preview-delivery-kit/ai-wps-delivery-20260917-e3b896c-v0260-preview1.tar.gz), built from source commit `e3b896cb681e49403315c99a718f173f048de5a0` with SHA-256 `bb456786181070fb01ea042b52607b8fd3b9217bf081d99af0679603d50daf6d`. It still requires Issue #154 target-machine acceptance and does not claim real WPS or model acceptance. The accepted `v0.25.3-alpha` baseline remains recorded under Issue #59.
+`v0.26.0-preview.1` aggregates stable Excel task feedback, output-only Smart Fill previews, automatic/manual/suspected TOC handling and location-grouped format issues in Word, plus compact model-configuration entries for all nine tasks. The current automated candidate is [`ai-wps-delivery-20260922-a0d6f5d-v0260-preview1.tar.gz`](./dist-preview-delivery-kit/ai-wps-delivery-20260922-a0d6f5d-v0260-preview1.tar.gz), built from source commit `a0d6f5d1e772f9bdce2da59e9953918e6d2306dd` with SHA-256 `0de62be125b52420d899220322a9d2a3544fc50184aa1d0baf5d4ed089111631`. It still requires Issue #154 target-machine acceptance and does not claim real WPS or model acceptance. The accepted `v0.25.3-alpha` baseline remains recorded under Issue #59.
 
 Version rule: `AI-WPS-P{phase}-{scope}-{major.minor.patch}-{yyyymmdd}`. Major is a compatibility boundary, minor is user-visible capability, patch covers fixes, UI, packaging, and docs.
 
