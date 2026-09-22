@@ -38,6 +38,15 @@
           <span id="workflow-switch-feedback" class="sr-only" aria-live="polite"></span>
         </section>
 
+        <section id="material-import-panel" class="mode-block" hidden>
+          <label class="field">
+            <span>导入一份 DOCX 资料</span>
+            <input id="material-import-file" type="file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" />
+          </label>
+          <p id="material-import-status" aria-live="polite">选择一份 DOCX 后查看读取结果。不会修改资料原文件或当前文档。</p>
+          <div id="material-import-result"></div>
+        </section>
+
         <section class="controls glass-card">
           <div id="rewrite-options" class="mode-block">
             <div class="rewrite-grid">
@@ -841,6 +850,7 @@
       </section>
     </div>
     <script src="./taskpane-helpers.js?v=0.23.1-alpha"></script>
+    <script src="./material-import.js?v=0.23.1-alpha"></script>
     <script src="./taskpane.js?v=0.23.1-alpha"></script>
   </body>
 </html>

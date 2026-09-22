@@ -20,6 +20,7 @@ from app.services.word.deterministic_format_review import (
 from app.services.word.full_document_review import full_document_review_service
 from app.services.word.smart_imitator import WordSmartImitator
 from app.services.word.rewriter import WordRewriter
+from app.services.word.material_import import WordMaterialImportService
 from app.services.word.writing_jobs import (
     SmartImitationJobStore,
     SmartWriteJobStore,
@@ -33,6 +34,7 @@ document_reviewer = WordDocumentReviewer()
 document_review_jobs = DocumentReviewJobStore(document_reviewer)
 smart_write_jobs = SmartWriteJobStore(rewriter)
 smart_imitation_jobs = SmartImitationJobStore(smart_imitator)
+material_import_service = WordMaterialImportService()
 logger = get_logger(__name__)
 
 
@@ -627,6 +629,29 @@ def delete_deterministic_format_review_report(job_id: str) -> dict:
 def delete_deterministic_format_review_snapshot(snapshot_id: str, request: dict) -> dict:
     data = deterministic_format_review_service.delete_snapshot(snapshot_id, request)
     return _deterministic_format_review_envelope(data, message="deleted")
+
+
+@router.post("/word/materials")
+def import_word_material(request: dict) -> dict:
+    data = material_import_service.import_material(request)
+    return _material_envelope(data, message="imported")
+
+
+@router.get("/word/materials/{material_id}")
+def view_word_material(material_id: str):
+    data = material_import_service.view_material(material_id)
+    return _material_envelope(data, trace_id=material_id, message="viewed")
+
+
+def _material_envelope(data: dict, trace_id: str = "", message: str = "completed") -> dict:
+    return {
+        "success": True,
+        "traceId": trace_id or str(data.get("materialId", "")),
+        "taskType": "word.material_composer",
+        "message": message,
+        "data": data,
+        "errors": [],
+    }
 
 
 def _deterministic_format_review_envelope(

@@ -65,6 +65,16 @@
     },
     {
       "type": "file",
+      "source": "adapter_service/app/services/word/material_import.py",
+      "target": "packages/adapter-start-kit/adapter_service/app/services/word/material_import.py"
+    },
+    {
+      "type": "file",
+      "source": "formal-plugin-kit/wps-ai-assistant_1.0.0/material-import.js",
+      "target": "packages/wps-ai-assistant_1.0.0/material-import.js"
+    },
+    {
+      "type": "file",
       "source": "docs/operations/runtime-config.md",
       "target": "docs/operations/runtime-config.md"
     },

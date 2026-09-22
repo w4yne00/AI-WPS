@@ -82,6 +82,7 @@ from app.services.word.deterministic_format_review import (
     deterministic_format_review_service,
 )
 from app.services.word.full_document_review import full_document_review_service
+from app.services.word.material_import import WordMaterialImportService
 from app.services.word.rewriter import WordRewriter
 from app.services.word.smart_imitator import WordSmartImitator
 from app.services.template_loader import TemplateLoader
@@ -189,6 +190,7 @@ FULL_DOCUMENT_REVIEW_SERVICE = full_document_review_service
 DETERMINISTIC_FORMAT_REVIEW_SERVICE = deterministic_format_review_service
 SMART_WRITE_JOB_STORE = SmartWriteJobStore()
 SMART_IMITATION_JOB_STORE = SmartImitationJobStore()
+WORD_MATERIAL_IMPORT_SERVICE = WordMaterialImportService()
 EXCEL_ANALYSIS_JOB_STORE = ExcelAnalysisJobStore()
 EXCEL_FORMULA_ASSISTANT_JOB_STORE = ExcelFormulaAssistantJobStore()
 EXCEL_SMART_FILL_JOB_STORE = ExcelSmartFillJobStore()
@@ -2304,6 +2306,29 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
 
+        if path.startswith("/word/materials/"):
+            material_id = unquote(path[len("/word/materials/") :]).strip("/")
+            trace_id = new_trace_id("standalone-word-material")
+            try:
+                data = WORD_MATERIAL_IMPORT_SERVICE.view_material(material_id)
+            except AdapterError as error:
+                self._write(
+                    error.status_code,
+                    envelope(
+                        trace_id,
+                        "word.material_composer",
+                        success=False,
+                        message=error.message,
+                        errors=[{"code": error.code, "message": error.message}],
+                    ),
+                )
+                return
+            self._write(
+                200,
+                envelope(trace_id, "word.material_composer", data, message="viewed"),
+            )
+            return
+
         self._write(
             404,
             envelope("standalone-not-found", "adapter.error", success=False, message="Not found", errors=[{"code": "NOT_FOUND", "message": path}]),
@@ -3127,6 +3152,28 @@ class Handler(BaseHTTPRequestHandler):
                 self._write_workflow_error(error)
                 return
             self._write(200, envelope("standalone-workflow-profile-activate", "provider.workflow_profile", data, message="activated"))
+            return
+
+        if path == "/word/materials":
+            trace_id = new_trace_id("standalone-word-material")
+            try:
+                data = WORD_MATERIAL_IMPORT_SERVICE.import_material(payload)
+            except AdapterError as error:
+                self._write(
+                    error.status_code,
+                    envelope(
+                        trace_id,
+                        "word.material_composer",
+                        success=False,
+                        message=error.message,
+                        errors=[{"code": error.code, "message": error.message}],
+                    ),
+                )
+                return
+            self._write(
+                200,
+                envelope(trace_id, "word.material_composer", data, message="imported"),
+            )
             return
 
         if path == "/word/smart-write":

@@ -527,6 +527,8 @@ def _task_type_from_path(path: str) -> str:
         return "word.smart_write"
     if path.startswith("/word/smart-imitation/jobs/"):
         return "word.smart_imitation"
+    if path == "/word/materials" or path.startswith("/word/materials/"):
+        return "word.material_composer"
     if path.startswith("/excel/analysis/jobs/"):
         return "excel.analysis"
     if path.startswith("/excel/formula-assistant/jobs/"):
@@ -545,6 +547,7 @@ def _task_type_from_path(path: str) -> str:
         "/word/format-review": "word.format_review",
         "/word/format-review/snapshots": "word.format_review.deterministic",
         "/word/format-review/jobs": "word.format_review.deterministic",
+        "/word/materials": "word.material_composer",
         "/excel/analysis": "excel.analysis",
         "/excel/analysis/jobs": "excel.analysis",
         "/excel/formula-assistant/jobs": "excel.formula_assistant",

@@ -228,6 +228,7 @@ function createBaseTestContext(initialOverrides = {}) {
     "resumeFullDocumentReviewActiveJob",
     "pollDocumentReviewJob",
     "pollFullDocumentReviewJob",
+    "setMaterialImportVisible",
     "switchMode",
     "switchWordHistoryView",
     "handleWritingHistoryViewItem",

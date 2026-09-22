@@ -204,6 +204,7 @@ function createBaseContext(initialOverrides = {}) {
     "handleWritingHistoryDeleteItem",
     "handleWritingHistoryCopyItem",
     "resumeWritingActiveJob",
+    "setMaterialImportVisible",
     "switchMode",
     "applyRewrite",
     "applyPreview"

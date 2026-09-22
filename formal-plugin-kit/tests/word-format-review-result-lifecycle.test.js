@@ -229,6 +229,7 @@ function createBaseTestContext(initialOverrides = {}) {
     "renderDeterministicFormatReviewIssuePage",
     "renderDeterministicFormatReviewDiagnostics",
     "pollDeterministicFormatReviewJob",
+    "setMaterialImportVisible",
     "switchMode",
     "switchWordHistoryView",
     "handleWritingHistoryViewItem",

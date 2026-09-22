@@ -16,6 +16,7 @@ function resolveMode(controlId) {
     btnAiSmartImitation: "smartImitation",
     btnAiDocumentReview: "documentReview",
     btnAiFormatReview: "formatReview",
+    btnAiMaterialImport: "materialImport",
     btnAiSettings: "settings",
     btnWpsAiAssistant: "smartWrite"
   };
@@ -27,6 +28,7 @@ var ribbonIconMap = {
   btnAiSmartImitation: "assets/icon-smart-imitation.png",
   btnAiDocumentReview: "assets/icon-review.png",
   btnAiFormatReview: "assets/icon-format.png",
+  btnAiMaterialImport: "assets/icon-smart-write.png",
   btnAiSettings: "assets/icon-settings.png",
   btnWpsAiAssistant: "assets/ai-assistant-32.png"
 };
