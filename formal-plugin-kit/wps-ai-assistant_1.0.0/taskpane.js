@@ -138,12 +138,14 @@
   var TASK_API_KEY_DEFS = [
     { taskType: "word.smart_write", label: "智能编写" },
     { taskType: "word.smart_imitation", label: "智能仿写" },
+    { taskType: "word.material_composer", label: "资料章节草稿" },
     { taskType: "word.document_review", label: "文档审查" },
     { taskType: "word.format_review", label: "格式审查" }
   ];
   var MODE_WORKFLOW_TASK_TYPES = {
     smartWrite: "word.smart_write",
     smartImitation: "word.smart_imitation",
+    materialImport: "word.material_composer",
     documentReview: "word.document_review",
     formatReview: "word.format_review"
   };
@@ -210,7 +212,7 @@
       title: "设置"
     },
     materialImport: {
-      title: "导入资料",
+      title: "资料章节草稿",
       primaryText: "导入资料",
       showRewriteOptions: false,
       showInstruction: false,
@@ -1816,6 +1818,84 @@
     byId("btn-open-settings").setAttribute("aria-label", "打开设置");
   }
 
+  var materialComposer = null;
+  var materialComposerSession = "";
+
+  function getMaterialComposerSessionId() {
+    var activeDocument = getActiveDocument();
+    return activeDocument && helpers.getDocumentSessionId
+      ? helpers.getDocumentSessionId(activeDocument) : "";
+  }
+
+  function ensureMaterialComposer() {
+    if (!materialComposer) {
+      materialComposer = window.createMaterialComposer({
+        request: request,
+        storage: window.localStorage,
+        getSessionId: getMaterialComposerSessionId,
+        render: renderMaterialComposerView,
+        copyText: function (text) {
+          writeClipboardText(text, "章节草稿已复制。");
+        }
+      });
+    }
+    return materialComposer;
+  }
+
+  function renderMaterialComposerView(view) {
+    if (view.documentSessionId !== getMaterialComposerSessionId()) {
+      return;
+    }
+    var busy = view.busy || (Boolean(view.jobId) && ["queued", "running", "cancelling"].indexOf(view.status) >= 0);
+    byId("material-composer-status").textContent = view.error || view.message || "资料仅用于本次章节草稿；请核对结果中的出处和缺项。";
+    ["material-import-file", "material-section-title", "material-instruction", "btn-material-selection", "btn-material-generate"].forEach(function (id) {
+      byId(id).disabled = busy;
+    });
+    byId("btn-material-cancel").disabled = !busy;
+    byId("btn-material-copy").disabled = !view.result;
+    window.renderMaterialComposer(byId("material-composer-result"), view);
+  }
+
+  function startMaterialComposer() {
+    var validation = validateActiveDirectTaskSelection("word.material_composer");
+    if (!validation.valid) {
+      byId("material-composer-status").textContent = validation.message;
+      return Promise.resolve();
+    }
+    return ensureMaterialComposer().start({
+      sectionTitle: byId("material-section-title").value,
+      instruction: byId("material-instruction").value
+    }).catch(function (error) {
+      byId("material-composer-status").textContent = error.message || "章节草稿提交失败。";
+    });
+  }
+
+  function useMaterialComposerSelection() {
+    var selected = getSelectionText(getActiveDocument());
+    if (!String(selected || "").trim()) {
+      byId("material-composer-status").textContent = "请先在文档中选中章节标题，或直接填写章节名称。";
+      return;
+    }
+    byId("material-section-title").value = selected;
+    byId("material-composer-status").textContent = "已读取所选章节；该内容仅用于确定写作目标，不作为事实来源。";
+  }
+
+  function syncMaterialComposerSession() {
+    if (state.currentMode !== "materialImport") {
+      return;
+    }
+    var sessionId = getMaterialComposerSessionId();
+    if (sessionId !== materialComposerSession) {
+      materialComposerSession = sessionId;
+      byId("material-import-result").textContent = "";
+      byId("material-import-file").value = "";
+      byId("material-section-title").value = "";
+      byId("material-instruction").value = "";
+      byId("material-import-status").textContent = "资料与当前文档会话分别管理；服务重启后需重新导入。";
+      ensureMaterialComposer().restore();
+    }
+  }
+
   function setMaterialImportVisible(visible) {
     var panel = byId("material-import-panel");
     var primary = byId("btn-run-primary");
@@ -1846,18 +1926,20 @@
     if (status) {
       status.textContent = "正在读取资料，不会修改原文件或当前文档。";
     }
+    var sessionId = getMaterialComposerSessionId();
     window.readMaterialFile(file).then(function (contentBase64) {
-      var sessionId = (helpers.getDocumentSessionId && getActiveDocument) ? helpers.getDocumentSessionId(getActiveDocument()) : state.documentSessionId;
       return window.submitMaterialImport({
         fileName: file.name,
         mimeType: file.type || "",
         sizeBytes: file.size || 0,
         contentBase64: contentBase64,
         documentSessionId: sessionId || "",
-        root: result,
         request: request
       });
-    }).then(function () {
+    }).then(function (reading) {
+      ensureMaterialComposer().setMaterial(reading);
+      if (sessionId !== getMaterialComposerSessionId()) { return; }
+      window.renderMaterialReading(result, reading);
       if (status) {
         status.textContent = "读取结果已显示。资料原文件和当前文档未修改。";
       }
@@ -1916,6 +1998,10 @@
     if (requestedMode === "materialImport") {
       switchView("home");
       setMaterialImportVisible(true);
+      renderWorkflowProfileStrip();
+      loadWorkflowProfiles(getCurrentWorkflowTaskType());
+      syncMaterialComposerSession();
+      ensureMaterialComposer().restore();
       byId("btn-apply").hidden = true;
       byId("btn-run-primary").hidden = true;
       return;
@@ -2399,6 +2485,7 @@
   }
 
   function updateScopeIndicator() {
+    syncMaterialComposerSession();
     var document = getActiveDocument();
     if (!document) {
       setScopeLine("识别范围：未检测");
@@ -3065,7 +3152,7 @@
   }
 
   function getWorkflowProfileData(taskType) {
-    var sharedDirectServiceEnabled = taskType === "word.smart_write" || taskType === "word.smart_imitation" || taskType === "word.format_review" || taskType === "word.document_review";
+    var sharedDirectServiceEnabled = taskType === "word.smart_write" || taskType === "word.smart_imitation" || taskType === "word.format_review" || taskType === "word.document_review" || taskType === "word.material_composer";
     var base = state.workflowProfiles[taskType] || {
       taskType: taskType,
       activeProfileId: "",
@@ -3470,6 +3557,7 @@
     var taskLabels = {
       "word.smart_write": "选择智能编写模型配置",
       "word.smart_imitation": "选择智能仿写模型配置",
+      "word.material_composer": "选择资料章节草稿模型配置",
       "word.document_review": "选择文档审查模型配置",
       "word.format_review": "选择格式审查模型配置"
     };
@@ -5049,7 +5137,7 @@
     }
 
     var currentTask = getSettingsWorkflowTaskType();
-    var isSupportedTask = (currentTask === "word.smart_write" || currentTask === "word.smart_imitation" || currentTask === "word.format_review" || currentTask === "word.document_review");
+    var isSupportedTask = (currentTask === "word.smart_write" || currentTask === "word.smart_imitation" || currentTask === "word.format_review" || currentTask === "word.document_review" || currentTask === "word.material_composer");
     section.hidden = !isSupportedTask;
     if (!isSupportedTask) {
       return;
@@ -12463,6 +12551,11 @@
     byId("btn-writing-policy-more-import").addEventListener("click", openWritingPolicyImport);
     byId("btn-writing-policy-import-back").addEventListener("click", closeWritingPolicyImport);
     byId("writing-policy-import-file").addEventListener("change", handleWritingPolicyImportFileChange);
+    byId("btn-material-generate").addEventListener("click", startMaterialComposer);
+    byId("btn-material-selection").addEventListener("click", useMaterialComposerSelection);
+    byId("btn-material-cancel").addEventListener("click", function () { ensureMaterialComposer().cancel(); });
+    byId("btn-material-refresh").addEventListener("click", function () { ensureMaterialComposer().refresh(); });
+    byId("btn-material-copy").addEventListener("click", function () { ensureMaterialComposer().copy(); });
     var materialImportFile = byId("material-import-file");
     if (materialImportFile) {
       materialImportFile.addEventListener("change", handleMaterialImportFileChange);

@@ -13,6 +13,7 @@ from app.core.runtime_paths import resolve_runtime_paths
 SUPPORTED_WORKFLOW_TASKS = (
     "word.smart_write",
     "word.smart_imitation",
+    "word.material_composer",
     "word.document_review",
     "word.format_review",
     "excel.analysis",

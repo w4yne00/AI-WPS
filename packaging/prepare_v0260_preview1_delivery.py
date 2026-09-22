@@ -548,7 +548,7 @@ require(adapter.get("version") == expected)
 require(adapter.get("systemPromptManifest") == (
     "packages/adapter-start-kit/adapter_service/system_prompts/manifest.json"
 ))
-require(adapter.get("systemPromptCount") == 9)
+require(adapter.get("systemPromptCount") == 10)
 delivery = manifest.get("deliveryPolicy", {})
 require(delivery.get("status") == "candidate")
 require(delivery.get("sourceAssembly") == "explicit-allowlist")

@@ -83,6 +83,7 @@ from app.services.word.deterministic_format_review import (
 )
 from app.services.word.full_document_review import full_document_review_service
 from app.services.word.material_import import WordMaterialImportService
+from app.services.word.material_composer import MaterialComposerJobs
 from app.services.word.rewriter import WordRewriter
 from app.services.word.smart_imitator import WordSmartImitator
 from app.services.template_loader import TemplateLoader
@@ -191,6 +192,7 @@ DETERMINISTIC_FORMAT_REVIEW_SERVICE = deterministic_format_review_service
 SMART_WRITE_JOB_STORE = SmartWriteJobStore()
 SMART_IMITATION_JOB_STORE = SmartImitationJobStore()
 WORD_MATERIAL_IMPORT_SERVICE = WordMaterialImportService()
+MATERIAL_COMPOSER_JOBS = MaterialComposerJobs(WORD_MATERIAL_IMPORT_SERVICE)
 EXCEL_ANALYSIS_JOB_STORE = ExcelAnalysisJobStore()
 EXCEL_FORMULA_ASSISTANT_JOB_STORE = ExcelFormulaAssistantJobStore()
 EXCEL_SMART_FILL_JOB_STORE = ExcelSmartFillJobStore()
@@ -2306,6 +2308,17 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
 
+        if path.startswith("/word/material-composer/jobs/"):
+            job_id = unquote(path[len("/word/material-composer/jobs/"):]).strip("/")
+            session = parse_qs(parsed.query).get("documentSessionId", [""])[0]
+            try:
+                job = MATERIAL_COMPOSER_JOBS.get(job_id, session)
+            except AdapterError as error:
+                self._write(error.status_code, envelope(job_id, "word.material_composer", success=False, message=error.message, errors=[{"code": error.code, "message": error.message}]))
+                return
+            self._write(200, envelope(job.get("traceId", job_id), "word.material_composer", job, message=job["status"]))
+            return
+
         if path.startswith("/word/materials/"):
             material_id = unquote(path[len("/word/materials/") :]).strip("/")
             trace_id = new_trace_id("standalone-word-material")
@@ -3152,6 +3165,20 @@ class Handler(BaseHTTPRequestHandler):
                 self._write_workflow_error(error)
                 return
             self._write(200, envelope("standalone-workflow-profile-activate", "provider.workflow_profile", data, message="activated"))
+            return
+
+        if path == "/word/material-composer/jobs" or (path.startswith("/word/material-composer/jobs/") and path.endswith("/cancel")):
+            trace_id = new_trace_id("standalone-material-composer")
+            try:
+                if path.endswith("/cancel"):
+                    job_id = unquote(path[len("/word/material-composer/jobs/"):-len("/cancel")])
+                    job = MATERIAL_COMPOSER_JOBS.cancel(job_id, payload.get("documentSessionId", ""))
+                else:
+                    job = MATERIAL_COMPOSER_JOBS.start(payload, trace_id)
+            except AdapterError as error:
+                self._write(error.status_code, envelope(trace_id, "word.material_composer", success=False, message=error.message, errors=[{"code": error.code, "message": error.message}]))
+                return
+            self._write(200, envelope(job.get("traceId", trace_id), "word.material_composer", job, message=job["status"]))
             return
 
         if path == "/word/materials":

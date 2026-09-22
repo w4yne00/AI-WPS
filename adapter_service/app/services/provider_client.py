@@ -1915,6 +1915,7 @@ def normalize_task_api_key_ref(task_type: str) -> str:
 
 
 _VALIDATION_PROBES = {
+    "word.material_composer": '只依据片段 frag-1「信息化处负责部署」编写职责。只返回 JSON：{"paragraphs":[{"text":"信息化处负责部署。","fragmentIds":["frag-1"],"missingItems":[]}]}',
     "word.smart_write": "请将以下文字正式化，只输出最终正文：系统已完成部署。",
     "word.smart_imitation": "模板：项目已完成部署。要求：仿写为系统已完成联调。只输出最终正文。",
     "word.document_review": (
@@ -1951,6 +1952,20 @@ def _validate_probe_answer(task_type: str, answer: str) -> None:
     if not str(answer or "").strip():
         raise AdapterError("MODEL_FINAL_CONTENT_MISSING", "模型未返回最终结果。", status_code=502)
     if task_type in {"word.smart_write", "word.smart_imitation"}:
+        return
+    if task_type == "word.material_composer":
+        parsed = _extract_json_payload(answer)
+        paragraphs = parsed.get("paragraphs") if isinstance(parsed, dict) else None
+        if not isinstance(paragraphs, list) or not paragraphs or any(
+            not isinstance(item, dict)
+            or not isinstance(item.get("text"), str)
+            or not item["text"].strip()
+            or not isinstance(item.get("fragmentIds"), list)
+            or not item["fragmentIds"]
+            or not isinstance(item.get("missingItems"), list)
+            for item in paragraphs
+        ):
+            raise AdapterError("MATERIAL_COMPOSER_INVALID_RESULT", "模型未返回有效资料编写结构。", status_code=502)
         return
     parsers = {
         "word.document_review": parse_document_review_answer,
@@ -2668,6 +2683,7 @@ class ProviderClient:
         tasks = [
             ("word.smart_write", "智能编写"),
             ("word.smart_imitation", "智能仿写"),
+            ("word.material_composer", "资料编写"),
             ("word.document_review", "文档审查"),
             ("word.format_review", "格式审查"),
             ("excel.analysis", "智能分析"),

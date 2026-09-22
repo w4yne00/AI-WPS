@@ -25,6 +25,7 @@ EXPECTED_TASKS = frozenset(
     {
         "word.smart_write",
         "word.smart_imitation",
+        "word.material_composer",
         "word.document_review",
         "word.format_review",
         "excel.analysis",
@@ -142,7 +143,7 @@ def audit_manifest(root: Path, manifest: Dict) -> None:
         raise DeliveryFailure("V0260_RELEASE_DATE_INVALID")
 
     adapter = manifest.get("adapter", {})
-    if adapter.get("version") != VERSION or adapter.get("systemPromptCount") != 9:
+    if adapter.get("version") != VERSION or adapter.get("systemPromptCount") != len(EXPECTED_TASKS):
         raise DeliveryFailure("V0260_ADAPTER_IDENTITY_INVALID")
     if adapter.get("systemPromptManifest") != (
         "packages/adapter-start-kit/adapter_service/system_prompts/manifest.json"
@@ -266,7 +267,7 @@ def audit_prompt_manifest(root: Path, manifest: Dict) -> None:
     if prompt_manifest.get("release") != VERSION:
         raise DeliveryFailure("V0260_PROMPT_RELEASE_INVALID")
     tasks = prompt_manifest.get("tasks", {})
-    if not isinstance(tasks, dict) or len(tasks) != 9:
+    if not isinstance(tasks, dict) or len(tasks) != len(EXPECTED_TASKS):
         raise DeliveryFailure("V0260_PROMPT_TASK_COUNT_INVALID")
     if set(tasks.keys()) != EXPECTED_TASKS:
         raise DeliveryFailure("V0260_PROMPT_TASKS_MISMATCH")

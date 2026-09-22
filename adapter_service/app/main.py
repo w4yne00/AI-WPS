@@ -525,6 +525,8 @@ def _task_type_from_path(path: str) -> str:
         return "word.document_review"
     if path.startswith("/word/smart-write/jobs/"):
         return "word.smart_write"
+    if path.startswith("/word/material-composer/jobs"):
+        return "word.material_composer"
     if path.startswith("/word/smart-imitation/jobs/"):
         return "word.smart_imitation"
     if path == "/word/materials" or path.startswith("/word/materials/"):

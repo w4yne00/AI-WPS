@@ -1,5 +1,14 @@
 # Codex Handoff - AI-WPS
 
+## Issue #231：按资料生成只读章节草稿（2026-09-23）
+
+- 新增独立 `word.material_composer` 模型配置。由“导入资料”进入，选择一份 DOCX、填写或读取所选章节标题、填写写作要求；当前仅预览和复制，不调用文档写入。已有正文和历史回答不进入事实资料。
+- 公开接口：`POST /word/material-composer/jobs` 接收 `materialId`、`documentSessionId`、`clientJobId`、`sectionTitle`、`instruction`；`GET /word/material-composer/jobs/{jobId}?documentSessionId=...` 恢复查询；`POST /word/material-composer/jobs/{jobId}/cancel` 接收 `documentSessionId`。FastAPI 与 standalone 共用后台处理；同一请求编号复用原任务，不同输入或会话拒绝复用。
+- 模型 JSON 为 `paragraphs` 数组，每段含 `text`、`fragmentIds`、`missingItems`。Adapter 校验片段编号并从导入资料还原文件名、章节及原文；无有效出处的事实段落拒绝显示。返回 `plainText`、逐段 `sources` 与缺项，缺项采用 `〔待补充：具体信息〕`。出处真实存在不等于模型表述已通过人工事实核对。
+- 本阶段全部可读取资料须容纳于单次输入，超预算明确拒绝，不截断、不引入多资料或长资料检索。资料和任务沿用进程内生命周期，重开窗格可恢复，Adapter 重启或过期后提示重导入/重新生成。取消丢弃本地结果，不保证上游立即停止计费。
+- 自检：麒麟 Python 3.8 后端 1528 通过、0 失败、55 跳过；正式插件 299 通过（含真实浏览器窄窗与重开恢复），原型 12 通过且构建成功；82 个生产文件兼容扫描、差异检查、临时组装目录的通用及 Preview 交付审计通过。
+- 真实模型质量与真实 WPS 验收仍待完成；受控模型响应及浏览器测试不能替代这两项。本轮未生成正式交付归档；正式交付仍需通过提交来源核验及完整构建。
+
 ## PR #241 审查修复：资料导入（2026-09-22）
 
 - 导入结果使用真实 DOM 文本赋值；回归测试覆盖浏览器渲染。

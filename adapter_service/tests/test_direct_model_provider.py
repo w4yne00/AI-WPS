@@ -61,15 +61,16 @@ class RecordingControl:
 
 
 class DirectModelProviderTests(unittest.TestCase):
-    def test_system_prompt_manifest_exposes_all_nine_verified_tasks(self) -> None:
+    def test_system_prompt_manifest_exposes_all_supported_tasks(self) -> None:
         metadata = SystemPromptStore().list_metadata()
 
-        self.assertEqual(len(metadata), 9)
+        self.assertEqual(len(metadata), 10)
         self.assertEqual(
             {item["taskType"] for item in metadata},
             {
                 "word.smart_write",
                 "word.smart_imitation",
+                "word.material_composer",
                 "word.document_review",
                 "word.format_review",
                 "excel.analysis",

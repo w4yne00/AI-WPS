@@ -23,6 +23,7 @@ EXPECTED_TASKS = frozenset(
     {
         "word.smart_write",
         "word.smart_imitation",
+        "word.material_composer",
         "word.document_review",
         "word.format_review",
         "excel.analysis",
@@ -1232,11 +1233,11 @@ def test_preview_build_runs_addon_and_shell_syntax_gates():
     assert "shell_syntax=passed" in build
 
 
-def test_preview_delivery_tree_contains_all_nine_tasks_and_smart_fill_assets(tmp_path):
+def test_preview_delivery_tree_contains_all_tasks_and_smart_fill_assets(tmp_path):
     delivery = _prepare_delivery(tmp_path)
 
     manifest = json.loads((delivery / "release-manifest.json").read_text(encoding="utf-8"))
-    assert manifest["adapter"]["systemPromptCount"] == 9
+    assert manifest["adapter"]["systemPromptCount"] == 10
     assert manifest["excelSmartFillAssets"] == {
         "operationsGuide": "docs/operations/model-excel-smart-fill-contract.md",
         "workflowGuide": "docs/operations/workflow-platform-excel-smart-fill.md",
@@ -1247,7 +1248,7 @@ def test_preview_delivery_tree_contains_all_nine_tasks_and_smart_fill_assets(tmp
     prompt_manifest_path = delivery / manifest["adapter"]["systemPromptManifest"]
     prompt_manifest = json.loads(prompt_manifest_path.read_text(encoding="utf-8"))
     assert prompt_manifest["release"] == "0.26.0-preview.1"
-    assert len(prompt_manifest["tasks"]) == 9
+    assert len(prompt_manifest["tasks"]) == 10
     assert set(prompt_manifest["tasks"].keys()) == EXPECTED_TASKS
 
     smart_fill_prompt = prompt_manifest_path.parent / prompt_manifest["tasks"]["excel.smart_fill"]["file"]
@@ -1316,7 +1317,7 @@ def test_preview_audit_rejects_missing_or_substituted_prompt_task(tmp_path):
     assert rejected.returncode != 0
     assert "V0260_PROMPT_TASKS_MISMATCH" in rejected.stdout
 
-    # Tamper 2: Delete word.smart_write in prompt manifest only (count becomes 8)
+    # Tamper 2: Delete word.smart_write in prompt manifest only (count becomes 9)
     tampered_data = json.loads(original_manifest_text)
     del tampered_data["tasks"]["word.smart_write"]
     prompt_manifest_path.write_text(json.dumps(tampered_data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -1330,9 +1331,9 @@ def test_preview_audit_rejects_missing_or_substituted_prompt_task(tmp_path):
     assert rejected.returncode != 0
     assert "V0260_PROMPT_TASK_COUNT_INVALID" in rejected.stdout
 
-    # Tamper 3: Delete word.smart_write and adjust release manifest count to 8 (so phase1 passes, but preview audit fails)
+    # Tamper 3: Delete word.smart_write and adjust release manifest count to 9 (so phase1 passes, but preview audit fails)
     tampered_manifest = json.loads(original_release_manifest_text)
-    tampered_manifest["adapter"]["systemPromptCount"] = 8
+    tampered_manifest["adapter"]["systemPromptCount"] = 9
     release_manifest_path.write_text(json.dumps(tampered_manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     subprocess.run(
         [sys.executable, str(ROOT / "packaging/audit_phase1_delivery.py"), str(delivery), "--write-hashes"],
