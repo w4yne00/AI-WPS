@@ -118,3 +118,25 @@ function createRoot() {
     }
   };
 }
+
+
+test("material reading renders into a real browser DOM", (t) => {
+  const { execFileSync } = require("child_process");
+  const os = require("os");
+  try { execFileSync("agent-browser", ["--version"], { stdio: "ignore" }); }
+  catch (_) { t.skip("agent-browser unavailable"); return; }
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "material-dom-"));
+  const run = (...args) => execFileSync("agent-browser", ["--session", "material-import", ...args], {
+    encoding: "utf8", env: { ...process.env, AGENT_BROWSER_SOCKET_DIR: temp }
+  });
+  const source = fs.readFileSync(path.join(pluginRoot, "material-import.js"), "utf8");
+  const page = path.join(temp, "reading.html");
+  fs.writeFileSync(page, '<meta charset="utf-8"><pre id="result"></pre><script>' + source +
+    ';submitMaterialImport({root:document.getElementById("result"),request:function(){return {data:{blocks:[{kind:"paragraph",text:"正文甲\\n正文乙"}]}};}}).catch(function(e){document.body.textContent=e.toString();});</script>');
+  try {
+    run("open", require("url").pathToFileURL(page).href);
+    assert.ok(run("get", "text", "body").includes("正文甲\n正文乙"));
+  } finally {
+    try { run("close"); } finally { fs.rmSync(temp, { recursive: true, force: true }); }
+  }
+});

@@ -168,6 +168,50 @@ class WordMaterialImportApiTests(unittest.TestCase):
             self.assertNotIn("blocks", body.get("data") or {})
             self.assertNotIn(oversized_text[:20], response.text)
 
+    def test_preserves_line_breaks_and_tabs(self):
+        from fastapi.testclient import TestClient
+        from app.main import app
+        content = _paragraph_document("<w:tab/>甲<w:br/>乙<w:tab/>丙<w:br/>".replace("<w:br/>", "</w:t><w:br/><w:t>").replace("<w:tab/>", "</w:t><w:tab/><w:t>"))
+        response = TestClient(app).post("/word/materials", json=upload_payload(build_docx(document_xml=content)))
+        self.assertEqual(response.status_code, 200)
+        data = response.json()["data"]
+        self.assertEqual(data["blocks"][0]["text"], "\t甲\n乙\t丙\n")
+        self.assertEqual(data["limits"]["readableCharacterCount"], 7)
+
+    def test_reads_content_controls_in_order_with_distinct_sources(self):
+        from fastapi.testclient import TestClient
+        from app.main import app
+        paragraph = "<w:p><w:r><w:t>{0}</w:t></w:r></w:p>"
+        body = (paragraph.format("前") + "<w:sdt><w:sdtContent>" + paragraph.format("中")
+                + "<w:sdt><w:sdtContent>" + paragraph.format("内")
+                + "</w:sdtContent></w:sdt></w:sdtContent></w:sdt>" + paragraph.format("后"))
+        xml = _paragraph_document("").replace(b"<w:p><w:r><w:t></w:t></w:r></w:p>", body.encode("utf-8"))
+        response = TestClient(app).post("/word/materials", json=upload_payload(build_docx(document_xml=xml)))
+        self.assertEqual(response.status_code, 200)
+        blocks = response.json()["data"]["blocks"]
+        self.assertEqual([b["text"] for b in blocks], ["前", "中", "内", "后"])
+        self.assertEqual(len({b["blockId"] for b in blocks}), 4)
+        self.assertNotEqual(blocks[1]["source"], blocks[2]["source"])
+
+    def test_rejects_expanding_tables_before_allocating_large_grids(self):
+        from unittest.mock import patch
+        from fastapi.testclient import TestClient
+        from app.main import app
+        from app.services.word import material_import
+        client = TestClient(app)
+        def upload_table(span, rows, tables=1):
+            row = '<w:tr><w:tc><w:tcPr><w:gridSpan w:val="{0}"/></w:tcPr><w:p><w:r><w:t>甲</w:t></w:r></w:p></w:tc></w:tr>'.format(span)
+            body = ("<w:tbl>" + row * rows + "</w:tbl>") * tables
+            xml = _paragraph_document("").replace(b"<w:p><w:r><w:t></w:t></w:r></w:p>", body.encode("utf-8"))
+            return client.post("/word/materials", json=upload_payload(build_docx(document_xml=xml)))
+        self.assertEqual(upload_table(2, 2).json()["data"]["blocks"][0]["rows"], [["甲", ""], ["甲", ""]])
+        response = upload_table(100000, 1)
+        self.assertEqual(response.status_code, 413)
+        self.assertEqual(response.json()["errors"][0]["code"], "MATERIAL_TABLE_OVER_LIMIT")
+        with patch.object(material_import, "MATERIAL_IMPORT_MAX_TABLE_CELLS", 3):
+            self.assertEqual(upload_table(2, 2).status_code, 413)
+            self.assertEqual(upload_table(2, 1, tables=2).status_code, 413)
+
     def test_standalone_import_and_view_matches_public_reading(self):
         """A standalone-only miss would make the installed adapter hide the reading."""
         import standalone_adapter

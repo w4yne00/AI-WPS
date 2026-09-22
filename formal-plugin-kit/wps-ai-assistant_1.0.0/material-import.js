@@ -39,10 +39,7 @@ function renderMaterialReading(root, reading) {
   (data.unreadRegions || []).forEach(function (region) {
     lines.push((region.message || "未读取") + " " + (region.count || 0));
   });
-  root.textContent = "";
-  lines.forEach(function (line) {
-    root.appendChild({ textContent: line + "\n" });
-  });
+  root.textContent = lines.join("\n");
 }
 
 function blockLine(block) {

@@ -17,6 +17,8 @@ from app.services.ppt.docx_security import (
 
 TASK_TYPE = "word.material_composer"
 MATERIAL_IMPORT_MAX_READABLE_CHARACTERS = 100000
+MATERIAL_IMPORT_MAX_TABLE_COLUMNS = 256
+MATERIAL_IMPORT_MAX_TABLE_CELLS = 100000
 CHARACTER_COUNT_METHOD = "unicode_codepoints_of_extracted_readable_text"
 _PART = "word/document.xml"
 _HEADING_NAME = re.compile(r"^(?:Heading|标题)\s*([1-6])$", re.IGNORECASE)
@@ -129,8 +131,10 @@ def _read_document(document_xml: bytes, style_names: Dict[str, str], package: by
     fragments = []
     table_index = 0
     readable_count = 0
+    table_cells = 0
     if body is not None:
-        for block_index, child in enumerate(list(body)):
+        for child, body_path in _body_blocks(body):
+            block_index = body_path[0]
             name = _local_name(child.tag)
             if name == "p":
                 block, fragment, count = _paragraph_block(
@@ -138,17 +142,21 @@ def _read_document(document_xml: bytes, style_names: Dict[str, str], package: by
                 )
                 if block is None:
                     continue
+                _locate_block(block, [fragment], body_path)
                 blocks.append(block)
                 if fragment is not None:
                     fragments.append(fragment)
                 readable_count += count
             elif name == "tbl":
                 block, table_fragments, count = _table_block(
-                    child, block_index, table_index, len(fragments) + 1
+                    child, block_index, table_index, len(fragments) + 1,
+                    MATERIAL_IMPORT_MAX_TABLE_CELLS - table_cells,
                 )
                 table_index += 1
                 if block is None:
                     continue
+                table_cells += len(block["rows"]) * len(block["rows"][0])
+                _locate_block(block, table_fragments, body_path)
                 blocks.append(block)
                 fragments.extend(table_fragments)
                 readable_count += count
@@ -166,11 +174,31 @@ def _read_document(document_xml: bytes, style_names: Dict[str, str], package: by
             "productConfirmed": False,
             "fileByteLimit": DOCX_MAX_PACKAGE_BYTES,
             "fileByteLimitSource": "existing_docx_security_gate",
+            "tableColumnLimit": MATERIAL_IMPORT_MAX_TABLE_COLUMNS,
+            "tableCellLimit": MATERIAL_IMPORT_MAX_TABLE_CELLS,
             "readableCharacterLimit": MATERIAL_IMPORT_MAX_READABLE_CHARACTERS,
             "characterCountMethod": CHARACTER_COUNT_METHOD,
             "readableCharacterCount": readable_count,
         },
     }
+
+
+def _body_blocks(container, path=()):
+    for index, child in enumerate(list(container)):
+        child_path = path + (index,)
+        name = _local_name(child.tag)
+        if name in {"p", "tbl"}:
+            yield child, child_path
+        elif name in {"sdt", "sdtContent"}:
+            yield from _body_blocks(child, child_path)
+
+
+def _locate_block(block, fragments, body_path):
+    block["blockId"] = "block-" + "-".join(str(index) for index in body_path)
+    block["source"]["bodyPath"] = list(body_path)
+    for fragment in fragments:
+        fragment["blockId"] = block["blockId"]
+        fragment["source"]["bodyPath"] = list(body_path)
 
 
 def _paragraph_block(paragraph, style_names, block_index, fragment_number):
@@ -214,17 +242,27 @@ def _paragraph_block(paragraph, style_names, block_index, fragment_number):
     return block, fragment, len(text)
 
 
-def _table_block(table, block_index, table_index, fragment_start):
+def _table_block(table, block_index, table_index, fragment_start, cell_budget):
     rows = []
     fragments = []
     readable_count = 0
     fragment_number = fragment_start
+    width = 0
     for row_index, row in enumerate(_children(table, "tr")):
         cells = []
         column_index = 0
         for cell in _children(row, "tc"):
             text = _cell_text(cell)
             span = _grid_span(cell)
+            next_width = max(width, column_index + span)
+            if (next_width > MATERIAL_IMPORT_MAX_TABLE_COLUMNS
+                    or next_width * (row_index + 1) > cell_budget):
+                raise AdapterError(
+                    "MATERIAL_TABLE_OVER_LIMIT",
+                    "表格展开规模超过本阶段实施参数上限，已拒绝导入，未截断内容。",
+                    status_code=413,
+                )
+            width = next_width
             cells.append(text)
             source = {
                 "part": _PART,
@@ -247,6 +285,12 @@ def _table_block(table, block_index, table_index, fragment_start):
             column_index += span
             if span > 1:
                 cells.extend([""] * (span - 1))
+        if width * (row_index + 1) > cell_budget:
+            raise AdapterError(
+                "MATERIAL_TABLE_OVER_LIMIT",
+                "表格展开规模超过本阶段实施参数上限，已拒绝导入，未截断内容。",
+                status_code=413,
+            )
         rows.append(cells)
     if not rows:
         return None, [], 0
@@ -339,13 +383,19 @@ def _cell_text(cell) -> str:
 def _element_text(element) -> str:
     parts = []
     for node in element.iter():
-        if _local_name(node.tag) == "t" and node.text:
+        name = _local_name(node.tag)
+        if name == "t" and node.text:
             parts.append(node.text)
-    return "".join(parts).strip()
+        elif name in {"br", "cr"}:
+            parts.append("\n")
+        elif name == "tab":
+            parts.append("\t")
+    return "".join(parts)
 
 
 def _grid_span(cell) -> int:
-    for node in cell.iter():
+    properties = _find_child(cell, "tcPr")
+    for node in list(properties) if properties is not None else []:
         if _local_name(node.tag) == "gridSpan":
             try:
                 return max(1, int(_attr(node, "val")))
