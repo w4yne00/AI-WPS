@@ -561,6 +561,7 @@ async function testRunningCancelButtonVisibilityAnd100msTransition() {
 
   const fns = loadFunctions([
     "setDocumentReviewCancelVisible",
+    "writingJobUsesEvents",
     "renderWritingJobProgress",
     "cancelQueuedWritingJob"
   ], context);
@@ -1260,6 +1261,300 @@ async function testSmartWriteAndSmartImitationIsolation() {
   assert.strictEqual(resultOutput.textContent, "智能仿写独立文本");
 }
 
+function assertNoCountdown(text) {
+  assert.ok(!text.includes("总耗时"), `streaming preview must not show elapsed countdown: ${text}`);
+  assert.ok(!/\d+\s*秒/.test(text), `streaming preview must not count seconds: ${text}`);
+}
+
+function loadWritingProgress(resultOutput, state) {
+  const elements = {
+    "result-output": resultOutput,
+    "btn-cancel-document-review-job": createMockElement("btn-cancel-document-review-job"),
+    "status-line": createMockElement("status-line")
+  };
+  const context = {
+    state,
+    byId(id) { return elements[id] || null; },
+    setStatus() {},
+    setPlainResult(text) {
+      resultOutput.hidden = false;
+      resultOutput.classList.add("plain-output");
+      resultOutput.textContent = text || "";
+    },
+    setDocumentReviewCancelVisible() {},
+    writingTaskLabel(taskType) {
+      return taskType === "word.smart_imitation" ? "智能仿写" : "智能编写";
+    },
+    DOCUMENT_REVIEW_PHASE_TEXT: {
+      streaming: "正在生成内容",
+      provider_processing: "模型后台处理",
+      stopping: "正在停止任务"
+    },
+    helpers: { getDocumentSessionId: () => state.documentSessionId },
+    getActiveDocument: () => ({})
+  };
+  return loadFunctions(["writingJobUsesEvents", "renderWritingJobProgress"], context);
+}
+
+async function testStreamingResultPreviewUsesInteractivePromptInsteadOfCountdown() {
+  const streamingOutput = createMockElement("result-output");
+  const streamingState = {
+    directStreamingEnabled: true,
+    documentSessionId: "doc-1",
+    writingJobId: "job-stream-wait",
+    writingJobPreviews: {}
+  };
+  const streamingFns = loadWritingProgress(streamingOutput, streamingState);
+  streamingFns.renderWritingJobProgress({
+    status: "running",
+    phase: "streaming",
+    streamingEnabled: true,
+    canCancel: true,
+    elapsedSeconds: 18
+  }, "word.smart_write", "job-stream-wait");
+
+  assert.ok(
+    streamingOutput.textContent.includes("正在生成增量文本预览"),
+    `expected interactive streaming prompt, got: ${streamingOutput.textContent}`
+  );
+  assert.ok(streamingOutput.textContent.includes("逐步出现"), streamingOutput.textContent);
+  assert.ok(streamingOutput.textContent.includes("停止生成"), streamingOutput.textContent);
+  assert.ok(streamingOutput.textContent.includes("还不是最终结果"), streamingOutput.textContent);
+  assertNoCountdown(streamingOutput.textContent);
+  assert.ok(
+    streamingOutput.classList.contains("streaming-preview-wait"),
+    "streaming wait must mark the preview as live"
+  );
+
+  streamingState.currentMode = "smartWrite";
+  streamingState.writingJobPreviews["word.smart_write::doc-1::job-stream-wait"] = {
+    jobId: "job-stream-wait",
+    taskType: "word.smart_write",
+    documentSessionId: "doc-1",
+    mode: "smartWrite",
+    text: "逐步出现的正文"
+  };
+  const previewFns = loadFunctions(["renderWritingJobPreview"], {
+    state: streamingState,
+    byId(id) { return id === "result-output" ? streamingOutput : createMockElement(id); },
+    helpers: { getDocumentSessionId: () => "doc-1" },
+    getActiveDocument: () => ({}),
+    clearWritingPolicyUsage() {},
+    hideCompareForSmartImitation() {}
+  });
+  previewFns.renderWritingJobPreview("word.smart_write::doc-1::job-stream-wait");
+  assert.strictEqual(streamingOutput.textContent, "逐步出现的正文");
+  assert.ok(!streamingOutput.classList.contains("streaming-preview-wait"));
+
+  const imitationOutput = createMockElement("result-output");
+  const imitationFns = loadWritingProgress(imitationOutput, {
+    directStreamingEnabled: true,
+    documentSessionId: "doc-1",
+    writingJobId: "job-im-wait",
+    writingJobPreviews: {}
+  });
+  imitationFns.renderWritingJobProgress({
+    status: "running",
+    phase: "provider_waiting",
+    streamingEnabled: true,
+    elapsedSeconds: 9
+  }, "word.smart_imitation", "job-im-wait");
+  assert.ok(imitationOutput.textContent.includes("正在生成增量文本预览"), imitationOutput.textContent);
+  assertNoCountdown(imitationOutput.textContent);
+
+  const flaggedOutput = createMockElement("result-output");
+  const flaggedFns = loadWritingProgress(flaggedOutput, {
+    directStreamingEnabled: true,
+    documentSessionId: "doc-1",
+    writingJobId: "job-flag-wait",
+    writingJobPreviews: {}
+  });
+  flaggedFns.renderWritingJobProgress({
+    status: "running",
+    phase: "provider_connecting",
+    elapsedSeconds: 4
+  }, "word.smart_write", "job-flag-wait");
+  assert.ok(flaggedOutput.textContent.includes("正在生成增量文本预览"), flaggedOutput.textContent);
+  assertNoCountdown(flaggedOutput.textContent);
+
+  const queuedOutput = createMockElement("result-output");
+  const queuedFns = loadWritingProgress(queuedOutput, {
+    directStreamingEnabled: true,
+    documentSessionId: "doc-1",
+    writingJobId: "job-queue-wait",
+    writingJobPreviews: {}
+  });
+  queuedFns.renderWritingJobProgress({
+    status: "queued",
+    streamingEnabled: true,
+    queuePosition: 2,
+    elapsedSeconds: 6,
+    canCancel: true
+  }, "word.smart_write", "job-queue-wait");
+  assert.ok(queuedOutput.textContent.includes("逐步出现"), queuedOutput.textContent);
+  assert.ok(queuedOutput.textContent.includes("2"), queuedOutput.textContent);
+  assertNoCountdown(queuedOutput.textContent);
+
+  const blockingOutput = createMockElement("result-output");
+  const blockingFns = loadWritingProgress(blockingOutput, {
+    directStreamingEnabled: false,
+    documentSessionId: "doc-1",
+    writingJobId: "job-block-wait",
+    writingJobPreviews: {}
+  });
+  blockingFns.renderWritingJobProgress({
+    status: "running",
+    phase: "provider_processing",
+    streamingEnabled: false,
+    elapsedSeconds: 12
+  }, "word.smart_write", "job-block-wait");
+  assert.ok(blockingOutput.textContent.includes("总耗时：12 秒"), blockingOutput.textContent);
+  assert.ok(!blockingOutput.textContent.includes("增量文本预览"), blockingOutput.textContent);
+  assert.ok(!blockingOutput.classList.contains("streaming-preview-wait"));
+
+  const keptOutput = createMockElement("result-output");
+  keptOutput.textContent = "已经出现的正文";
+  const keptState = {
+    directStreamingEnabled: true,
+    documentSessionId: "doc-1",
+    writingJobId: "job-live",
+    writingJobPreviews: {
+      "word.smart_write::doc-1::job-live": { text: "已经出现的正文" }
+    }
+  };
+  const keptFns = loadWritingProgress(keptOutput, keptState);
+  keptFns.renderWritingJobProgress({
+    status: "running",
+    phase: "streaming",
+    streamingEnabled: true,
+    elapsedSeconds: 21
+  }, "word.smart_write", "job-live");
+  assert.strictEqual(keptOutput.textContent, "已经出现的正文");
+  assert.ok(!keptOutput.classList.contains("streaming-preview-wait"));
+
+  const fallbackOutput = createMockElement("result-output");
+  const fallbackState = {
+    directStreamingEnabled: true,
+    currentMode: "smartWrite",
+    documentSessionId: "doc-1",
+    writingJobId: "job-fallback",
+    writingJobPollErrorCount: 0,
+    writingJobPreviews: {}
+  };
+  const fallbackFns = loadFunctions(["writingJobUsesEvents", "renderWritingJobProgress", "pollWritingJob"], {
+    state: fallbackState,
+    WRITING_POLL_REQUEST_TIMEOUT_MS: 10000,
+    WRITING_POLL_INTERVAL_MS: 3000,
+    byId(id) { return id === "result-output" ? fallbackOutput : createMockElement(id); },
+    setStatus() {},
+    setPlainResult(text) {
+      fallbackOutput.classList.add("plain-output");
+      fallbackOutput.textContent = text || "";
+    },
+    setDocumentReviewCancelVisible() {},
+    writingTaskLabel() { return "智能编写"; },
+    DOCUMENT_REVIEW_PHASE_TEXT: { provider_processing: "模型后台处理" },
+    helpers: { getDocumentSessionId: () => "doc-1" },
+    getActiveDocument: () => ({}),
+    request() {
+      return Promise.resolve({
+        data: {
+          status: "running",
+          phase: "provider_processing",
+          streamingEnabled: true,
+          elapsedSeconds: 15
+        }
+      });
+    },
+    writingJobPath: () => "/word/smart-write/jobs",
+    saveWritingActiveJob() {},
+    scheduleWritingPoll() {}
+  });
+  fallbackFns.pollWritingJob("job-fallback", "word.smart_write", "smartWrite", false, "doc-1");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.ok(fallbackOutput.textContent.includes("总耗时：15 秒"), fallbackOutput.textContent);
+  assert.ok(!fallbackOutput.textContent.includes("增量文本预览"), fallbackOutput.textContent);
+
+  const clearedOutput = createMockElement("result-output");
+  clearedOutput.classList.add("streaming-preview-wait");
+  const clearFns = loadFunctions(["setPlainResult"], {
+    state: { copyText: "" },
+    byId(id) { return id === "result-output" ? clearedOutput : null; }
+  });
+  clearFns.setPlainResult("排队任务已取消，未调用模型后台。");
+  assert.strictEqual(clearedOutput.textContent, "排队任务已取消，未调用模型后台。");
+  assert.ok(!clearedOutput.classList.contains("streaming-preview-wait"));
+
+  const failedOutput = createMockElement("result-output");
+  failedOutput.classList.add("streaming-preview-wait");
+  const failedFns = loadFunctions(["setResult"], {
+    state: { copyText: "" },
+    helpers: {},
+    byId(id) { return id === "result-output" ? failedOutput : null; }
+  });
+  failedFns.setResult("后台任务执行失败。");
+  assert.strictEqual(failedOutput.textContent, "后台任务执行失败。");
+  assert.ok(!failedOutput.classList.contains("streaming-preview-wait"));
+
+  const reviewOutput = createMockElement("result-output");
+  reviewOutput.classList.add("streaming-preview-wait");
+  const reviewFns = loadFunctions(["renderDocumentReviewInteractive"], {
+    state: { copyText: "", documentReviewData: { reportId: "r1" } },
+    byId(id) { return id === "result-output" ? reviewOutput : null; },
+    renderGroupedDocumentReview: () => "审查记录",
+    getDocumentReviewCategory: () => "typo",
+    DOCUMENT_REVIEW_CATEGORY_ORDER: ["typo"],
+    DOCUMENT_REVIEW_CATEGORY_TEXT: { typo: "错别字" },
+    escapeHtmlText: (value) => String(value || ""),
+    getDocumentReviewStatus: () => "open",
+    REVIEW_SEVERITY_TEXT: { medium: "中" },
+    getDocumentReviewStatusText: () => "待处理",
+    setResult() {},
+    setReviewRecordActionsVisible() {}
+  });
+  reviewFns.renderDocumentReviewInteractive({
+    documentType: "technical_solution",
+    scope: "selection",
+    summary: "审查完成。",
+    issues: [{ severity: "medium", location: "正文", problem: "用词", suggestion: "改为正式表述" }]
+  });
+  assert.ok(String(reviewOutput.innerHTML).includes("文档审查结果"));
+  assert.ok(!reviewOutput.classList.contains("streaming-preview-wait"));
+
+  const eventOutput = createMockElement("result-output");
+  const eventFns = loadWritingProgress(eventOutput, {
+    directStreamingEnabled: true,
+    documentSessionId: "doc-1",
+    writingJobId: "job-event-wait",
+    writingJobPreviews: {}
+  });
+  eventFns.renderWritingJobProgress({
+    phase: "streaming",
+    elapsedSeconds: 3
+  }, "word.smart_write", "job-event-wait");
+  assert.ok(eventOutput.textContent.includes("正在生成增量文本预览"), eventOutput.textContent);
+  assert.ok(!eventOutput.textContent.includes("停止生成"), eventOutput.textContent);
+  assertNoCountdown(eventOutput.textContent);
+
+  const stoppingOutput = createMockElement("result-output");
+  const stoppingFns = loadWritingProgress(stoppingOutput, {
+    directStreamingEnabled: true,
+    documentSessionId: "doc-1",
+    writingJobId: "job-stopping",
+    writingJobPreviews: {}
+  });
+  stoppingFns.renderWritingJobProgress({
+    status: "running",
+    phase: "stopping",
+    streamingEnabled: true,
+    canCancel: true,
+    elapsedSeconds: 11
+  }, "word.smart_write", "job-stopping");
+  assert.ok(stoppingOutput.textContent.includes("正在停止"), stoppingOutput.textContent);
+  assert.ok(!stoppingOutput.textContent.includes("可以停止生成"), stoppingOutput.textContent);
+  assertNoCountdown(stoppingOutput.textContent);
+}
+
 async function main() {
   await testIncrementalPreviewRenderingAndCopySync();
   await testSnapshotRecoveryUsesAuthoritativeText();
@@ -1277,6 +1572,7 @@ async function main() {
   await testSmartImitationCancellationPreservesPartialPreviewAndZeroApply();
   await testSmartImitationFailurePreservesPartialPreviewAndZeroApply();
   await testSmartWriteAndSmartImitationIsolation();
+  await testStreamingResultPreviewUsesInteractivePromptInsteadOfCountdown();
   console.log("word-writing-streaming tests passed!");
 }
 

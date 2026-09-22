@@ -1305,6 +1305,7 @@
     var output = byId("result-output");
     output.hidden = false;
     output.classList.remove("plain-output");
+    output.classList.remove("streaming-preview-wait");
     if (helpers.renderMarkdown) {
       output.innerHTML = helpers.renderMarkdown(text);
     } else {
@@ -1317,6 +1318,7 @@
     var output = byId("result-output");
     output.hidden = false;
     output.classList.add("plain-output");
+    output.classList.remove("streaming-preview-wait");
     output.textContent = text || "";
     state.copyText = typeof copyText === "string" ? copyText : (text || "");
   }
@@ -7087,6 +7089,7 @@
     state.copyText = markdown;
     output.hidden = false;
     output.classList.remove("plain-output");
+    output.classList.remove("streaming-preview-wait");
 
     if (!issues.length) {
       setResult(markdown, markdown);
@@ -7977,8 +7980,32 @@
       : (state && state.documentSessionId);
     var previewKey = [taskType, currentDoc, jobId].join("::");
     var preview = state && state.writingJobPreviews && state.writingJobPreviews[previewKey];
+    var output = byId("result-output");
     if (preview && preview.text) {
+      if (output) {
+        output.classList.remove("streaming-preview-wait");
+      }
       return;
+    }
+    if (writingJobUsesEvents(job)) {
+      var streamingPrompt;
+      if (job.status === "queued") {
+        streamingPrompt = label + "已进入队列。开始生成后，正文会逐步出现在这里。\n排队位置：第 " + (job.queuePosition || 1) + " 位";
+      } else if (job.cancelRequested || job.phase === "stopping") {
+        streamingPrompt = "正在停止生成。已出现的文字会保留，供查看和复制。";
+      } else if (job.canCancel) {
+        streamingPrompt = "正在生成增量文本预览。正文会逐步出现在这里。\n可以停止生成；已出现的文字只能查看和复制，还不是最终结果。";
+      } else {
+        streamingPrompt = "正在生成增量文本预览。正文会逐步出现在这里。\n已出现的文字只能查看和复制，还不是最终结果。";
+      }
+      setPlainResult(streamingPrompt);
+      if (output) {
+        output.classList.add("streaming-preview-wait");
+      }
+      return;
+    }
+    if (output) {
+      output.classList.remove("streaming-preview-wait");
     }
     setPlainResult(lines.join("\n"));
   }
@@ -8545,7 +8572,7 @@
         return;
       }
       if (state.currentMode === mode) {
-        renderWritingJobProgress(job, taskType, jobId);
+        renderWritingJobProgress(Object.assign({}, job, { streamingEnabled: false }), taskType, jobId);
       }
       scheduleWritingPoll(jobId, taskType, mode, resumed, WRITING_POLL_INTERVAL_MS, targetDocSession);
     }).catch(function (error) {
@@ -8674,6 +8701,7 @@
     }
     output.hidden = false;
     output.classList.remove("markdown-body");
+    output.classList.remove("streaming-preview-wait");
     output.classList.add("plain-output");
 
     var viewSwitch = byId("result-view-switch");
