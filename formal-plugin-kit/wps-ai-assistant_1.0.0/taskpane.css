@@ -808,6 +808,27 @@ button[disabled] {
   white-space: pre-wrap;
 }
 
+#result-output.streaming-preview-wait {
+  color: var(--color-text-muted);
+}
+
+#result-output.streaming-preview-wait::after {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  vertical-align: 0.15em;
+  animation: streaming-preview-wait-pulse 1.1s ease-in-out infinite;
+}
+
+@keyframes streaming-preview-wait-pulse {
+  0%, 100% { opacity: 0.2; }
+  50% { opacity: 1; }
+}
+
 body[data-task-mode="smartWrite"] #result-output {
   min-height: 360px;
   max-height: 680px;

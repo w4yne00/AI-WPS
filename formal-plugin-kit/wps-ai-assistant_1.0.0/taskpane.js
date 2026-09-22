@@ -1317,6 +1317,7 @@
     var output = byId("result-output");
     output.hidden = false;
     output.classList.add("plain-output");
+    output.classList.remove("streaming-preview-wait");
     output.textContent = text || "";
     state.copyText = typeof copyText === "string" ? copyText : (text || "");
   }
@@ -7977,8 +7978,26 @@
       : (state && state.documentSessionId);
     var previewKey = [taskType, currentDoc, jobId].join("::");
     var preview = state && state.writingJobPreviews && state.writingJobPreviews[previewKey];
+    var output = byId("result-output");
     if (preview && preview.text) {
+      if (output) {
+        output.classList.remove("streaming-preview-wait");
+      }
       return;
+    }
+    if (writingJobUsesEvents(job)) {
+      if (job.status === "queued") {
+        setPlainResult(label + "已进入队列。开始生成后，正文会逐步出现在这里。\n排队位置：第 " + (job.queuePosition || 1) + " 位");
+      } else {
+        setPlainResult("正在生成增量文本预览。正文会逐步出现在这里。\n可以停止生成；已出现的文字只能查看和复制，还不是最终结果。");
+      }
+      if (output) {
+        output.classList.add("streaming-preview-wait");
+      }
+      return;
+    }
+    if (output) {
+      output.classList.remove("streaming-preview-wait");
     }
     setPlainResult(lines.join("\n"));
   }
@@ -8545,7 +8564,7 @@
         return;
       }
       if (state.currentMode === mode) {
-        renderWritingJobProgress(job, taskType, jobId);
+        renderWritingJobProgress(Object.assign({}, job, { streamingEnabled: false }), taskType, jobId);
       }
       scheduleWritingPoll(jobId, taskType, mode, resumed, WRITING_POLL_INTERVAL_MS, targetDocSession);
     }).catch(function (error) {
@@ -8674,6 +8693,7 @@
     }
     output.hidden = false;
     output.classList.remove("markdown-body");
+    output.classList.remove("streaming-preview-wait");
     output.classList.add("plain-output");
 
     var viewSwitch = byId("result-view-switch");
