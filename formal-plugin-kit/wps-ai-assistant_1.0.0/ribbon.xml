@@ -7,6 +7,7 @@
           <button id="btnAiSmartImitation" label="智能仿写" size="large" getImage="GetImage" onAction="OnAction" />
           <button id="btnAiDocumentReview" label="文档审查" size="large" getImage="GetImage" onAction="OnAction" />
           <button id="btnAiFormatReview" label="格式审查" size="large" getImage="GetImage" onAction="OnAction" />
+          <button id="btnAiMaterialImport" label="导入资料" size="large" getImage="GetImage" onAction="OnAction" />
           <button id="btnAiSettings" label="设置" size="large" getImage="GetImage" onAction="OnAction" />
         </group>
       </tab>

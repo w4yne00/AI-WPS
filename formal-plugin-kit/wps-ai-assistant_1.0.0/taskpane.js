@@ -208,6 +208,16 @@
     },
     settings: {
       title: "设置"
+    },
+    materialImport: {
+      title: "导入资料",
+      primaryText: "导入资料",
+      showRewriteOptions: false,
+      showInstruction: false,
+      showTemplate: false,
+      showDocumentReviewOptions: false,
+      showFixedTemplate: false,
+      showSmartImitationOptions: false
     }
   };
   var state = {
@@ -1806,6 +1816,58 @@
     byId("btn-open-settings").setAttribute("aria-label", "打开设置");
   }
 
+  function setMaterialImportVisible(visible) {
+    var panel = byId("material-import-panel");
+    var primary = byId("btn-run-primary");
+    if (panel) {
+      panel.hidden = !visible;
+    }
+    if (primary) {
+      primary.hidden = Boolean(visible);
+    }
+    if (!visible) {
+      return;
+    }
+    ["rewrite-options", "instruction-block", "template-options", "document-review-options", "fixed-template-options", "smart-imitation-options", "writing-policy-scene-block"].forEach(function (id) {
+      var node = byId(id);
+      if (node) {
+        node.hidden = true;
+      }
+    });
+  }
+
+  function handleMaterialImportFileChange(event) {
+    var file = event.target.files && event.target.files[0];
+    var status = byId("material-import-status");
+    var result = byId("material-import-result");
+    if (!file || typeof window.submitMaterialImport !== "function" || typeof window.readMaterialFile !== "function") {
+      return;
+    }
+    if (status) {
+      status.textContent = "正在读取资料，不会修改原文件或当前文档。";
+    }
+    window.readMaterialFile(file).then(function (contentBase64) {
+      var sessionId = (helpers.getDocumentSessionId && getActiveDocument) ? helpers.getDocumentSessionId(getActiveDocument()) : state.documentSessionId;
+      return window.submitMaterialImport({
+        fileName: file.name,
+        mimeType: file.type || "",
+        sizeBytes: file.size || 0,
+        contentBase64: contentBase64,
+        documentSessionId: sessionId || "",
+        root: result,
+        request: request
+      });
+    }).then(function () {
+      if (status) {
+        status.textContent = "读取结果已显示。资料原文件和当前文档未修改。";
+      }
+    }).catch(function (error) {
+      if (status) {
+        status.textContent = (error && error.message) || "资料导入失败。";
+      }
+    });
+  }
+
   function switchMode(mode) {
     var requestedMode = modeConfig[mode] ? mode : "smartWrite";
     var config = modeConfig[requestedMode] || modeConfig.smartWrite;
@@ -1847,8 +1909,18 @@
       renderTaskModelSelectionSection();
       setWritingPolicyView("home");
       loadWritingPolicySummary();
+      setMaterialImportVisible(false);
       return;
     }
+
+    if (requestedMode === "materialImport") {
+      switchView("home");
+      setMaterialImportVisible(true);
+      byId("btn-apply").hidden = true;
+      byId("btn-run-primary").hidden = true;
+      return;
+    }
+    setMaterialImportVisible(false);
 
     switchView("home");
     renderWorkflowProfileStrip();
@@ -2407,6 +2479,7 @@
       ["/word/", "/excel/", "/ppt/"].some(function (prefix) {
         return path.indexOf(prefix) === 0;
       }) &&
+      path !== "/word/materials" &&
       !state.modelTasksAllowed
     ) {
       blockedCode = "ADAPTER_RECOVERY_MODE";
@@ -12390,6 +12463,10 @@
     byId("btn-writing-policy-more-import").addEventListener("click", openWritingPolicyImport);
     byId("btn-writing-policy-import-back").addEventListener("click", closeWritingPolicyImport);
     byId("writing-policy-import-file").addEventListener("change", handleWritingPolicyImportFileChange);
+    var materialImportFile = byId("material-import-file");
+    if (materialImportFile) {
+      materialImportFile.addEventListener("change", handleMaterialImportFileChange);
+    }
     byId("btn-preview-writing-policy-import").addEventListener("click", previewWritingPolicyImport);
     byId("writing-policy-import-conflict-list").addEventListener("change", handleWritingPolicyConflictDecision);
     byId("btn-apply-writing-policy-import").addEventListener("click", applyWritingPolicyImport);
