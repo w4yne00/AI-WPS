@@ -83,7 +83,10 @@ from app.services.word.deterministic_format_review import (
 )
 from app.services.word.full_document_review import full_document_review_service
 from app.services.word.material_import import WordMaterialImportService
-from app.services.word.material_composer import MaterialComposerJobs
+from app.services.word.material_composer import (
+    MATERIAL_COMPOSER_REQUEST_MAX_BYTES,
+    MaterialComposerJobs,
+)
 from app.services.word.rewriter import WordRewriter
 from app.services.word.smart_imitator import WordSmartImitator
 from app.services.template_loader import TemplateLoader
@@ -2410,6 +2413,31 @@ class Handler(BaseHTTPRequestHandler):
                         errors=[
                             {
                                 "code": "EXCEL_SMART_FILL_REQUEST_TOO_LARGE",
+                                "message": message,
+                            }
+                        ],
+                    ),
+                )
+                return
+            if (
+                path == "/word/material-composer/jobs"
+                or (
+                    path.startswith("/word/material-composer/jobs/")
+                    and path.endswith("/cancel")
+                )
+            ) and length > MATERIAL_COMPOSER_REQUEST_MAX_BYTES:
+                self.close_connection = True
+                message = "资料章节草稿请求超过 64 KiB 限制。"
+                self._write(
+                    413,
+                    envelope(
+                        new_trace_id("standalone-material-composer"),
+                        "word.material_composer",
+                        success=False,
+                        message=message,
+                        errors=[
+                            {
+                                "code": "MATERIAL_COMPOSER_REQUEST_TOO_LARGE",
                                 "message": message,
                             }
                         ],

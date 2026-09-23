@@ -61,6 +61,18 @@ test('missing uncertain job can be explicitly retried with its existing client i
  const h=harness(); h.api.setMaterial({materialId:'m1'}); h.error=true; await h.api.start({sectionTitle:'范围',instruction:'编写'}); const clientId=h.calls[0].body.clientJobId;
  const reopened=harness(h.saved); reopened.respond=()=>Promise.reject(Object.assign(Error('not found'),{status:404})); await reopened.api.restore(); assert.equal(reopened.calls.length,1); assert.equal(reopened.last().status,'idle'); reopened.respond=null; await reopened.api.start({sectionTitle:'范围',instruction:'编写'}); assert.equal(reopened.calls[1].body.clientJobId,clientId);
 });
+test('reopened uncertain job keeps its original input after a missing query and later edits', async () => {
+ const h=harness(); h.api.setMaterial({materialId:'m1'}); h.error=true; await h.api.start({sectionTitle:'原章节',instruction:'原要求'});
+ const reopened=harness(h.saved); reopened.respond=()=>Promise.reject(Object.assign(Error('not found'),{status:404})); await reopened.api.restore(); reopened.respond=null;
+ await reopened.api.start({sectionTitle:'新章节',instruction:'新要求'});
+ assert.equal(reopened.calls[1].body.sectionTitle,'原章节'); assert.equal(reopened.calls[1].body.instruction,'原要求');
+});
+test('reopened uncertain job can retry its original input after restored fields are cleared', async () => {
+ const h=harness(); h.api.setMaterial({materialId:'m1'}); h.error=true; await h.api.start({sectionTitle:'原章节',instruction:'原要求'});
+ const reopened=harness(h.saved); reopened.respond=()=>Promise.reject(Object.assign(Error('not found'),{status:404})); await reopened.api.restore(); reopened.respond=null;
+ await reopened.api.start({sectionTitle:'',instruction:''});
+ assert.equal(reopened.calls[1].body.sectionTitle,'原章节'); assert.equal(reopened.calls[1].body.instruction,'原要求');
+});
 test('render separates each paragraph from its source sidebar and safely displays markup as text', () => {
  const context={window:{}}; vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../wps-ai-assistant_1.0.0/material-composer.js'),'utf8'),context);
  const document={createElement(tag){return {tagName:tag,children:[],appendChild(child){this.children.push(child);},textContent:'',className:''};}};

@@ -48,6 +48,57 @@ test('a completed result for another document cannot change the visible pane', (
   view({documentSessionId:'doc-a',status:'completed',result:{plainText:'A'}});
 });
 
+test('an uncertain restored request repopulates its locked chapter and instruction', () => {
+  const nodes = {
+    'material-composer-status': {textContent:''},
+    'material-import-file': {disabled:false},
+    'material-section-title': {value:'',disabled:false},
+    'material-instruction': {value:'',disabled:false},
+    'btn-material-selection': {disabled:false},
+    'btn-material-generate': {disabled:false},
+    'btn-material-cancel': {disabled:false},
+    'btn-material-copy': {disabled:false},
+    'material-composer-result': {}
+  };
+  const view = load('renderMaterialComposerView', {
+    getMaterialComposerSessionId: () => 'doc-a',
+    byId: id => nodes[id],
+    window: {renderMaterialComposer() {}}
+  });
+  view({documentSessionId:'doc-a',clientJobId:'composer-1',jobId:'',status:'idle',busy:false,result:null,input:{sectionTitle:'原章节',instruction:'原要求'}});
+  assert.equal(nodes['material-section-title'].value,'原章节');
+  assert.equal(nodes['material-instruction'].value,'原要求');
+});
+
+test('the latest material selection wins when reads finish out of order in one document', async () => {
+  const nodes = {
+    'material-import-status': {textContent:''},
+    'material-import-result': {}
+  };
+  const pending = {};
+  const accepted = [];
+  const context = {
+    byId: id => nodes[id],
+    getMaterialComposerSessionId: () => 'doc-a',
+    materialImportRequestSequences: {},
+    ensureMaterialComposer: () => ({setMaterial(reading) { accepted.push(reading.materialId); }}),
+    request() {},
+    window: {
+      readMaterialFile(file) { return new Promise(resolve => { pending[file.name] = resolve; }); },
+      submitMaterialImport(input) { return Promise.resolve({materialId:input.fileName,documentSessionId:input.documentSessionId}); },
+      renderMaterialReading() {}
+    }
+  };
+  const importFile = load('handleMaterialImportFileChange', context);
+  importFile({target:{files:[{name:'A.docx',type:'',size:1}]}});
+  importFile({target:{files:[{name:'B.docx',type:'',size:1}]}});
+  pending['B.docx']('B');
+  await new Promise(resolve => setImmediate(resolve));
+  pending['A.docx']('A');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(accepted,['B.docx']);
+});
+
 test('real pane generates and restores a read-only chapter with source sidebar in a narrow viewport', t => {
   const {execFileSync} = require('node:child_process');
   const os = require('node:os');

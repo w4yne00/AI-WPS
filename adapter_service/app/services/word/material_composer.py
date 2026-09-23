@@ -12,6 +12,7 @@ from app.services.model_configurations import direct_model_input_budget, DEFAULT
 from app.services.system_prompts import SystemPromptStore
 
 TASK_TYPE = 'word.material_composer'
+MATERIAL_COMPOSER_REQUEST_MAX_BYTES = 64 * 1024
 
 
 class MaterialComposerJobs:

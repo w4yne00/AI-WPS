@@ -57,6 +57,33 @@ def test_over_budget_rejected_before_model_call():
     assert response.json()['errors'][0]['code'] == 'MODEL_INPUT_OVER_BUDGET'
 
 
+def test_composer_api_rejects_oversized_body_before_parsing():
+    response = TestClient(app).post(
+        '/word/material-composer/jobs',
+        content=b'{}',
+        headers={
+            'Content-Type': 'application/json',
+            'Content-Length': str(64 * 1024 + 1),
+        },
+    )
+    assert response.status_code == 413
+    assert response.json()['errors'][0]['code'] == 'MATERIAL_COMPOSER_REQUEST_TOO_LARGE'
+
+
+def test_standalone_composer_rejects_oversized_body_before_parsing():
+    import standalone_adapter as standalone
+    from tests.test_word_material_import import _invoke_standalone
+    response = _invoke_standalone(
+        standalone,
+        'do_POST',
+        '/word/material-composer/jobs',
+        {},
+        headers={'Content-Length': str(64 * 1024 + 1)},
+    )
+    assert response['status'] == 413
+    assert response['body']['errors'][0]['code'] == 'MATERIAL_COMPOSER_REQUEST_TOO_LARGE'
+
+
 def test_standalone_completed_result_and_cancel_are_session_isolated():
     import standalone_adapter as standalone
     from tests.test_word_material_import import _invoke_standalone

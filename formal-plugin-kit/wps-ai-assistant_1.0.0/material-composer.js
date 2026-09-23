@@ -71,8 +71,10 @@ function createMaterialComposer(options) {
     start: async function (input) {
       var s = current();
       if (s.busy || (s.jobId && active(s))) { show(s); return; }
-      if (!s.materialId || !s.documentSessionId || !input.sectionTitle.trim() || !input.instruction.trim()) { s.error = '请先导入资料，并填写章节标题和编写要求。'; show(s); return; }
-      if (!(s.clientJobId && !s.jobId && active(s))) s.input = { sectionTitle: input.sectionTitle, instruction: input.instruction };
+      var retryingUncertain = Boolean(s.clientJobId && !s.jobId);
+      var selectedInput = retryingUncertain ? s.input : input;
+      if (!s.materialId || !s.documentSessionId || !selectedInput || typeof selectedInput.sectionTitle !== 'string' || typeof selectedInput.instruction !== 'string' || !selectedInput.sectionTitle.trim() || !selectedInput.instruction.trim()) { s.error = '请先导入资料，并填写章节标题和编写要求。'; show(s); return; }
+      if (!retryingUncertain) s.input = { sectionTitle: selectedInput.sectionTitle, instruction: selectedInput.instruction };
       // Keep the idempotency key after an uncertain submission so a retry cannot create another job.
       if (s.jobId || !s.clientJobId) s.clientJobId = 'composer-' + Date.now() + '-' + Math.random().toString(36).slice(2);
       s.jobId = ''; s.result = null; s.status = 'queued'; persist(s);

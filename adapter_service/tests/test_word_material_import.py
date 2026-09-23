@@ -237,12 +237,13 @@ class WordMaterialImportApiTests(unittest.TestCase):
         self.assertFalse(viewed["body"]["data"]["understandsAllContent"])
 
 
-def _invoke_standalone(module, method, path, payload=None):
+def _invoke_standalone(module, method, path, payload=None, headers=None):
     captured = {}
     handler = object.__new__(module.Handler)
     handler.path = path
     raw = json.dumps(payload or {}, ensure_ascii=False).encode("utf-8")
     handler.headers = {"Content-Length": str(len(raw))}
+    handler.headers.update(headers or {})
     handler.rfile = BytesIO(raw)
     handler._write = lambda status, body: captured.update(status=status, body=body)
     getattr(handler, method)()
@@ -255,4 +256,3 @@ def _paragraph_document(text):
         '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
         "<w:body><w:p><w:r><w:t>{0}</w:t></w:r></w:p></w:body></w:document>"
     ).format(text).encode("utf-8")
-

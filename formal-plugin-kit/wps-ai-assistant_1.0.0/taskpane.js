@@ -1820,6 +1820,7 @@
 
   var materialComposer = null;
   var materialComposerSession = "";
+  var materialImportRequestSequences = {};
 
   function getMaterialComposerSessionId() {
     var activeDocument = getActiveDocument();
@@ -1845,6 +1846,10 @@
   function renderMaterialComposerView(view) {
     if (view.documentSessionId !== getMaterialComposerSessionId()) {
       return;
+    }
+    if ((view.clientJobId || view.jobId) && view.input) {
+      byId("material-section-title").value = view.input.sectionTitle || "";
+      byId("material-instruction").value = view.input.instruction || "";
     }
     var busy = view.busy || (Boolean(view.jobId) && ["queued", "running", "cancelling"].indexOf(view.status) >= 0);
     byId("material-composer-status").textContent = view.error || view.message || "资料仅用于本次章节草稿；请核对结果中的出处和缺项。";
@@ -1927,7 +1932,12 @@
       status.textContent = "正在读取资料，不会修改原文件或当前文档。";
     }
     var sessionId = getMaterialComposerSessionId();
+    var requestSequence = (materialImportRequestSequences[sessionId] || 0) + 1;
+    materialImportRequestSequences[sessionId] = requestSequence;
     window.readMaterialFile(file).then(function (contentBase64) {
+      if (materialImportRequestSequences[sessionId] !== requestSequence) {
+        return null;
+      }
       return window.submitMaterialImport({
         fileName: file.name,
         mimeType: file.type || "",
@@ -1937,6 +1947,7 @@
         request: request
       });
     }).then(function (reading) {
+      if (!reading || materialImportRequestSequences[sessionId] !== requestSequence) { return; }
       ensureMaterialComposer().setMaterial(reading);
       if (sessionId !== getMaterialComposerSessionId()) { return; }
       window.renderMaterialReading(result, reading);
@@ -1944,7 +1955,7 @@
         status.textContent = "读取结果已显示。资料原文件和当前文档未修改。";
       }
     }).catch(function (error) {
-      if (status) {
+      if (materialImportRequestSequences[sessionId] === requestSequence && status) {
         status.textContent = (error && error.message) || "资料导入失败。";
       }
     });
@@ -5490,7 +5501,8 @@
             return { superseded: true };
           }
           setWorkflowProfileMutationBusy(false);
-          var taskLabel = taskType === "word.format_review" ? "格式审查" : (taskType === "word.document_review" ? "文档审查" : (taskType === "word.smart_imitation" ? "智能仿写" : "智能编写"));
+          var taskDefinition = TASK_API_KEY_DEFS.find(function (item) { return item.taskType === taskType; });
+          var taskLabel = taskDefinition ? taskDefinition.label : "智能编写";
           setStatus(taskLabel + "接入直连服务已保存并设为当前。");
           if (statusNode) {
             statusNode.textContent = "已保存并设为当前。";
