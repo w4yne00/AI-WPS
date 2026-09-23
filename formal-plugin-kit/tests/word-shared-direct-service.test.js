@@ -803,6 +803,39 @@ test("task selection save atomically activates and synchronizes preflight state"
   assert.strictEqual(ctx.validateActiveDirectTaskSelection("word.smart_write").applicable, true);
 });
 
+test("material composer model save reports the material composer task name", async () => {
+  const vm = require("node:vm");
+  const start = js.indexOf("function saveTaskModelSelection(");
+  const end = js.indexOf("\n  function ", start + 3);
+  const statuses = [];
+  const state = {
+    workflowProfileMutationBusy: false,
+    directServiceOperationId: 0,
+    workflowProfileSelections: {},
+    taskModelSelections: {},
+    taskApiKeys: {}
+  };
+  const context = {
+    state,
+    TASK_API_KEY_DEFS: [{taskType:"word.material_composer",label:"资料章节草稿"}],
+    helpers: {validateTaskModelSelectionDraft() { return {ok:true}; }},
+    getTaskModelSelectionDraft() { return {serviceId:"direct_svc_1",modelName:"model-a",customModel:false}; },
+    getSettingsWorkflowTaskType() { return "word.material_composer"; },
+    findDirectService() { return {id:"direct_svc_1"}; },
+    byId() { return {textContent:""}; },
+    setWorkflowProfileMutationBusy(value) { state.workflowProfileMutationBusy = value; },
+    setStatus(message) { statuses.push(message); },
+    request() { return Promise.resolve({data:{taskModelSelection:{modelName:"model-a"}}}); },
+    loadWorkflowProfiles() { return Promise.resolve(); },
+    loadDirectServices() { return Promise.resolve(); },
+    describeFetchError(error) { return error.message; },
+    encodeURIComponent
+  };
+  const save = vm.runInNewContext(`(${js.slice(start,end)})`, context);
+  await save();
+  assert.equal(statuses.at(-1),"资料章节草稿接入直连服务已保存并设为当前。");
+});
+
 test("formal direct-service event binding invokes the production handlers", () => {
   const ids = [
     "btn-new-direct-service",

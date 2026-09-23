@@ -20,6 +20,7 @@ from app.core.logging import get_logger
 from app.core.tracing import new_trace_id
 from app.services.provider_client import record_provider_debug
 from app.services.health import get_operation_block
+from app.services.word.material_composer import MATERIAL_COMPOSER_REQUEST_MAX_BYTES
 
 app = FastAPI(title="wps-ai-adapter", version="0.23.1-alpha")
 app.include_router(health_router)
@@ -171,6 +172,54 @@ class SmartFillBodyLimitMiddleware(FullDocumentReviewBodyLimitMiddleware):
                 "data": {},
                 "errors": [{
                     "code": "EXCEL_SMART_FILL_REQUEST_TOO_LARGE",
+                    "message": message,
+                }],
+            },
+        )
+        response.headers["X-Trace-Id"] = trace_id
+        logger.warning(
+            "traceId=%s method=%s path=%s status=413 receivedBytes=%s",
+            trace_id, scope.get("method", ""), scope.get("path", ""), received,
+        )
+        _log_http_duration(
+            trace_id,
+            scope.get("method", ""),
+            scope.get("path", ""),
+            413,
+            started_at,
+        )
+        await response(scope, self._empty_receive, send)
+
+
+class MaterialComposerBodyLimitMiddleware(FullDocumentReviewBodyLimitMiddleware):
+    @staticmethod
+    def _is_full_review_mutation(scope) -> bool:
+        path = str(scope.get("path", ""))
+        return bool(
+            scope.get("type") == "http"
+            and scope.get("method") == "POST"
+            and (
+                path == "/word/material-composer/jobs"
+                or (
+                    path.startswith("/word/material-composer/jobs/")
+                    and path.endswith("/cancel")
+                )
+            )
+        )
+
+    async def _reject(self, scope, send, received: int, started_at: float) -> None:
+        trace_id = WritingPolicyImportBodyLimitMiddleware._trace_id(scope)
+        message = "资料章节草稿请求超过 64 KiB 限制。"
+        response = JSONResponse(
+            status_code=413,
+            content={
+                "success": False,
+                "traceId": trace_id,
+                "taskType": "word.material_composer",
+                "message": message,
+                "data": {},
+                "errors": [{
+                    "code": "MATERIAL_COMPOSER_REQUEST_TOO_LARGE",
                     "message": message,
                 }],
             },
@@ -473,6 +522,10 @@ app.add_middleware(
     max_bytes=SMART_FILL_REQUEST_MAX_BYTES,
 )
 app.add_middleware(
+    MaterialComposerBodyLimitMiddleware,
+    max_bytes=MATERIAL_COMPOSER_REQUEST_MAX_BYTES,
+)
+app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=False,
@@ -525,6 +578,8 @@ def _task_type_from_path(path: str) -> str:
         return "word.document_review"
     if path.startswith("/word/smart-write/jobs/"):
         return "word.smart_write"
+    if path.startswith("/word/material-composer/jobs"):
+        return "word.material_composer"
     if path.startswith("/word/smart-imitation/jobs/"):
         return "word.smart_imitation"
     if path == "/word/materials" or path.startswith("/word/materials/"):

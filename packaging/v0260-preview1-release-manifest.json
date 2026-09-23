@@ -30,7 +30,7 @@
       "direct_model"
     ],
     "systemPromptManifest": "packages/adapter-start-kit/adapter_service/system_prompts/manifest.json",
-    "systemPromptCount": 9,
+    "systemPromptCount": 10,
     "pythonRuntimeGate": "scripts/python38_delivery_runtime_gate.py",
     "lifecycleGate": "scripts/python38_delivery_lifecycle_gate.py",
     "minimumPython": "3.8",

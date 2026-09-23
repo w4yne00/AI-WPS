@@ -133,6 +133,21 @@
       "source": "packaging/python38_preview1_delivery_lifecycle_gate.py",
       "target": "scripts/python38_delivery_lifecycle_gate.py",
       "replace": true
+    },
+    {
+      "type": "file",
+      "source": "adapter_service/app/services/word/material_composer.py",
+      "target": "packages/adapter-start-kit/adapter_service/app/services/word/material_composer.py"
+    },
+    {
+      "type": "file",
+      "source": "adapter_service/system_prompts/word-material-composer.md",
+      "target": "packages/adapter-start-kit/adapter_service/system_prompts/word-material-composer.md"
+    },
+    {
+      "type": "file",
+      "source": "formal-plugin-kit/wps-ai-assistant_1.0.0/material-composer.js",
+      "target": "packages/wps-ai-assistant_1.0.0/material-composer.js"
     }
   ]
 }

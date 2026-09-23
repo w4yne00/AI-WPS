@@ -21,6 +21,7 @@ from app.services.word.full_document_review import full_document_review_service
 from app.services.word.smart_imitator import WordSmartImitator
 from app.services.word.rewriter import WordRewriter
 from app.services.word.material_import import WordMaterialImportService
+from app.services.word.material_composer import MaterialComposerJobs
 from app.services.word.writing_jobs import (
     SmartImitationJobStore,
     SmartWriteJobStore,
@@ -35,6 +36,7 @@ document_review_jobs = DocumentReviewJobStore(document_reviewer)
 smart_write_jobs = SmartWriteJobStore(rewriter)
 smart_imitation_jobs = SmartImitationJobStore(smart_imitator)
 material_import_service = WordMaterialImportService()
+material_composer_jobs = MaterialComposerJobs(material_import_service)
 logger = get_logger(__name__)
 
 
@@ -665,3 +667,21 @@ def _deterministic_format_review_envelope(
         "data": data,
         "errors": [],
     }
+
+
+@router.post('/word/material-composer/jobs')
+def start_material_composer(request: dict):
+    job = material_composer_jobs.start(request, new_trace_id('word-material-composer'))
+    return _material_envelope(job, trace_id=job['traceId'], message=job['status'])
+
+
+@router.get('/word/material-composer/jobs/{job_id}')
+def get_material_composer(job_id: str, documentSessionId: str = ''):
+    job = material_composer_jobs.get(job_id, documentSessionId)
+    return _material_envelope(job, trace_id=job['traceId'], message=job['status'])
+
+
+@router.post('/word/material-composer/jobs/{job_id}/cancel')
+def cancel_material_composer(job_id: str, request: dict):
+    job = material_composer_jobs.cancel(job_id, request.get('documentSessionId', ''))
+    return _material_envelope(job, trace_id=job['traceId'], message=job['status'])

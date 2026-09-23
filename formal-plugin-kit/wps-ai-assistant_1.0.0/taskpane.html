@@ -44,7 +44,23 @@
             <input id="material-import-file" type="file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" />
           </label>
           <p id="material-import-status" aria-live="polite">选择一份 DOCX 后查看读取结果。不会修改资料原文件或当前文档。</p>
-          <div id="material-import-result"></div>
+          <details><summary>查看资料读取结果</summary><div id="material-import-result"></div></details>
+          <label class="field" for="material-section-title"><span>目标章节</span>
+            <textarea id="material-section-title" rows="2" placeholder="填写章节名称，或读取文档中选中的章节标题"></textarea>
+          </label>
+          <button id="btn-material-selection" class="ghost-action" type="button">读取选中的章节</button>
+          <label class="field" for="material-instruction"><span>写作要求</span>
+            <textarea id="material-instruction" rows="3" placeholder="说明本章节的结构、篇幅和语气要求"></textarea>
+          </label>
+          <p class="field-hint">本阶段使用一份可放入单次模型输入的资料。已有正文和历史回答不作为事实来源；草稿仅预览和复制。</p>
+          <div class="material-actions">
+            <button id="btn-material-generate" type="button">生成章节草稿</button>
+            <button id="btn-material-cancel" class="ghost-action" type="button" disabled>取消任务</button>
+            <button id="btn-material-refresh" class="ghost-action" type="button">恢复查询</button>
+            <button id="btn-material-copy" class="ghost-action" type="button" disabled>复制正文</button>
+          </div>
+          <p id="material-composer-status" role="status" aria-live="polite"></p>
+          <div id="material-composer-result"></div>
         </section>
 
         <section class="controls glass-card">
@@ -851,6 +867,7 @@
     </div>
     <script src="./taskpane-helpers.js?v=0.23.1-alpha"></script>
     <script src="./material-import.js?v=0.23.1-alpha"></script>
+    <script src="./material-composer.js?v=0.23.1-alpha"></script>
     <script src="./taskpane.js?v=0.23.1-alpha"></script>
   </body>
 </html>

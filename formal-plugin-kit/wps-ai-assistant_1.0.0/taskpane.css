@@ -2523,6 +2523,23 @@ body[data-task-mode="smartWrite"] #result-output {
   gap: 8px;
 }
 
+/* 资料章节草稿：沿用任务窗格控件，正文与依据保持可辨识。 */
+#material-import-panel { display: grid; gap: 12px; }
+#material-import-panel[hidden] { display: none; }
+#material-import-result { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 240px; overflow-y: auto; }
+.material-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+#material-composer-result { white-space: pre-wrap; overflow-wrap: anywhere; }
+#material-composer-result aside { padding: 10px 12px; border-left: 2px solid #b6c8da; background: rgba(225, 235, 244, .35); font-size: 12px; }
+body[data-task-mode="materialImport"] #home-view > .controls,
+body[data-task-mode="materialImport"] #scope-strip { display: none; }
+body[data-task-mode="materialImport"] #word-result-section { display: none; }
+.material-composer-paragraph { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 12px; margin: 16px 0; }
+.material-composer-body { margin: 0; line-height: 1.7; }
+.material-composer-missing { color: #80551c; }
+@media (max-width: 380px) {
+  .material-composer-paragraph { grid-template-columns: minmax(0, 1fr); }
+}
+
 /* Shared restrained settings and interaction treatment. */
 .model-interface-card,
 .workflow-settings-card,

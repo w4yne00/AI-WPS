@@ -46,6 +46,11 @@
       "version": "2026-08-10.1",
       "file": "ppt-structure-review.md",
       "sha256": "bdeafe95523c36139f2359dfc6f028a57dd27fd05eb4f64210f9c833384a895b"
+    },
+    "word.material_composer": {
+      "version": "2026-09-23.1",
+      "file": "word-material-composer.md",
+      "sha256": "995ea5c74acbaf9280251c58328ca359652bb74ca964dfa65ab57db7dcfdfafc"
     }
   },
   "stages": {
