@@ -105,7 +105,8 @@ function createMaterialComposer(options) {
       if (target && (target.isFullDocument || target.targetType === 'document')) {
         throw new Error('章节草稿仅支持替换选区或光标插入，禁止全篇替换。');
       }
-      var mode = (target && target.selectionText && target.selectionText.trim()) ? 'replace' : 'insert';
+      var mode = target && (target.hasSelection === true ||
+        (target.hasSelection !== false && target.selectionText && target.selectionText.trim())) ? 'replace' : 'insert';
       if (typeof options.applyText !== 'function') {
         throw new Error('未配置文档写入处理器。');
       }

@@ -113,6 +113,13 @@ test('explicit confirmation applies draft to selection or cursor, and rejects fu
  assert.equal(h.applied.length,2);
 });
 
+test('a noncollapsed whitespace selection is replacement rather than cursor insertion', async () => {
+ const h=harness(); h.api.setMaterial({materialId:'m1'}); await h.api.start({sectionTitle:'第一章',instruction:'编写'});
+ h.response={success:true,data:{jobId:'job-a',status:'succeeded',documentSessionId:'doc-a',result:result()}}; await h.api.refresh();
+ await h.api.apply({sectionTitle:'第一章',selectionText:'',hasSelection:true});
+ assert.equal(h.applied[0].options.mode,'replace');
+});
+
 test('target chapter change pauses replacement and preserves draft', async () => {
  const h=harness(); h.api.setMaterial({materialId:'m1'}); await h.api.start({sectionTitle:'第一章',instruction:'编写'});
  h.response={success:true,data:{jobId:'job-a',status:'succeeded',documentSessionId:'doc-a',result:result()}}; await h.api.refresh();
