@@ -83,7 +83,51 @@ function createMaterialComposer(options) {
     refresh: refresh,
     restore: async function () { var s = current(); show(s); if (s.jobId || s.clientJobId) await refresh(); },
     cancel: async function () { var s = current(); if (!s.jobId || s.busy || !active(s)) return; await execute(s, '/word/material-composer/jobs/' + encodeURIComponent(s.jobId) + '/cancel', { documentSessionId: s.documentSessionId }, 'POST'); },
-    copy: async function () { var s = current(); if (s.status === 'succeeded' && validResult(s.result, s.documentSessionId)) await options.copyText(s.result.plainText); }
+    copy: async function () { var s = current(); if (s.status === 'succeeded' && validResult(s.result, s.documentSessionId)) await options.copyText(s.result.plainText); },
+    apply: async function (target) {
+      var s = current();
+      if (target && target.documentSessionId && target.documentSessionId !== options.getSessionId()) {
+        throw new Error('当前活动文档与草稿所属文档不一致，已阻止写入。');
+      }
+      if (options.getSessionId() !== s.documentSessionId) {
+        throw new Error('当前活动文档与草稿所属文档不一致，已阻止写入。');
+      }
+      if (s.status !== 'succeeded' || !validResult(s.result, s.documentSessionId)) {
+        throw new Error('当前没有可写入的章节草稿。');
+      }
+      var currentSection = (target && typeof target.sectionTitle === 'string') ? target.sectionTitle.trim() : '';
+      var originalSection = (s.input && typeof s.input.sectionTitle === 'string') ? s.input.sectionTitle.trim() : '';
+      if (currentSection && originalSection && currentSection !== originalSection) {
+        s.error = '生成期间目标章节已变更，已暂停替换。请重新确认目标章节或重新生成。';
+        show(s);
+        throw new Error(s.error);
+      }
+      if (target && (target.isFullDocument || target.targetType === 'document')) {
+        throw new Error('章节草稿仅支持替换选区或光标插入，禁止全篇替换。');
+      }
+      var mode = (target && target.selectionText && target.selectionText.trim()) ? 'replace' : 'insert';
+      if (typeof options.applyText !== 'function') {
+        throw new Error('未配置文档写入处理器。');
+      }
+      try {
+        var applied = await options.applyText(s.result.plainText, {
+          mode: mode,
+          selectionText: (target && target.selectionText) || '',
+          documentSessionId: s.documentSessionId
+        });
+        if (!applied) {
+          throw new Error('文档写入未完成，请点击「复制正文」后手动粘贴。');
+        }
+        s.error = '';
+        s.phaseLabel = mode === 'replace' ? '章节草稿已替换至所选区域。' : '章节草稿已插入至光标位置。';
+        show(s);
+        return { ok: true, mode: mode };
+      } catch (error) {
+        s.error = (error && error.message) || '写入失败，请点击「复制正文」后手动粘贴。';
+        show(s);
+        throw error;
+      }
+    }
   };
 }
 function renderMaterialComposer(root, view) {

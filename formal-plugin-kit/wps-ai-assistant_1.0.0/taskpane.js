@@ -1820,6 +1820,7 @@
 
   var materialComposer = null;
   var materialComposerSession = "";
+  var lastMaterialComposerView = null;
   var materialImportRequestSequences = {};
 
   function getMaterialComposerSessionId() {
@@ -1837,6 +1838,14 @@
         render: renderMaterialComposerView,
         copyText: function (text) {
           writeClipboardText(text, "章节草稿已复制。");
+        },
+        applyText: function (text) {
+          var activeDoc = (typeof getActiveDocument === "function") ? getActiveDocument() : null;
+          var writable = (activeDoc && typeof getWritableSelection === "function") ? getWritableSelection(activeDoc) : null;
+          if (!writable || typeof writeTextToTarget !== "function") {
+            return false;
+          }
+          return writeTextToTarget(writable, text);
         }
       });
     }
@@ -1847,17 +1856,36 @@
     if (view.documentSessionId !== getMaterialComposerSessionId()) {
       return;
     }
-    if ((view.clientJobId || view.jobId) && view.input) {
+    lastMaterialComposerView = view;
+    var busy = view.busy || (Boolean(view.jobId) && ["queued", "running", "cancelling"].indexOf(view.status) >= 0);
+    if ((view.clientJobId || view.jobId) && view.input && (busy || !byId("material-section-title").value)) {
       byId("material-section-title").value = view.input.sectionTitle || "";
       byId("material-instruction").value = view.input.instruction || "";
     }
-    var busy = view.busy || (Boolean(view.jobId) && ["queued", "running", "cancelling"].indexOf(view.status) >= 0);
     byId("material-composer-status").textContent = view.error || view.message || "资料仅用于本次章节草稿；请核对结果中的出处和缺项。";
     ["material-import-file", "material-section-title", "material-instruction", "btn-material-selection", "btn-material-generate"].forEach(function (id) {
       byId(id).disabled = busy;
     });
     byId("btn-material-cancel").disabled = !busy;
     byId("btn-material-copy").disabled = !view.result;
+
+    var activeDoc = (typeof getActiveDocument === "function") ? getActiveDocument() : null;
+    var currentSelText = (activeDoc && typeof getSelectionText === "function") ? getSelectionText(activeDoc) : "";
+    var hasSelection = Boolean(currentSelText && String(currentSelText).trim());
+    var applyBtn = byId("btn-material-apply");
+    if (applyBtn) {
+      applyBtn.textContent = hasSelection ? "替换所选内容" : "在光标处插入";
+      var currentSection = (byId("material-section-title") && byId("material-section-title").value || "").trim();
+      var targetSection = (view.input && view.input.sectionTitle || "").trim();
+      var sectionChanged = Boolean(currentSection && targetSection && currentSection !== targetSection);
+      if (sectionChanged) {
+        applyBtn.disabled = true;
+        byId("material-composer-status").textContent = "生成期间目标章节已变更，已暂停替换。请重新选择目标或重新生成。";
+      } else {
+        applyBtn.disabled = busy || !view.result || view.status !== "succeeded";
+      }
+    }
+
     window.renderMaterialComposer(byId("material-composer-result"), view);
   }
 
@@ -1885,6 +1913,33 @@
     byId("material-composer-status").textContent = "已读取所选章节；该内容仅用于确定写作目标，不作为事实来源。";
   }
 
+  function applyMaterialComposerResult() {
+    var document = (typeof getActiveDocument === "function") ? getActiveDocument() : null;
+    var currentDocSession = (typeof getMaterialComposerSessionId === "function") ? getMaterialComposerSessionId() : "";
+    var composer = ensureMaterialComposer();
+    var activeSelection = (document && typeof getWritableSelection === "function") ? getWritableSelection(document) : null;
+    var selectionText = (document && typeof getSelectionText === "function") ? getSelectionText(document) : "";
+    var currentSection = (byId("material-section-title") && byId("material-section-title").value || "").trim();
+
+    if (!activeSelection) {
+      byId("material-composer-status").textContent = "未找到可写入的选区或光标位置，请先在文档中定位光标或选中目标段落。";
+      return Promise.resolve();
+    }
+    return composer.apply({
+      sectionTitle: currentSection,
+      selectionText: selectionText,
+      documentSessionId: currentDocSession
+    }).then(function (res) {
+      if (res && res.mode === "replace") {
+        byId("material-composer-status").textContent = "章节草稿已替换至所选区域。";
+      } else {
+        byId("material-composer-status").textContent = "章节草稿已插入至光标位置。";
+      }
+    }).catch(function (error) {
+      byId("material-composer-status").textContent = (error && error.message) || "写入失败，未能写入文档。草稿正文已保留，您可点击「复制正文」后手动粘贴。";
+    });
+  }
+
   function syncMaterialComposerSession() {
     if (state.currentMode !== "materialImport") {
       return;
@@ -1896,6 +1951,10 @@
       byId("material-import-file").value = "";
       byId("material-section-title").value = "";
       byId("material-instruction").value = "";
+      var applyBtn = byId("btn-material-apply");
+      if (applyBtn) {
+        applyBtn.disabled = true;
+      }
       byId("material-import-status").textContent = "资料与当前文档会话分别管理；服务重启后需重新导入。";
       ensureMaterialComposer().restore();
     }
@@ -12568,6 +12627,20 @@
     byId("btn-material-cancel").addEventListener("click", function () { ensureMaterialComposer().cancel(); });
     byId("btn-material-refresh").addEventListener("click", function () { ensureMaterialComposer().refresh(); });
     byId("btn-material-copy").addEventListener("click", function () { ensureMaterialComposer().copy(); });
+    var btnMaterialApply = byId("btn-material-apply");
+    if (btnMaterialApply) {
+      btnMaterialApply.addEventListener("click", applyMaterialComposerResult);
+    }
+    var materialSectionTitle = byId("material-section-title");
+    if (materialSectionTitle) {
+      ["input", "change"].forEach(function (ev) {
+        materialSectionTitle.addEventListener(ev, function () {
+          if (lastMaterialComposerView) {
+            renderMaterialComposerView(lastMaterialComposerView);
+          }
+        });
+      });
+    }
     var materialImportFile = byId("material-import-file");
     if (materialImportFile) {
       materialImportFile.addEventListener("change", handleMaterialImportFileChange);

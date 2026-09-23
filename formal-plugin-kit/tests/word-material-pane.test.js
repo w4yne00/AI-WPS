@@ -144,9 +144,169 @@ window.fetch=async function(url,options){
     assert.ok(run('get','text','#material-composer-result').includes('资料.docx'));
     assert.equal(run('eval',`String(document.querySelectorAll('#material-composer-result .material-composer-sources').length)`).trim(),'"1"');
     assert.equal(run('eval',`document.documentElement.scrollWidth <= innerWidth && getComputedStyle(document.getElementById('word-result-section')).display === "none"`).trim(), 'true');
+    assert.equal(run('eval',`document.getElementById('btn-material-apply').disabled`).trim(), 'false');
+    assert.equal(run('get','text','#btn-material-apply').trim(), '替换所选内容');
+    run('click','#btn-material-apply');
+    assert.ok(run('get','text','#material-composer-status').includes('章节草稿已替换至所选区域'));
+    assert.equal(run('eval',`window.Application.ActiveDocument.Selection.Text`).trim(), '"信息化处负责。〔待补充：完成时间〕"');
+    run('fill','#material-section-title','已修改的新目标');
+    assert.equal(run('eval',`document.getElementById('btn-material-apply').disabled`).trim(), 'true');
+    assert.ok(run('get','text','#material-composer-status').includes('生成期间目标章节已变更，已暂停替换'));
     run('reload');
     run('wait','--text','信息化处负责。');
     const after=run('eval',`JSON.stringify(requests.filter(r=>r.path==='/word/material-composer/jobs'))`);
     assert.ok(after.includes('[]'),after);
   } finally { try {run('close');} finally {fs.rmSync(temp,{recursive:true,force:true});} }
+});
+
+test('renderMaterialComposerView dynamically adapts btn-material-apply text and enables it only for succeeded result', () => {
+  const nodes = {
+    'material-composer-status': {textContent:''},
+    'material-import-file': {disabled:false},
+    'material-section-title': {value:'第一章',disabled:false},
+    'material-instruction': {value:'要求',disabled:false},
+    'btn-material-selection': {disabled:false},
+    'btn-material-generate': {disabled:false},
+    'btn-material-cancel': {disabled:false},
+    'btn-material-copy': {disabled:false},
+    'btn-material-apply': {textContent:'',disabled:true},
+    'material-composer-result': {}
+  };
+  let selection = '已有选区内容';
+  const view = load('renderMaterialComposerView', {
+    getMaterialComposerSessionId: () => 'doc-a',
+    getActiveDocument: () => ({}),
+    getSelectionText: () => selection,
+    byId: id => nodes[id],
+    window: {renderMaterialComposer() {}}
+  });
+
+  view({documentSessionId:'doc-a',status:'running',busy:true,result:null,input:{sectionTitle:'第一章'}});
+  assert.equal(nodes['btn-material-apply'].disabled, true);
+
+  view({documentSessionId:'doc-a',status:'succeeded',busy:false,result:{plainText:'正文'},input:{sectionTitle:'第一章'}});
+  assert.equal(nodes['btn-material-apply'].disabled, false);
+  assert.equal(nodes['btn-material-apply'].textContent, '替换所选内容');
+
+  selection = '';
+  view({documentSessionId:'doc-a',status:'succeeded',busy:false,result:{plainText:'正文'},input:{sectionTitle:'第一章'}});
+  assert.equal(nodes['btn-material-apply'].disabled, false);
+  assert.equal(nodes['btn-material-apply'].textContent, '在光标处插入');
+});
+
+test('renderMaterialComposerView pauses replacement when section title in textarea differs from generation input', () => {
+  const nodes = {
+    'material-composer-status': {textContent:''},
+    'material-import-file': {disabled:false},
+    'material-section-title': {value:'被修改的章节',disabled:false},
+    'material-instruction': {value:'要求',disabled:false},
+    'btn-material-selection': {disabled:false},
+    'btn-material-generate': {disabled:false},
+    'btn-material-cancel': {disabled:false},
+    'btn-material-copy': {disabled:false},
+    'btn-material-apply': {textContent:'',disabled:false},
+    'material-composer-result': {}
+  };
+  const view = load('renderMaterialComposerView', {
+    getMaterialComposerSessionId: () => 'doc-a',
+    getActiveDocument: () => ({}),
+    getSelectionText: () => '选区内容',
+    byId: id => nodes[id],
+    window: {renderMaterialComposer() {}}
+  });
+
+  view({documentSessionId:'doc-a',status:'succeeded',busy:false,result:{plainText:'正文'},input:{sectionTitle:'原章节'}});
+  assert.equal(nodes['btn-material-apply'].disabled, true);
+  assert.ok(nodes['material-composer-status'].textContent.includes('生成期间目标章节已变更，已暂停替换'));
+});
+
+test('applyMaterialComposerResult replaces selection and preserves surrounding content, never touching document.Content', async () => {
+  const doc = {
+    Selection: { Text: '旧章节内容' },
+    Content: { Text: '整篇未授权内容' }
+  };
+  const nodes = {
+    'material-section-title': { value: '第一章' },
+    'material-composer-status': { textContent: '' }
+  };
+  let appliedArgs = null;
+  const applyFn = load('applyMaterialComposerResult', {
+    getActiveDocument: () => doc,
+    getMaterialComposerSessionId: () => 'doc-a',
+    getWritableSelection: d => d.Selection,
+    getSelectionText: d => d.Selection.Text,
+    byId: id => nodes[id],
+    ensureMaterialComposer: () => ({
+      apply: async args => {
+        appliedArgs = args;
+        doc.Selection.Text = '生成的新正文';
+        return { ok: true, mode: 'replace' };
+      }
+    })
+  });
+
+  await applyFn();
+  assert.equal(doc.Selection.Text, '生成的新正文');
+  assert.equal(doc.Content.Text, '整篇未授权内容');
+  assert.equal(appliedArgs.selectionText, '旧章节内容');
+  assert.equal(appliedArgs.sectionTitle, '第一章');
+  assert.ok(nodes['material-composer-status'].textContent.includes('已替换至所选区域'));
+});
+
+test('applyMaterialComposerResult inserts at cursor when selection is collapsed', async () => {
+  const doc = {
+    Selection: { Text: '' },
+    Content: { Text: '整篇未授权内容' }
+  };
+  const nodes = {
+    'material-section-title': { value: '第一章' },
+    'material-composer-status': { textContent: '' }
+  };
+  let appliedArgs = null;
+  const applyFn = load('applyMaterialComposerResult', {
+    getActiveDocument: () => doc,
+    getMaterialComposerSessionId: () => 'doc-a',
+    getWritableSelection: d => d.Selection,
+    getSelectionText: () => '',
+    byId: id => nodes[id],
+    ensureMaterialComposer: () => ({
+      apply: async args => {
+        appliedArgs = args;
+        doc.Selection.Text = '插入的光标正文';
+        return { ok: true, mode: 'insert' };
+      }
+    })
+  });
+
+  await applyFn();
+  assert.equal(doc.Selection.Text, '插入的光标正文');
+  assert.equal(doc.Content.Text, '整篇未授权内容');
+  assert.equal(appliedArgs.selectionText, '');
+  assert.ok(nodes['material-composer-status'].textContent.includes('已插入至光标位置'));
+});
+
+test('applyMaterialComposerResult reports failure and guides to manual copy when write fails', async () => {
+  const doc = {
+    Selection: { Text: '旧内容' }
+  };
+  const nodes = {
+    'material-section-title': { value: '第一章' },
+    'material-composer-status': { textContent: '' }
+  };
+  const applyFn = load('applyMaterialComposerResult', {
+    getActiveDocument: () => doc,
+    getMaterialComposerSessionId: () => 'doc-a',
+    getWritableSelection: d => d.Selection,
+    getSelectionText: d => d.Selection.Text,
+    byId: id => nodes[id],
+    ensureMaterialComposer: () => ({
+      apply: async () => {
+        throw new Error('写入失败：文档受保护');
+      }
+    })
+  });
+
+  await applyFn();
+  assert.ok(nodes['material-composer-status'].textContent.includes('写入失败'));
+  assert.ok(nodes['material-composer-status'].textContent.includes('文档受保护'));
 });

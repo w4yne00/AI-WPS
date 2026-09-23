@@ -7,12 +7,18 @@ function harness(shared) {
   const context = { window: {}, Promise, Date, Math };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../wps-ai-assistant_1.0.0/material-composer.js'), 'utf8'), context);
   const saved = shared || new Map();
-  const h = { session: 'doc-a', calls: [], views: [], copied: [], scheduled: [], response: { success: true, data: { jobId: 'job-a', status: 'running', documentSessionId: 'doc-a' } } };
+  const h = { session: 'doc-a', calls: [], views: [], copied: [], applied: [], scheduled: [], response: { success: true, data: { jobId: 'job-a', status: 'running', documentSessionId: 'doc-a' } } };
   h.api = context.window.createMaterialComposer({
     storage: { getItem: k => saved.get(k), setItem: (k,v) => saved.set(k,v) },
     getSessionId: () => h.session,
     request: async (url, body, method) => { h.calls.push({url,body,method:method.method}); if (h.error) throw Error('offline'); return h.respond ? h.respond() : h.response; },
-    render: v => h.views.push(v), copyText: t => h.copied.push(t), schedule: fn => h.scheduled.push(fn)
+    render: v => h.views.push(v), copyText: t => h.copied.push(t), schedule: fn => h.scheduled.push(fn),
+    applyText: async (t, opts) => {
+      h.applied.push({ text: t, options: opts });
+      if (h.applyError) throw h.applyError;
+      if (h.applyReturnFalse) return false;
+      return true;
+    }
   });
   h.saved = saved;
   h.last = () => h.views[h.views.length - 1];
@@ -94,4 +100,58 @@ test('uncertain submission retains original input and never creates a second ser
 });
 test('conflicting uncertain submission keeps its key available for querying the original job', async () => {
  const h=harness(); h.api.setMaterial({materialId:'m1'}); h.respond=()=>Promise.reject(Object.assign(Error('conflict'),{httpStatus:409})); await h.api.start({sectionTitle:'范围',instruction:'要求'}); const key=h.calls[0].body.clientJobId; assert.equal(h.last().clientJobId,key); h.respond=null; await h.api.refresh(); assert.ok(h.calls[1].url.includes(key)); assert.equal(h.calls[1].method,'GET');
+});
+
+test('explicit confirmation applies draft to selection or cursor, and rejects full document replacement', async () => {
+ const h=harness(); h.api.setMaterial({materialId:'m1'}); await h.api.start({sectionTitle:'第一章',instruction:'编写'});
+ h.response={success:true,data:{jobId:'job-a',status:'succeeded',documentSessionId:'doc-a',result:result()}}; await h.api.refresh();
+ await h.api.apply({sectionTitle:'第一章',selectionText:'旧内容'});
+ assert.equal(h.applied.length,1); assert.equal(h.applied[0].text,'正文'); assert.equal(h.applied[0].options.mode,'replace'); assert.equal(h.applied[0].options.selectionText,'旧内容'); assert.ok(h.last().phaseLabel.includes('已替换'));
+ await h.api.apply({sectionTitle:'第一章',selectionText:''});
+ assert.equal(h.applied.length,2); assert.equal(h.applied[1].options.mode,'insert'); assert.ok(h.last().phaseLabel.includes('已插入'));
+ await assert.rejects(() => h.api.apply({sectionTitle:'第一章',isFullDocument:true}), /禁止全篇替换|仅支持替换选区或光标/);
+ assert.equal(h.applied.length,2);
+});
+
+test('target chapter change pauses replacement and preserves draft', async () => {
+ const h=harness(); h.api.setMaterial({materialId:'m1'}); await h.api.start({sectionTitle:'第一章',instruction:'编写'});
+ h.response={success:true,data:{jobId:'job-a',status:'succeeded',documentSessionId:'doc-a',result:result()}}; await h.api.refresh();
+ await assert.rejects(() => h.api.apply({sectionTitle:'第二章 变更后'}), /目标章节已变更，已暂停替换/);
+ assert.ok(h.last().result); assert.equal(h.applied.length,0); assert.ok(h.last().error.includes('目标章节已变更'));
+ await h.api.apply({sectionTitle:'第一章',selectionText:'选区'});
+ assert.equal(h.applied.length,1);
+});
+
+test('switching document session isolates apply and prevents writing to another document', async () => {
+ const h=harness(); h.api.setMaterial({materialId:'m1'}); await h.api.start({sectionTitle:'第一章',instruction:'编写'});
+ h.response={success:true,data:{jobId:'job-a',status:'succeeded',documentSessionId:'doc-a',result:result()}}; await h.api.refresh();
+ h.session='doc-b';
+ await assert.rejects(() => h.api.apply({sectionTitle:'第一章',documentSessionId:'doc-a'}), /文档不一致/);
+ await assert.rejects(() => h.api.apply({sectionTitle:'第一章'}), /没有可写入/);
+ assert.equal(h.applied.length,0);
+});
+
+test('unconfirmed, running, cancelled or failed draft rejects apply', async () => {
+ const h=harness();
+ await assert.rejects(() => h.api.apply({sectionTitle:'第一章'}), /没有可写入/);
+ h.api.setMaterial({materialId:'m1'}); await h.api.start({sectionTitle:'第一章',instruction:'编写'});
+ await assert.rejects(() => h.api.apply({sectionTitle:'第一章'}), /没有可写入/);
+ h.response={success:true,data:{jobId:'job-a',status:'cancelled',documentSessionId:'doc-a'}}; await h.api.cancel();
+ await assert.rejects(() => h.api.apply({sectionTitle:'第一章'}), /没有可写入/);
+ h.response={success:true,data:{jobId:'job-a',status:'failed',documentSessionId:'doc-a',error:'失败'}}; await h.api.refresh();
+ await assert.rejects(() => h.api.apply({sectionTitle:'第一章'}), /没有可写入/);
+ assert.equal(h.applied.length,0);
+});
+
+test('write failure reports clear error and preserves draft for manual copy', async () => {
+ const h=harness(); h.api.setMaterial({materialId:'m1'}); await h.api.start({sectionTitle:'第一章',instruction:'编写'});
+ h.response={success:true,data:{jobId:'job-a',status:'succeeded',documentSessionId:'doc-a',result:result()}}; await h.api.refresh();
+ h.applyError=new Error('WPS COM error');
+ await assert.rejects(() => h.api.apply({sectionTitle:'第一章'}), /WPS COM error/);
+ assert.ok(h.last().error.includes('WPS COM error') || h.last().error.includes('写入失败'));
+ assert.ok(h.last().result);
+ await h.api.copy(); assert.deepEqual(h.copied,['正文']);
+ h.applyError=null; h.applyReturnFalse=true;
+ await assert.rejects(() => h.api.apply({sectionTitle:'第一章'}), /未完成|写入失败/);
+ assert.ok(h.last().result);
 });
