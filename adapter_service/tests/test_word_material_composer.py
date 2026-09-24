@@ -228,3 +228,160 @@ def test_extract_relevant_fragments_over_budget_prioritizes_matching_heading_and
     idx2 = selected_ids.index("f_target_2")
     assert idx1 < idx2
 
+
+def test_material_composer_reuses_catalog_across_chapters():
+    client = TestClient(app)
+    session_id = "doc-session-reuse"
+    # 导入两份材料
+    m1 = client.post('/word/materials', json=upload_payload(build_docx(), file_name="f1.docx", mime_type="")).json()['data']
+    # 统一 session id
+    p1 = upload_payload(build_docx(), file_name="f1.docx")
+    p1["documentSessionId"] = session_id
+    res1 = client.post('/word/materials', json=p1).json()['data']
+
+    p2 = upload_payload(build_docx(), file_name="f2.docx")
+    p2["documentSessionId"] = session_id
+    res2 = client.post('/word/materials', json=p2).json()['data']
+
+    answer1 = {'paragraphs': [{'text': '第一章正文。', 'fragmentIds': ['frag-2'], 'missingItems': []}]}
+    answer2 = {'paragraphs': [{'text': '第二章正文。', 'fragmentIds': ['frag-5'], 'missingItems': []}]}
+
+    req1 = {
+        'documentSessionId': session_id,
+        'clientJobId': 'composer-reuse-0001',
+        'sectionTitle': '第一章',
+        'instruction': '整理第一章',
+    }
+    req2 = {
+        'documentSessionId': session_id,
+        'clientJobId': 'composer-reuse-0002',
+        'sectionTitle': '第二章',
+        'instruction': '整理第二章',
+    }
+
+    with patch('app.services.provider_client.ProviderClient.resolve_task_auth', return_value={'providerBaseUrl':'https://model.invalid','apiKey':'test'}), \
+         patch('app.services.provider_client.ProviderClient.post_task', side_effect=[{'answer': json.dumps(answer1)}, {'answer': json.dumps(answer2)}]):
+        # 第一章
+        job1_res = client.post('/word/material-composer/jobs', json=req1)
+        assert job1_res.status_code == 200, job1_res.text
+        job1_id = job1_res.json()['data']['jobId']
+        for _ in range(100):
+            j1 = client.get('/word/material-composer/jobs/' + job1_id, params={'documentSessionId': session_id}).json()['data']
+            if j1['status'] in ('completed', 'failed'):
+                break
+            time.sleep(0.01)
+        assert j1['status'] == 'completed', j1
+
+        # 第二章，无需重新上传任何文件
+        job2_res = client.post('/word/material-composer/jobs', json=req2)
+        assert job2_res.status_code == 200, job2_res.text
+        job2_id = job2_res.json()['data']['jobId']
+        for _ in range(100):
+            j2 = client.get('/word/material-composer/jobs/' + job2_id, params={'documentSessionId': session_id}).json()['data']
+            if j2['status'] in ('completed', 'failed'):
+                break
+            time.sleep(0.01)
+        assert j2['status'] == 'completed', j2
+
+
+def test_material_composer_reports_all_four_phases():
+    from app.services.word.material_import import WordMaterialImportService
+    from app.services.word.material_composer import MaterialComposerJobs
+    from app.services.long_task_coordinator import LongTaskCoordinator
+
+    materials = WordMaterialImportService()
+    p = upload_payload(build_docx())
+    p["documentSessionId"] = "doc-session-phases"
+    materials.import_material(p)
+
+    phases_recorded = []
+    class MockCoordinator(LongTaskCoordinator):
+        def _transition_phase_locked(self, job, phase, now_mono):
+            phases_recorded.append(phase)
+            return super()._transition_phase_locked(job, phase, now_mono)
+
+    coord = MockCoordinator()
+    answer = {'paragraphs': [{'text': '内容', 'fragmentIds': ['frag-2'], 'missingItems': []}]}
+
+    with patch('app.services.provider_client.ProviderClient.resolve_task_auth', return_value={'providerBaseUrl':'https://model.invalid','apiKey':'test'}), \
+         patch('app.services.provider_client.ProviderClient.post_task', return_value={'answer': json.dumps(answer)}):
+        jobs = MaterialComposerJobs(materials, coordinator=coord)
+        job = jobs.start({
+            'documentSessionId': 'doc-session-phases',
+            'clientJobId': 'composer-phases-0001',
+            'sectionTitle': '第一章',
+            'instruction': '整理',
+        }, 'trace-phases')
+        coord.wait(job['jobId'], task_type='word.material_composer')
+
+    assert 'preparing' in phases_recorded
+    assert 'extracting' in phases_recorded
+    assert 'provider_processing' in phases_recorded
+    assert 'parsing' in phases_recorded
+
+
+def test_material_composer_cancellation_during_extraction_and_provider():
+    from app.services.word.material_import import WordMaterialImportService
+    from app.services.word.material_composer import MaterialComposerJobs
+    from app.services.long_task_coordinator import LongTaskCoordinator
+    import threading
+
+    materials = WordMaterialImportService()
+    p = upload_payload(build_docx())
+    p["documentSessionId"] = "doc-session-cancel"
+    materials.import_material(p)
+
+    coord = LongTaskCoordinator()
+    started = threading.Event()
+    cancelled = threading.Event()
+
+    def fake_post_task(*args, **kwargs):
+        started.set()
+        cancelled.wait(timeout=3)
+        return {'answer': '{}'}
+
+    with patch('app.services.provider_client.ProviderClient.resolve_task_auth', return_value={'providerBaseUrl':'https://model.invalid','apiKey':'test'}), \
+         patch('app.services.provider_client.ProviderClient.post_task', side_effect=fake_post_task):
+        jobs = MaterialComposerJobs(materials, coordinator=coord)
+        job = jobs.start({
+            'documentSessionId': 'doc-session-cancel',
+            'clientJobId': 'composer-cancel-0001',
+            'sectionTitle': '第一章',
+            'instruction': '整理',
+        }, 'trace-cancel')
+
+        assert started.wait(timeout=2)
+        jobs.cancel(job['jobId'], 'doc-session-cancel')
+        cancelled.set()
+        terminal = coord.wait(job['jobId'], task_type='word.material_composer')
+        assert terminal['status'] == 'cancelled'
+        assert terminal.get('result') is None
+
+
+def test_material_composer_output_validation_rejects_hallucinated_sources():
+    from app.services.word.material_import import WordMaterialImportService
+    from app.services.word.material_composer import MaterialComposerJobs
+    from app.services.long_task_coordinator import LongTaskCoordinator
+
+    materials = WordMaterialImportService()
+    p = upload_payload(build_docx())
+    p["documentSessionId"] = "doc-session-invalid"
+    materials.import_material(p)
+
+    coord = LongTaskCoordinator()
+    # 模型返回了不存在的 fragmentId
+    bad_answer = {'paragraphs': [{'text': '凭空捏造事实', 'fragmentIds': ['frag-nonexistent'], 'missingItems': []}]}
+
+    with patch('app.services.provider_client.ProviderClient.resolve_task_auth', return_value={'providerBaseUrl':'https://model.invalid','apiKey':'test'}), \
+         patch('app.services.provider_client.ProviderClient.post_task', return_value={'answer': json.dumps(bad_answer)}):
+        jobs = MaterialComposerJobs(materials, coordinator=coord)
+        job = jobs.start({
+            'documentSessionId': 'doc-session-invalid',
+            'clientJobId': 'composer-invalid-0001',
+            'sectionTitle': '第一章',
+            'instruction': '整理',
+        }, 'trace-invalid')
+        terminal = coord.wait(job['jobId'], task_type='word.material_composer')
+        assert terminal['status'] == 'failed'
+        assert terminal['error']['code'] == 'MATERIAL_COMPOSER_INVALID_RESULT'
+        assert terminal.get('result') is None

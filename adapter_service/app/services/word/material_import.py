@@ -83,6 +83,9 @@ class WordMaterialImportService:
 
         material_id = "mat_{0}".format(secrets.token_hex(8))
 
+        for frag in reading["fragments"]:
+            frag["fileName"] = file_name
+
         doc_summary = {
             "materialId": material_id,
             "fileName": file_name,

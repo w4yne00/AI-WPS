@@ -62,6 +62,11 @@ def upload_payload(content, file_name="资料.docx", mime_type=""):
 
 
 class WordMaterialImportApiTests(unittest.TestCase):
+    def setUp(self):
+        from app.api.word import material_import_service
+        material_import_service._session_catalogs.clear()
+        material_import_service._materials.clear()
+
     def test_import_and_view_keeps_source_and_shows_located_reading(self):
         """Dropping heading level, table columns, source location, or unread
         disclosure, or returning a rewritten file, would hide what was read.
