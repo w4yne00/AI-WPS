@@ -162,3 +162,119 @@ test('write failure reports clear error and preserves draft for manual copy', as
  await assert.rejects(() => h.api.apply({sectionTitle:'第一章'}), /未完成|写入失败/);
  assert.ok(h.last().result);
 });
+
+test('taskpane accumulates up to 5 materials and renders combined character count', async () => {
+  const h = harness();
+  h.api.setMaterial({
+    materialId: 'm1',
+    fileName: 'doc1.docx',
+    catalogSummary: {
+      totalDocuments: 1,
+      totalCharacters: 2000,
+      documents: [{ materialId: 'm1', fileName: 'doc1.docx' }]
+    }
+  });
+  assert.equal(h.last().catalogSummary.totalDocuments, 1);
+  assert.ok(h.last().catalogLabel.includes('1/5') && h.last().catalogLabel.includes('2,000/100,000'));
+
+  h.api.setMaterial({
+    materialId: 'm2',
+    fileName: 'doc2.docx',
+    catalogSummary: {
+      totalDocuments: 2,
+      totalCharacters: 5000,
+      documents: [{ materialId: 'm1', fileName: 'doc1.docx' }, { materialId: 'm2', fileName: 'doc2.docx' }]
+    }
+  });
+  assert.equal(h.last().catalogSummary.totalDocuments, 2);
+  assert.ok(h.last().catalogLabel.includes('2/5') && h.last().catalogLabel.includes('5,000/100,000'));
+});
+
+test('chapter generation reuses existing catalog without re-uploading on subsequent section', async () => {
+  const h = harness();
+  h.api.setMaterial({
+    materialId: 'm1',
+    catalogSummary: {
+      totalDocuments: 2,
+      totalCharacters: 5000,
+      documents: [{ materialId: 'm1' }, { materialId: 'm2' }]
+    }
+  });
+  await h.api.start({ sectionTitle: '第一章', instruction: '编写一' });
+  assert.equal(h.calls.length, 1);
+  assert.deepEqual(h.calls[0].body.materialIds, ['m1', 'm2']);
+  h.response = { success: true, data: { jobId: 'job-a', status: 'completed', documentSessionId: 'doc-a', result: result('doc-a') } };
+  await h.api.refresh();
+  assert.equal(h.last().status, 'succeeded');
+
+  // 第二次编写，无需重新上传 setMaterial
+  h.response = { success: true, data: { jobId: 'job-b', status: 'running', documentSessionId: 'doc-a' } };
+  await h.api.start({ sectionTitle: '第二章', instruction: '编写二' });
+  assert.equal(h.calls.length, 3); // 1: POST start 1, 2: GET refresh 1, 3: POST start 2
+  assert.equal(h.calls[2].body.sectionTitle, '第二章');
+  assert.deepEqual(h.calls[2].body.materialIds, ['m1', 'm2']);
+  assert.equal(h.last().status, 'running');
+});
+
+test('render displays multi-file source citations with accurate quotes', () => {
+  const context = { window: {} };
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../wps-ai-assistant_1.0.0/material-composer.js'), 'utf8'), context);
+  const document = {
+    createElement(tag) {
+      return { tagName: tag, children: [], appendChild(child) { this.children.push(child); }, textContent: '', className: '' };
+    }
+  };
+  const root = document.createElement('div');
+  root.ownerDocument = document;
+  const draft = {
+    taskType: 'word.material_composer',
+    documentSessionId: 'doc-a',
+    plainText: '第一段。\n\n第二段。',
+    paragraphs: [
+      {
+        text: '第一段。',
+        sources: [{ fileName: 'doc1.docx', section: '第一章', quote: '原句1', fragmentId: 'f1' }],
+        missingItems: []
+      },
+      {
+        text: '第二段。',
+        sources: [{ fileName: 'doc2.docx', section: '第二章', quote: '原句2', fragmentId: 'f2' }],
+        missingItems: []
+      }
+    ],
+    missingItems: []
+  };
+  context.window.renderMaterialComposer(root, {
+    status: 'succeeded',
+    phaseLabel: '完成',
+    catalogLabel: '已导入 2/5 份资料，合计 5,000/100,000 字',
+    result: draft
+  });
+  const catNode = root.children.find(x => x.className === 'material-composer-catalog');
+  assert.ok(catNode);
+  assert.ok(catNode.textContent.includes('2/5'));
+
+  const paragraphs = root.children.filter(x => x.className === 'material-composer-paragraph');
+  assert.equal(paragraphs.length, 2);
+  assert.ok(paragraphs[0].children[1].children.some(x => x.textContent.includes('doc1.docx')));
+  assert.ok(paragraphs[0].children[1].children.some(x => x.textContent === '原句1'));
+  assert.ok(paragraphs[1].children[1].children.some(x => x.textContent.includes('doc2.docx')));
+  assert.ok(paragraphs[1].children[1].children.some(x => x.textContent === '原句2'));
+});
+
+test('cancelled or failed task strictly rejects applyText and shows friendly error', async () => {
+  const h = harness();
+  h.api.setMaterial({ materialId: 'm1' });
+  await h.api.start({ sectionTitle: '第一章', instruction: '编写' });
+  h.response = { success: true, data: { jobId: 'job-a', status: 'cancelled', documentSessionId: 'doc-a' } };
+  await h.api.cancel();
+  assert.equal(h.last().status, 'cancelled');
+  await assert.rejects(() => h.api.apply({ sectionTitle: '第一章' }), /没有可写入/);
+  assert.equal(h.applied.length, 0);
+
+  h.response = { success: true, data: { jobId: 'job-b', status: 'failed', documentSessionId: 'doc-a', error: '模型异常' } };
+  await h.api.start({ sectionTitle: '第一章', instruction: '重试' });
+  assert.equal(h.last().status, 'failed');
+  await assert.rejects(() => h.api.apply({ sectionTitle: '第一章' }), /没有可写入/);
+  assert.equal(h.applied.length, 0);
+});
