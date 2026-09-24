@@ -54,14 +54,18 @@ class WordMaterialImportService:
             raise _security_error(exc) from exc
 
         existing_cells = 0
+        start_fragment_index = 1
         if session_id and session_id in self._session_catalogs:
-            existing_cells = self._session_catalogs[session_id].get("totalTableCells", 0)
+            cat = self._session_catalogs[session_id]
+            existing_cells = cat.get("totalTableCells", 0)
+            start_fragment_index = len(cat.get("fragmentsList", [])) + 1
 
         reading = _read_document(
             validated.document_xml,
             validated.style_names,
             content,
             remaining_table_cells=MATERIAL_IMPORT_MAX_TABLE_CELLS - existing_cells,
+            start_fragment_index=start_fragment_index,
         )
         char_count = reading["limits"]["readableCharacterCount"]
         doc_cells = reading["limits"].get("extractedTableCells", 0)
@@ -85,6 +89,9 @@ class WordMaterialImportService:
 
         for frag in reading["fragments"]:
             frag["fileName"] = file_name
+
+        for block in reading["blocks"]:
+            block["fileName"] = file_name
 
         doc_summary = {
             "materialId": material_id,
@@ -247,6 +254,7 @@ def _read_document(
     style_names: Dict[str, str],
     package: bytes,
     remaining_table_cells: Optional[int] = None,
+    start_fragment_index: int = 1,
 ) -> dict:
     root = ElementTree.fromstring(document_xml)
     body = _find_child(root, "body")
@@ -266,7 +274,7 @@ def _read_document(
             name = _local_name(child.tag)
             if name == "p":
                 block, fragment, count = _paragraph_block(
-                    child, style_names, block_index, len(fragments) + 1
+                    child, style_names, block_index, start_fragment_index + len(fragments)
                 )
                 if block is None:
                     continue
@@ -277,7 +285,7 @@ def _read_document(
                 readable_count += count
             elif name == "tbl":
                 block, table_fragments, count = _table_block(
-                    child, block_index, table_index, len(fragments) + 1,
+                    child, block_index, table_index, start_fragment_index + len(fragments),
                     max_allowed_cells - table_cells,
                 )
                 table_index += 1

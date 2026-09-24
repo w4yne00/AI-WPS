@@ -1,5 +1,16 @@
 # Codex Handoff - AI-WPS
 
+## Issue #233：Word：支持多份长资料编写章节（2026-09-24）
+
+- **5 份资料与 10 万字符安全门禁**：后端与前端双重限制单会话最多导入 5 份 DOCX 资料、累计最多 100,000 Unicode 可读字符（`unicode_codepoints_of_extracted_readable_text`）。超出上限立即返回 `MATERIAL_COUNT_OVER_LIMIT`（422）或 `MATERIAL_TEXT_OVER_LIMIT`（413），杜绝静默截断、漏载与内存爆仓。
+- **会话级资料目录与后续章节零重复导入**：基于 `documentSessionId` 独立维护内存级 `MaterialCatalog`，跨文档切换可靠隔离；多份资料导入时片段编号单调递增全局唯一（`frag-1`..`frag-N`），章节标题基于 `(fileName, blockId)` 消除多文档块编号碰撞。后续章节编写直接复用既有目录，无需用户反复重复上传。
+- **确定性原文片段提取器**：`extract_relevant_fragments` 结合目标章节标题、写作要求 N-gram 词法加权与表格行上下文（`row_text_map`），实现事实片段与表格内容精准召回；在模型 Token 预算内贪心选取并严格按文档原始物理顺序重排；杜绝任何预摘要或中间改写，进入模型的全部片段均为 DOCX 原始字符串。
+- **长任务 4 阶段推进与运行中取消**：任务统一推进并上报 `preparing` → `extracting` → `provider_processing` → `parsing` 状态标签与耗时；支持运行中即时取消并关闭底层 HTTP 响应连接；取消与失败草稿严格不可写回（`result = None`，按钮不可用且前端 `applyText` 门禁强校验）。
+- **双运行时接口对等与 64 KiB 请求体门禁**：FastAPI 与 Standalone 对等实现 `GET /word/materials/catalog?documentSessionId=...`；`POST /word/material-composer/jobs` 等入口统一执行 64 KiB 上限与出处真实性强校验（无出处段落或未声明缺项抛出 502）。
+- **任务窗格多资料展示与引文侧边栏**：任务窗格支持 5 份资料列表展示、总字数（含千字换算）累加徽标；生成完成后引文侧边栏精准展示对应文件名、章节名称与原文引用；目标章节变化或已取消草稿执行不可写回硬防护。
+- **100k 字符基准验证**：5 份实际文档累计 92,523 Unicode 可读字符基准测试，资料导入建库仅 6.28 ms（1.26 ms/份），首次章节提取与生成 9.33 ms，后续章节复用 7.24 ms / 2.87 ms；5/5 核心事实与 3/3 核心表格项 100% 召回，出处原文字符串无改写校验 100%。
+- **全量回归验证**：正式插件套件 `formal-plugin-kit` `329/329 passed`；`wps-addon` vitest `12/12 passed` 且生产构建成功；后端材料模块专项 `26/26 passed`；Python 3.8 兼容性 `compileall` 扫描与 `git diff --check` 全部通过。
+
 ## Issue #232：Word：确认后插入或替换选区（2026-09-23）
 
 - 仅在用户显式确认后执行写回：根据当前是否有选区文字，按钮动态呈现“替换所选内容”或“在光标处插入”；严禁任何默认全篇替换（若传入文档全文则明确拒绝 `REFUSE_FULL_DOCUMENT_REPLACEMENT`）。

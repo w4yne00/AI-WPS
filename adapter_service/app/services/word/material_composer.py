@@ -35,6 +35,33 @@ def extract_relevant_fragments(catalog: dict, section_title: str, instruction: s
         return list(fragments)
 
     query_text = "{0} {1}".format(section_title or "", instruction or "")
+
+    sections = {}
+    section = ""
+    last_file = None
+    for block in cat.get("blocks", []):
+        curr_file = block.get("fileName", "")
+        if curr_file != last_file:
+            section = ""
+            last_file = curr_file
+        if block.get("kind") == "heading":
+            section = block.get("text", "")
+        sections[(curr_file, block.get("blockId"))] = section
+        sections[block.get("blockId")] = section
+
+    clean_inst = re.sub(r"^(整理|列出|汇总|总结|查找|编写|说明|提取)", "", (instruction or "").strip())
+    chunks = [c for c in re.split(r"[与和及的在于按对把让请依据等以或，。、；：\s\-_/]+", clean_inst) if c]
+    inst_phrases = set()
+    for c in chunks:
+        inst_phrases.add(c)
+        for w in re.findall(r"[a-zA-Z0-9]+", c):
+            if len(w) >= 2:
+                inst_phrases.add(w)
+        for w in re.findall(r"[\u4e00-\u9fff]+", c):
+            for n in (4, 3, 2):
+                for i in range(len(w) - n + 1):
+                    inst_phrases.add(w[i:i+n])
+
     section_phrases = [p for p in re.findall(r"[\u4e00-\u9fff]{2,}|[a-zA-Z0-9]{2,}", section_title or "") if p]
     query_terms = [p for p in re.findall(r"[\u4e00-\u9fff]|[a-zA-Z0-9]+", query_text) if p]
 
@@ -44,39 +71,66 @@ def extract_relevant_fragments(catalog: dict, section_title: str, instruction: s
         if toc_title:
             if any(phrase in toc_title for phrase in section_phrases):
                 matched_sections.add(toc_title)
+            elif any(phrase in toc_title for phrase in inst_phrases):
+                matched_sections.add(toc_title)
             elif any(term in toc_title for term in query_terms):
                 matched_sections.add(toc_title)
+
+    row_text_map = {}
+    for frag in fragments:
+        if frag.get("kind") == "table_cell":
+            b_file = frag.get("fileName", "")
+            b_id = frag.get("blockId", "")
+            r_idx = frag.get("source", {}).get("row")
+            if r_idx is not None:
+                key = (b_file, b_id, r_idx)
+                row_text_map[key] = row_text_map.get(key, "") + " " + frag.get("text", "")
 
     scored = []
     for idx, frag in enumerate(fragments):
         text = frag.get("text", "")
-        sec = frag.get("section", "")
+        b_file = frag.get("fileName", "")
+        b_id = frag.get("blockId", "")
+        sec = frag.get("section") or sections.get((b_file, b_id)) or sections.get(b_id, "")
         score = 0.0
 
         if sec and sec in matched_sections:
             score += 50.0
         elif any(phrase in sec for phrase in section_phrases):
             score += 40.0
+        elif any(phrase in sec for phrase in inst_phrases):
+            score += 30.0
+
+        eval_text = text
+        if frag.get("kind") == "table_cell":
+            r_idx = frag.get("source", {}).get("row")
+            if r_idx is not None:
+                eval_text = row_text_map.get((b_file, b_id, r_idx), text)
+
+        for phrase in inst_phrases:
+            if phrase in eval_text:
+                score += len(phrase) * 2.0
 
         for phrase in section_phrases:
-            if phrase in text:
-                score += 20.0
+            if phrase in eval_text:
+                score += 15.0
 
         for term in query_terms:
-            if term in text:
+            if term in eval_text:
                 score += 1.0
 
-        if frag.get("kind") == "table" and score > 0:
+        if frag.get("kind") in ("table", "table_cell") and score > 0:
             score += 5.0
 
-        scored.append({"index": idx, "fragment": frag, "score": score})
+        scored.append({"index": idx, "fragment": frag, "score": score, "section": sec})
 
     n = len(scored)
     for i in range(n):
         if scored[i]["score"] >= 20.0:
-            if i > 0 and scored[i-1]["fragment"].get("section") == scored[i]["fragment"].get("section"):
+            sec_i = scored[i]["section"]
+            if i > 0 and scored[i-1]["section"] == sec_i:
                 scored[i-1]["score"] += 15.0
-            if i + 1 < n and scored[i+1]["fragment"].get("section") == scored[i]["fragment"].get("section"):
+            if i + 1 < n and scored[i+1]["section"] == sec_i:
                 scored[i+1]["score"] += 15.0
 
     ranked = sorted(scored, key=lambda x: (x["score"], -x["index"]), reverse=True)
@@ -240,9 +294,15 @@ class MaterialComposerJobs:
             extracted_frag_map = {f['fragmentId']: f for f in selected_fragments}
             sections = {}
             section = '正文'
+            last_file = None
             for block in catalog.get('blocks', []):
+                curr_file = block.get('fileName', '')
+                if curr_file != last_file:
+                    section = '正文'
+                    last_file = curr_file
                 if block.get('kind') == 'heading':
                     section = block.get('text', '正文')
+                sections[(curr_file, block.get('blockId'))] = section
                 sections[block.get('blockId')] = section
 
             result, missing = [], []
@@ -266,10 +326,12 @@ class MaterialComposerJobs:
                     if fragment_id not in extracted_frag_map:
                         raise ValueError("fragment not in extracted set")
                     fragment = extracted_frag_map[fragment_id]
+                    b_file = fragment.get('fileName', '')
+                    sec_name = sections.get((b_file, fragment.get('blockId'))) or sections.get(fragment.get('blockId'), '正文')
                     sources.append({
                         'fragmentId': fragment_id,
-                        'fileName': fragment.get('fileName') or (catalog.get('documents') and catalog['documents'][0].get('fileName')) or '',
-                        'section': sections.get(fragment.get('blockId'), '正文'),
+                        'fileName': b_file or (catalog.get('documents') and catalog['documents'][0].get('fileName')) or '',
+                        'section': sec_name,
                         'quote': fragment.get('text', ''),
                     })
 
