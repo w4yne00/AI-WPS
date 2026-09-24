@@ -2322,6 +2322,16 @@ class Handler(BaseHTTPRequestHandler):
             self._write(200, envelope(job.get("traceId", job_id), "word.material_composer", job, message=job["status"]))
             return
 
+        if path == "/word/materials/catalog":
+            session = parse_qs(parsed.query).get("documentSessionId", [""])[0]
+            trace_id = new_trace_id("standalone-word-material-catalog")
+            data = WORD_MATERIAL_IMPORT_SERVICE.get_catalog(session)
+            self._write(
+                200,
+                envelope(trace_id, "word.material_composer", data, message="catalog"),
+            )
+            return
+
         if path.startswith("/word/materials/"):
             material_id = unquote(path[len("/word/materials/") :]).strip("/")
             trace_id = new_trace_id("standalone-word-material")

@@ -385,3 +385,67 @@ def test_material_composer_output_validation_rejects_hallucinated_sources():
         assert terminal['status'] == 'failed'
         assert terminal['error']['code'] == 'MATERIAL_COMPOSER_INVALID_RESULT'
         assert terminal.get('result') is None
+
+
+def test_fastapi_and_standalone_catalog_endpoint_parity():
+    import standalone_adapter as standalone
+    from tests.test_word_material_import import _invoke_standalone
+
+    client = TestClient(app)
+    session_id = "doc-session-parity"
+
+    # 1. FastAPI GET /word/materials/catalog
+    fastapi_empty = client.get('/word/materials/catalog', params={'documentSessionId': session_id})
+    assert fastapi_empty.status_code == 200, fastapi_empty.text
+    empty_data = fastapi_empty.json()['data']
+    assert empty_data['totalDocuments'] == 0
+    assert empty_data['documents'] == []
+
+    # Standalone GET /word/materials/catalog
+    standalone_empty = _invoke_standalone(standalone, 'do_GET', '/word/materials/catalog?documentSessionId=' + session_id)
+    assert standalone_empty['status'] == 200
+    assert standalone_empty['body']['data']['totalDocuments'] == 0
+
+    # 2. 导入一份资料后再次查询
+    p = upload_payload(build_docx(), file_name="测试.docx")
+    p["documentSessionId"] = session_id
+    fastapi_import = client.post('/word/materials', json=p)
+    assert fastapi_import.status_code == 200
+
+    fastapi_cat = client.get('/word/materials/catalog', params={'documentSessionId': session_id})
+    assert fastapi_cat.status_code == 200
+    cat_data = fastapi_cat.json()['data']
+    assert cat_data['totalDocuments'] == 1
+    assert cat_data['documents'][0]['fileName'] == "测试.docx"
+    assert len(cat_data['toc']) >= 1
+
+    standalone_import = _invoke_standalone(standalone, 'do_POST', '/word/materials', p)
+    assert standalone_import['status'] == 200
+
+    standalone_cat = _invoke_standalone(standalone, 'do_GET', '/word/materials/catalog?documentSessionId=' + session_id)
+    assert standalone_cat['status'] == 200
+    s_data = standalone_cat['body']['data']
+    assert s_data['totalDocuments'] >= 1
+
+
+def test_material_composer_request_body_size_limit():
+    import standalone_adapter as standalone
+    from tests.test_word_material_import import _invoke_standalone
+
+    client = TestClient(app)
+    oversized = {
+        'documentSessionId': 'doc-session-limit',
+        'clientJobId': 'composer-limit-0001',
+        'sectionTitle': '第一章',
+        'instruction': 'A' * (65 * 1024),
+    }
+
+    # FastAPI 64 KiB 门禁
+    fastapi_res = client.post('/word/material-composer/jobs', json=oversized)
+    assert fastapi_res.status_code == 413, fastapi_res.text
+    assert fastapi_res.json()['errors'][0]['code'] == 'MATERIAL_COMPOSER_REQUEST_TOO_LARGE'
+
+    # Standalone 64 KiB 门禁
+    standalone_res = _invoke_standalone(standalone, 'do_POST', '/word/material-composer/jobs', oversized)
+    assert standalone_res['status'] == 413
+    assert standalone_res['body']['errors'][0]['code'] == 'MATERIAL_COMPOSER_REQUEST_TOO_LARGE'

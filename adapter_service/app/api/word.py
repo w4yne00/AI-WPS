@@ -639,6 +639,12 @@ def import_word_material(request: dict) -> dict:
     return _material_envelope(data, message="imported")
 
 
+@router.get("/word/materials/catalog")
+def get_word_materials_catalog(documentSessionId: str = ""):
+    data = material_import_service.get_catalog(documentSessionId)
+    return _material_envelope(data, message="catalog")
+
+
 @router.get("/word/materials/{material_id}")
 def view_word_material(material_id: str):
     data = material_import_service.view_material(material_id)
