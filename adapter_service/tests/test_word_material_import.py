@@ -236,6 +236,93 @@ class WordMaterialImportApiTests(unittest.TestCase):
         self.assertEqual(viewed["body"]["data"]["materialId"], material_id)
         self.assertFalse(viewed["body"]["data"]["understandsAllContent"])
 
+    def test_multi_material_count_limit_rejected(self):
+        from app.core.errors import AdapterError
+        from app.services.word.material_import import WordMaterialImportService
+
+        service = WordMaterialImportService()
+        session_id = "doc-test-count"
+        content = build_docx(document_xml=_paragraph_document("测试正文"))
+        for i in range(5):
+            service.import_material(upload_payload(content, file_name="doc_{0}.docx".format(i)))
+        # Adjust session id for upload payload
+        payload_6 = upload_payload(content, file_name="doc_6.docx")
+        payload_6["documentSessionId"] = session_id
+        # Also ensure previous 5 had session_id
+        service = WordMaterialImportService()
+        for i in range(5):
+            p = upload_payload(content, file_name="doc_{0}.docx".format(i))
+            p["documentSessionId"] = session_id
+            service.import_material(p)
+
+        with self.assertRaises(AdapterError) as ctx:
+            service.import_material(payload_6)
+        self.assertEqual(ctx.exception.code, "MATERIAL_COUNT_OVER_LIMIT")
+        self.assertEqual(ctx.exception.status_code, 400)
+        catalog = service.get_catalog(session_id)
+        self.assertEqual(catalog["totalDocuments"], 5)
+
+    def test_multi_material_cumulative_text_limit_rejected(self):
+        from app.core.errors import AdapterError
+        from app.services.word.material_import import WordMaterialImportService
+
+        service = WordMaterialImportService()
+        session_id = "doc-test-cumulative-text"
+        doc_60k = build_docx(document_xml=_paragraph_document("中" * 60000))
+        doc_45k = build_docx(document_xml=_paragraph_document("华" * 45000))
+
+        p1 = upload_payload(doc_60k, file_name="part1.docx")
+        p1["documentSessionId"] = session_id
+        service.import_material(p1)
+
+        p2 = upload_payload(doc_45k, file_name="part2.docx")
+        p2["documentSessionId"] = session_id
+        with self.assertRaises(AdapterError) as ctx:
+            service.import_material(p2)
+        self.assertEqual(ctx.exception.code, "MATERIAL_TEXT_OVER_LIMIT")
+        self.assertEqual(ctx.exception.status_code, 413)
+
+        catalog = service.get_catalog(session_id)
+        self.assertEqual(catalog["totalDocuments"], 1)
+        self.assertEqual(catalog["totalCharacters"], 60000)
+
+    def test_multi_material_catalog_aggregation_and_toc(self):
+        from app.services.word.material_import import WordMaterialImportService
+
+        service = WordMaterialImportService()
+        session_id = "doc-test-toc"
+        xml_1 = """<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p><w:pPr><w:outlineLvl w:val="0" /></w:pPr><w:r><w:t>第一章 总则</w:t></w:r></w:p>
+    <w:p><w:r><w:t>正文1</w:t></w:r></w:p>
+  </w:body>
+</w:document>""".encode("utf-8")
+        xml_2 = """<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p><w:pPr><w:outlineLvl w:val="0" /></w:pPr><w:r><w:t>第二章 建设方案</w:t></w:r></w:p>
+    <w:p><w:r><w:t>正文2</w:t></w:r></w:p>
+  </w:body>
+</w:document>""".encode("utf-8")
+
+        p1 = upload_payload(build_docx(document_xml=xml_1), file_name="file1.docx")
+        p1["documentSessionId"] = session_id
+        res1 = service.import_material(p1)
+        self.assertIn("catalogSummary", res1)
+
+        p2 = upload_payload(build_docx(document_xml=xml_2), file_name="file2.docx")
+        p2["documentSessionId"] = session_id
+        res2 = service.import_material(p2)
+        self.assertIn("catalogSummary", res2)
+
+        catalog = service.get_catalog(session_id)
+        self.assertEqual(catalog["totalDocuments"], 2)
+        self.assertEqual(len(catalog["documents"]), 2)
+        titles = [item["sectionTitle"] for item in catalog["toc"]]
+        self.assertIn("第一章 总则", titles)
+        self.assertIn("第二章 建设方案", titles)
+
 
 def _invoke_standalone(module, method, path, payload=None, headers=None):
     captured = {}

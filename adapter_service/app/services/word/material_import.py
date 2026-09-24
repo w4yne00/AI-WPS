@@ -16,6 +16,7 @@ from app.services.ppt.docx_security import (
 
 
 TASK_TYPE = "word.material_composer"
+MATERIAL_IMPORT_MAX_DOCUMENTS = 5
 MATERIAL_IMPORT_MAX_READABLE_CHARACTERS = 100000
 MATERIAL_IMPORT_MAX_TABLE_COLUMNS = 256
 MATERIAL_IMPORT_MAX_TABLE_CELLS = 100000
@@ -27,31 +28,125 @@ _HEADING_NAME = re.compile(r"^(?:Heading|标题)\s*([1-6])$", re.IGNORECASE)
 class WordMaterialImportService:
     def __init__(self) -> None:
         self._materials = {}
+        self._session_catalogs = {}
 
     def import_material(self, request: dict) -> dict:
         payload = request or {}
         file_name = str(payload.get("fileName") or payload.get("file_name") or "")
         content = _decode_upload(payload.get("contentBase64") or payload.get("content_base64"))
         _reject_wrong_type(file_name, str(payload.get("mimeType") or payload.get("mime_type") or ""))
+        session_id = str(
+            payload.get("documentSessionId") or payload.get("document_session_id") or ""
+        ).strip()
+
+        if session_id:
+            existing_cat = self._session_catalogs.get(session_id)
+            if existing_cat and len(existing_cat["documents"]) >= MATERIAL_IMPORT_MAX_DOCUMENTS:
+                raise AdapterError(
+                    "MATERIAL_COUNT_OVER_LIMIT",
+                    "资料份数超过上限（最多5份），已拒绝导入，未截断内容。",
+                    status_code=400,
+                )
+
         try:
             validated = validate_docx_bytes(content)
         except DocxSecurityError as exc:
             raise _security_error(exc) from exc
-        reading = _read_document(validated.document_xml, validated.style_names, content)
-        if reading["limits"]["readableCharacterCount"] > MATERIAL_IMPORT_MAX_READABLE_CHARACTERS:
+
+        existing_cells = 0
+        if session_id and session_id in self._session_catalogs:
+            existing_cells = self._session_catalogs[session_id].get("totalTableCells", 0)
+
+        reading = _read_document(
+            validated.document_xml,
+            validated.style_names,
+            content,
+            remaining_table_cells=MATERIAL_IMPORT_MAX_TABLE_CELLS - existing_cells,
+        )
+        char_count = reading["limits"]["readableCharacterCount"]
+        doc_cells = reading["limits"].get("extractedTableCells", 0)
+
+        if session_id and session_id in self._session_catalogs:
+            current_total = self._session_catalogs[session_id]["totalCharacters"]
+            if current_total + char_count > MATERIAL_IMPORT_MAX_READABLE_CHARACTERS:
+                raise AdapterError(
+                    "MATERIAL_TEXT_OVER_LIMIT",
+                    "可读取文字超过本阶段实施参数上限，已拒绝导入，未截断内容。",
+                    status_code=413,
+                )
+        elif char_count > MATERIAL_IMPORT_MAX_READABLE_CHARACTERS:
             raise AdapterError(
                 "MATERIAL_TEXT_OVER_LIMIT",
                 "可读取文字超过本阶段实施参数上限，已拒绝导入，未截断内容。",
                 status_code=413,
             )
+
         material_id = "mat_{0}".format(secrets.token_hex(8))
+
+        doc_summary = {
+            "materialId": material_id,
+            "fileName": file_name,
+            "readableCharacterCount": char_count,
+            "blocksCount": len(reading["blocks"]),
+            "fragmentsCount": len(reading["fragments"]),
+        }
+
+        doc_toc = []
+        for block in reading["blocks"]:
+            if block.get("kind") == "heading":
+                doc_toc.append({
+                    "materialId": material_id,
+                    "fileName": file_name,
+                    "headingLevel": block.get("level", 1),
+                    "sectionTitle": block.get("text", ""),
+                    "blockId": block.get("blockId", ""),
+                })
+
+        if session_id:
+            if session_id not in self._session_catalogs:
+                self._session_catalogs[session_id] = {
+                    "documentSessionId": session_id,
+                    "documents": [],
+                    "toc": [],
+                    "blocks": [],
+                    "fragments": {},
+                    "fragmentsList": [],
+                    "totalCharacters": 0,
+                    "totalDocuments": 0,
+                    "totalTableCells": 0,
+                }
+            cat = self._session_catalogs[session_id]
+            cat["documents"].append(doc_summary)
+            cat["toc"].extend(doc_toc)
+            cat["blocks"].extend(reading["blocks"])
+            for frag in reading["fragments"]:
+                f_item = dict(frag)
+                f_item["fileName"] = file_name
+                cat["fragments"][frag["fragmentId"]] = f_item
+                cat["fragmentsList"].append(f_item)
+            cat["totalCharacters"] += char_count
+            cat["totalTableCells"] += doc_cells
+            cat["totalDocuments"] = len(cat["documents"])
+
+            catalog_summary = {
+                "totalDocuments": cat["totalDocuments"],
+                "totalCharacters": cat["totalCharacters"],
+                "documents": list(cat["documents"]),
+                "toc": list(cat["toc"]),
+            }
+        else:
+            catalog_summary = {
+                "totalDocuments": 1,
+                "totalCharacters": char_count,
+                "documents": [doc_summary],
+                "toc": doc_toc,
+            }
+
         view = {
             "materialId": material_id,
             "taskType": TASK_TYPE,
             "fileName": file_name,
-            "documentSessionId": str(
-                payload.get("documentSessionId") or payload.get("document_session_id") or ""
-            ),
+            "documentSessionId": session_id,
             "sourceFileUnchanged": True,
             "targetDocumentUnchanged": True,
             "understandsAllContent": False,
@@ -60,9 +155,29 @@ class WordMaterialImportService:
             "unreadRegions": reading["unreadRegions"],
             "blocks": reading["blocks"],
             "fragments": reading["fragments"],
+            "catalogSummary": catalog_summary,
         }
         self._materials[material_id] = view
         return view
+
+    def get_catalog(self, document_session_id: str) -> dict:
+        cat = self._session_catalogs.get(document_session_id)
+        if cat is None:
+            return {
+                "totalDocuments": 0,
+                "totalCharacters": 0,
+                "documents": [],
+                "toc": [],
+            }
+        return {
+            "totalDocuments": cat["totalDocuments"],
+            "totalCharacters": cat["totalCharacters"],
+            "documents": list(cat["documents"]),
+            "toc": list(cat["toc"]),
+        }
+
+    def get_session_catalog(self, document_session_id: str) -> Optional[dict]:
+        return self._session_catalogs.get(document_session_id)
 
     def view_material(self, material_id: str) -> dict:
         view = self._materials.get(material_id)
@@ -124,7 +239,12 @@ def _security_error(exc: DocxSecurityError) -> AdapterError:
     )
 
 
-def _read_document(document_xml: bytes, style_names: Dict[str, str], package: bytes) -> dict:
+def _read_document(
+    document_xml: bytes,
+    style_names: Dict[str, str],
+    package: bytes,
+    remaining_table_cells: Optional[int] = None,
+) -> dict:
     root = ElementTree.fromstring(document_xml)
     body = _find_child(root, "body")
     blocks = []
@@ -132,6 +252,11 @@ def _read_document(document_xml: bytes, style_names: Dict[str, str], package: by
     table_index = 0
     readable_count = 0
     table_cells = 0
+    max_allowed_cells = (
+        MATERIAL_IMPORT_MAX_TABLE_CELLS
+        if remaining_table_cells is None
+        else remaining_table_cells
+    )
     if body is not None:
         for child, body_path in _body_blocks(body):
             block_index = body_path[0]
@@ -150,7 +275,7 @@ def _read_document(document_xml: bytes, style_names: Dict[str, str], package: by
             elif name == "tbl":
                 block, table_fragments, count = _table_block(
                     child, block_index, table_index, len(fragments) + 1,
-                    MATERIAL_IMPORT_MAX_TABLE_CELLS - table_cells,
+                    max_allowed_cells - table_cells,
                 )
                 table_index += 1
                 if block is None:
@@ -179,6 +304,7 @@ def _read_document(document_xml: bytes, style_names: Dict[str, str], package: by
             "readableCharacterLimit": MATERIAL_IMPORT_MAX_READABLE_CHARACTERS,
             "characterCountMethod": CHARACTER_COUNT_METHOD,
             "readableCharacterCount": readable_count,
+            "extractedTableCells": table_cells,
         },
     }
 
