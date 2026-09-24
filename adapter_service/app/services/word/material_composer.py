@@ -15,6 +15,90 @@ TASK_TYPE = 'word.material_composer'
 MATERIAL_COMPOSER_REQUEST_MAX_BYTES = 64 * 1024
 
 
+def extract_relevant_fragments(catalog: dict, section_title: str, instruction: str, max_tokens: int) -> list:
+    cat = catalog or {}
+    fragments = cat.get("fragmentsList")
+    if fragments is None:
+        raw_frags = cat.get("fragments")
+        if isinstance(raw_frags, dict):
+            fragments = list(raw_frags.values())
+        elif isinstance(raw_frags, list):
+            fragments = list(raw_frags)
+        else:
+            fragments = []
+    if not fragments:
+        return []
+
+    import re
+    all_text = " ".join(f.get("text", "") for f in fragments)
+    if _estimate_direct_tokens("", all_text) <= max_tokens:
+        return list(fragments)
+
+    query_text = "{0} {1}".format(section_title or "", instruction or "")
+    section_phrases = [p for p in re.findall(r"[\u4e00-\u9fff]{2,}|[a-zA-Z0-9]{2,}", section_title or "") if p]
+    query_terms = [p for p in re.findall(r"[\u4e00-\u9fff]|[a-zA-Z0-9]+", query_text) if p]
+
+    matched_sections = set()
+    for toc_entry in cat.get("toc", []):
+        toc_title = toc_entry.get("sectionTitle", "")
+        if toc_title:
+            if any(phrase in toc_title for phrase in section_phrases):
+                matched_sections.add(toc_title)
+            elif any(term in toc_title for term in query_terms):
+                matched_sections.add(toc_title)
+
+    scored = []
+    for idx, frag in enumerate(fragments):
+        text = frag.get("text", "")
+        sec = frag.get("section", "")
+        score = 0.0
+
+        if sec and sec in matched_sections:
+            score += 50.0
+        elif any(phrase in sec for phrase in section_phrases):
+            score += 40.0
+
+        for phrase in section_phrases:
+            if phrase in text:
+                score += 20.0
+
+        for term in query_terms:
+            if term in text:
+                score += 1.0
+
+        if frag.get("kind") == "table" and score > 0:
+            score += 5.0
+
+        scored.append({"index": idx, "fragment": frag, "score": score})
+
+    n = len(scored)
+    for i in range(n):
+        if scored[i]["score"] >= 20.0:
+            if i > 0 and scored[i-1]["fragment"].get("section") == scored[i]["fragment"].get("section"):
+                scored[i-1]["score"] += 15.0
+            if i + 1 < n and scored[i+1]["fragment"].get("section") == scored[i]["fragment"].get("section"):
+                scored[i+1]["score"] += 15.0
+
+    ranked = sorted(scored, key=lambda x: (x["score"], -x["index"]), reverse=True)
+
+    budget_limit = int(max_tokens * 0.90)
+    current_tokens = 0
+    selected_indices = set()
+
+    for item in ranked:
+        t = item["fragment"].get("text", "")
+        t_tokens = max(len(t), (len(t.encode("utf-8")) + 3) // 4) + 16
+        if current_tokens + t_tokens <= budget_limit:
+            selected_indices.add(item["index"])
+            current_tokens += t_tokens
+        elif not selected_indices:
+            selected_indices.add(item["index"])
+            break
+
+    result = [fragments[i] for i in sorted(selected_indices)]
+    return result
+
+
 class MaterialComposerJobs:
     def __init__(self, materials, provider=None, coordinator=None):
         self.materials = materials

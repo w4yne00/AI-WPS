@@ -166,3 +166,65 @@ def test_composer_uses_its_own_model_configuration_and_system_prompt(tmp_path):
     assert terminal['status'] == 'completed', terminal
     assert captured[0]['model'] == 'composer-model'
     assert 'fragmentId' in captured[0]['messages'][0]['content']
+
+
+def test_extract_relevant_fragments_within_budget_returns_all():
+    from app.services.word.material_composer import extract_relevant_fragments
+
+    catalog = {
+        "fragmentsList": [
+            {"fragmentId": "f1", "text": "普通正文A", "blockId": "b1", "section": "第一章"},
+            {"fragmentId": "f2", "text": "普通正文B", "blockId": "b2", "section": "第二章"},
+        ],
+        "toc": [
+            {"sectionTitle": "第一章", "blockId": "b1"},
+            {"sectionTitle": "第二章", "blockId": "b2"},
+        ],
+    }
+    selected = extract_relevant_fragments(catalog, "第一章", "要求A", max_tokens=10000)
+    assert len(selected) == 2
+    assert [f["fragmentId"] for f in selected] == ["f1", "f2"]
+
+
+def test_extract_relevant_fragments_over_budget_prioritizes_matching_heading_and_keywords():
+    from app.services.word.material_composer import extract_relevant_fragments
+
+    fragments = []
+    for i in range(100):
+        fragments.append({
+            "fragmentId": "f_norm_{0}".format(i),
+            "text": "不相关的历史背景正文段落文字内容序号{0}。".format(i) * 10,
+            "blockId": "b_norm_{0}".format(i),
+            "section": "无关章节",
+        })
+    fragments.append({
+        "fragmentId": "f_target_1",
+        "text": "本章节重点说明系统总体架构与业务子系统的划分原则。",
+        "blockId": "b_target_1",
+        "section": "第三章 总体架构设计",
+    })
+    fragments.append({
+        "fragmentId": "f_target_2",
+        "text": "系统总体架构包括数据中台、业务中台以及应用微服务集群。",
+        "blockId": "b_target_2",
+        "section": "第三章 总体架构设计",
+    })
+    catalog = {
+        "fragmentsList": fragments,
+        "toc": [
+            {"sectionTitle": "无关章节", "blockId": "b_norm_0"},
+            {"sectionTitle": "第三章 总体架构设计", "blockId": "b_target_1"},
+        ],
+    }
+    # 限制预算只能容纳 2~3 个片段
+    selected = extract_relevant_fragments(catalog, "总体架构", "列出总体架构与子系统", max_tokens=400)
+    selected_ids = [f["fragmentId"] for f in selected]
+    assert "f_target_1" in selected_ids
+    assert "f_target_2" in selected_ids
+    # 验证选出的片段为原始文本，且在结果中保持物理顺序
+    assert all(isinstance(f["text"], str) and not f["text"].startswith("摘要：") for f in selected)
+    # 物理顺序检查：f_target_1 在 f_target_2 之前
+    idx1 = selected_ids.index("f_target_1")
+    idx2 = selected_ids.index("f_target_2")
+    assert idx1 < idx2
+
