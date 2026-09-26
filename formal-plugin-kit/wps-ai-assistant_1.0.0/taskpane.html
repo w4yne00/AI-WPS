@@ -40,7 +40,7 @@
 
         <section id="material-import-panel" class="mode-block" hidden>
           <label class="field">
-            <span>导入一份 DOCX 资料</span>
+            <span>添加 DOCX 资料（最多 5 份）</span>
             <input id="material-import-file" type="file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" />
           </label>
           <p id="material-import-status" aria-live="polite">选择一份 DOCX 后查看读取结果。不会修改资料原文件或当前文档。</p>
@@ -52,7 +52,7 @@
           <label class="field" for="material-instruction"><span>写作要求</span>
             <textarea id="material-instruction" rows="3" placeholder="说明本章节的结构、篇幅和语气要求"></textarea>
           </label>
-          <p class="field-hint">本阶段使用一份可放入单次模型输入的资料。已有正文和历史回答不作为事实来源；经确认后可插入或替换选区。</p>
+          <p class="field-hint">最多使用 5 份、合计 100,000 字资料。已有正文和历史回答不作为事实来源；经确认后可插入或替换选区。</p>
           <div class="material-actions">
             <button id="btn-material-generate" type="button">生成章节草稿</button>
             <button id="btn-material-cancel" class="ghost-action" type="button" disabled>取消任务</button>

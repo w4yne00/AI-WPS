@@ -1910,7 +1910,11 @@
       }
     }
 
-    window.renderMaterialComposer(byId("material-composer-result"), view);
+    window.renderMaterialComposer(byId("material-composer-result"), view, function (sectionTitle) {
+      if (busy || view.documentSessionId !== getMaterialComposerSessionId()) return;
+      byId("material-section-title").value = sectionTitle;
+      renderMaterialComposerView(view);
+    });
   }
 
   function startMaterialComposer() {
@@ -2090,7 +2094,12 @@
       if (sessionId !== getMaterialComposerSessionId()) { return; }
       window.renderMaterialReading(result, reading);
       if (status) {
-        status.textContent = "读取结果已显示。资料原文件和当前文档未修改。";
+        if (reading.catalogSummary && reading.catalogSummary.totalDocuments) {
+          var totalChars = typeof reading.catalogSummary.totalCharacters === "number" ? reading.catalogSummary.totalCharacters.toLocaleString() : "0";
+          status.textContent = "已导入 " + reading.catalogSummary.totalDocuments + "/5 份资料，合计 " + totalChars + "/100,000 字。资料原文件和当前文档未修改。";
+        } else {
+          status.textContent = "读取结果已显示。资料原文件和当前文档未修改。";
+        }
       }
     }).catch(function (error) {
       if (materialImportRequestSequences[sessionId] === requestSequence && status) {
@@ -12749,7 +12758,7 @@
     byId("btn-material-generate").addEventListener("click", startMaterialComposer);
     byId("btn-material-selection").addEventListener("click", useMaterialComposerSelection);
     byId("btn-material-cancel").addEventListener("click", function () { ensureMaterialComposer().cancel(); });
-    byId("btn-material-refresh").addEventListener("click", function () { ensureMaterialComposer().refresh(); });
+    byId("btn-material-refresh").addEventListener("click", function () { ensureMaterialComposer().restore(); });
     byId("btn-material-copy").addEventListener("click", function () { ensureMaterialComposer().copy(); });
     var btnMaterialApply = byId("btn-material-apply");
     if (btnMaterialApply) {

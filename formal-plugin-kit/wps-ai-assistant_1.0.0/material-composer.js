@@ -1,17 +1,49 @@
 function createMaterialComposer(options) {
   var states = {};
   var schedule = options.schedule || function (fn, ms) { return setTimeout(fn, ms); };
+  function formatCatalogLabel(summary) {
+    if (!summary || !summary.totalDocuments) return '';
+    var totalChars = typeof summary.totalCharacters === 'number' ? summary.totalCharacters.toLocaleString() : '0';
+    return '已导入 ' + summary.totalDocuments + '/5 份资料，合计 ' + totalChars + '/100,000 字';
+  }
   function stateFor(id) {
     if (!states[id]) {
       var saved = options.storage.getItem('word.material-composer:' + id);
       var data = saved ? JSON.parse(saved) : {};
-      states[id] = { documentSessionId: id, materialId: data.materialId || '', jobId: data.jobId || '', clientJobId: data.clientJobId || '', input: data.input || {}, status: (data.jobId || data.clientJobId) ? 'running' : 'idle', phase: '', phaseLabel: '', result: null, error: '', busy: false, pending: false };
+      var catalogSummary = data.catalogSummary || null;
+      states[id] = {
+        documentSessionId: id,
+        materialId: data.materialId || '',
+        materialIds: data.materialIds || (data.materialId ? [data.materialId] : []),
+        materials: data.materials || [],
+        catalogSummary: catalogSummary,
+        catalogRequestVersion: 0,
+        catalogLabel: formatCatalogLabel(catalogSummary),
+        jobId: data.jobId || '',
+        clientJobId: data.clientJobId || '',
+        input: data.input || {},
+        status: (data.jobId || data.clientJobId) ? 'running' : 'idle',
+        phase: '',
+        phaseLabel: '',
+        result: null,
+        error: '',
+        busy: false,
+        pending: false
+      };
     }
     return states[id];
   }
   function current() { return stateFor(options.getSessionId()); }
   function persist(s) {
-    options.storage.setItem('word.material-composer:' + s.documentSessionId, JSON.stringify({ materialId: s.materialId, jobId: s.jobId, clientJobId: s.clientJobId, input: s.input }));
+    options.storage.setItem('word.material-composer:' + s.documentSessionId, JSON.stringify({
+      materialId: s.materialId,
+      materialIds: s.materialIds,
+      materials: s.materials,
+      catalogSummary: s.catalogSummary,
+      jobId: s.jobId,
+      clientJobId: s.clientJobId,
+      input: s.input
+    }));
   }
   function show(s) {
     if (options.getSessionId() === s.documentSessionId) options.render(Object.assign({}, s));
@@ -36,7 +68,13 @@ function createMaterialComposer(options) {
     s.jobId = job.jobId;
     s.status = job.status === 'completed' ? 'succeeded' : job.status;
     s.phase = job.phase || '';
-    s.phaseLabel = job.phaseLabel || '';
+    var phaseLabels = {
+      preparing: '正在校验任务与资料...',
+      extracting: '正在检索资料原文...',
+      provider_processing: '正在依据原文编写章节草稿...',
+      parsing: '正在核对草稿出处与待补充项...'
+    };
+    s.phaseLabel = job.phaseLabel || phaseLabels[s.phase] || '';
     s.result = null;
     if (s.status === 'succeeded') {
       if (!validResult(job.result, s.documentSessionId)) { s.status = 'failed'; throw new Error('返回正文或出处格式不完整，不能复制。'); }
@@ -66,22 +104,86 @@ function createMaterialComposer(options) {
     if (!(s.jobId || s.clientJobId) || s.busy) { show(s); return; }
     await execute(s, '/word/material-composer/jobs/' + encodeURIComponent(s.jobId || s.clientJobId) + '?documentSessionId=' + encodeURIComponent(s.documentSessionId), undefined, 'GET');
   }
+  async function restoreCatalog(s) {
+    var version = ++s.catalogRequestVersion;
+    var response = await options.request('/word/materials/catalog?documentSessionId=' + encodeURIComponent(s.documentSessionId), undefined, { method: 'GET' });
+    if (version !== s.catalogRequestVersion) return;
+    var catalog = response && response.success === true && response.data;
+    if (!catalog || !Array.isArray(catalog.documents) || !Array.isArray(catalog.toc) || typeof catalog.totalDocuments !== 'number' || typeof catalog.totalCharacters !== 'number') {
+      throw new Error('资料目录返回格式不正确，请重试查询。');
+    }
+    s.catalogSummary = catalog;
+    s.catalogLabel = formatCatalogLabel(catalog);
+    s.materialIds = catalog.documents.map(function (item) { return item.materialId; }).filter(Boolean);
+    s.materialId = s.materialIds[s.materialIds.length - 1] || '';
+    persist(s);
+    show(s);
+  }
   return {
-    setMaterial: function (reading) { var s = stateFor(reading.documentSessionId || options.getSessionId()); if (s.busy || active(s)) return; s.materialId = reading.materialId || ''; s.jobId = ''; s.clientJobId = ''; s.result = null; s.status = 'idle'; s.error = ''; persist(s); show(s); },
+    setMaterial: function (reading) {
+      var s = stateFor(reading.documentSessionId || options.getSessionId());
+      if (s.busy || active(s)) return;
+      s.catalogRequestVersion += 1;
+      s.materialId = reading.materialId || '';
+      if (!s.materialIds) s.materialIds = [];
+      if (s.materialId && s.materialIds.indexOf(s.materialId) === -1) {
+        s.materialIds.push(s.materialId);
+      }
+      if (reading.catalogSummary) {
+        s.catalogSummary = reading.catalogSummary;
+        if (reading.catalogSummary.documents && reading.catalogSummary.documents.length) {
+          s.materialIds = reading.catalogSummary.documents.map(function (d) { return d.materialId; }).filter(Boolean);
+        }
+      } else if (reading.materialId) {
+        s.catalogSummary = {
+          totalDocuments: s.materialIds.length,
+          totalCharacters: (reading.limits && reading.limits.readableCharacterCount) || 0,
+          documents: [{ materialId: reading.materialId, fileName: reading.fileName || '' }]
+        };
+      }
+      s.catalogLabel = formatCatalogLabel(s.catalogSummary);
+      s.jobId = '';
+      s.clientJobId = '';
+      s.result = null;
+      s.status = 'idle';
+      s.error = '';
+      persist(s);
+      show(s);
+    },
     start: async function (input) {
       var s = current();
       if (s.busy || (s.jobId && active(s))) { show(s); return; }
       var retryingUncertain = Boolean(s.clientJobId && !s.jobId);
       var selectedInput = retryingUncertain ? s.input : input;
-      if (!s.materialId || !s.documentSessionId || !selectedInput || typeof selectedInput.sectionTitle !== 'string' || typeof selectedInput.instruction !== 'string' || !selectedInput.sectionTitle.trim() || !selectedInput.instruction.trim()) { s.error = '请先导入资料，并填写章节标题和编写要求。'; show(s); return; }
+      var hasMaterial = Boolean(s.materialId || (s.materialIds && s.materialIds.length) || (s.catalogSummary && s.catalogSummary.totalDocuments));
+      if (!hasMaterial || !s.documentSessionId || !selectedInput || typeof selectedInput.sectionTitle !== 'string' || typeof selectedInput.instruction !== 'string' || !selectedInput.sectionTitle.trim() || !selectedInput.instruction.trim()) { s.error = '请先导入资料，并填写章节标题和编写要求。'; show(s); return; }
       if (!retryingUncertain) s.input = { sectionTitle: selectedInput.sectionTitle, instruction: selectedInput.instruction };
       // Keep the idempotency key after an uncertain submission so a retry cannot create another job.
       if (s.jobId || !s.clientJobId) s.clientJobId = 'composer-' + Date.now() + '-' + Math.random().toString(36).slice(2);
       s.jobId = ''; s.result = null; s.status = 'queued'; persist(s);
-      await execute(s, '/word/material-composer/jobs', { materialId: s.materialId, documentSessionId: s.documentSessionId, clientJobId: s.clientJobId, sectionTitle: s.input.sectionTitle, instruction: s.input.instruction }, 'POST');
+      var mids = (s.materialIds && s.materialIds.length) ? s.materialIds : (s.materialId ? [s.materialId] : []);
+      var body = {
+        documentSessionId: s.documentSessionId,
+        clientJobId: s.clientJobId,
+        sectionTitle: s.input.sectionTitle,
+        instruction: s.input.instruction
+      };
+      if (mids.length) {
+        body.materialIds = mids;
+        body.materialId = mids[0];
+      } else if (s.materialId) {
+        body.materialId = s.materialId;
+      }
+      await execute(s, '/word/material-composer/jobs', body, 'POST');
     },
     refresh: refresh,
-    restore: async function () { var s = current(); show(s); if (s.jobId || s.clientJobId) await refresh(); },
+    restore: async function () {
+      var s = current();
+      show(s);
+      try { await restoreCatalog(s); }
+      catch (error) { s.error = error.message || '资料目录查询失败，请重试。'; show(s); }
+      if (s.jobId || s.clientJobId) await refresh();
+    },
     cancel: async function () { var s = current(); if (!s.jobId || s.busy || !active(s)) return; await execute(s, '/word/material-composer/jobs/' + encodeURIComponent(s.jobId) + '/cancel', { documentSessionId: s.documentSessionId }, 'POST'); },
     copy: async function () { var s = current(); if (s.status === 'succeeded' && validResult(s.result, s.documentSessionId)) await options.copyText(s.result.plainText); },
     apply: async function (target) {
@@ -131,7 +233,7 @@ function createMaterialComposer(options) {
     }
   };
 }
-function renderMaterialComposer(root, view) {
+function renderMaterialComposer(root, view, onSelectChapter) {
   var doc = root.ownerDocument;
   function append(parent, tag, text, className) {
     var node = doc.createElement(tag);
@@ -142,6 +244,26 @@ function renderMaterialComposer(root, view) {
   }
   var labels = { idle: '请导入资料并填写编写要求。', queued: '任务已排队。', running: '正在编写，可关闭窗格后继续查询。', succeeded: '编写完成，请核对出处及待补充项。', failed: '编写未完成。', cancelled: '任务已取消。' };
   root.textContent = '';
+  if (view.catalogLabel || (view.catalogSummary && view.catalogSummary.totalDocuments)) {
+    var catText = view.catalogLabel || ('已导入 ' + view.catalogSummary.totalDocuments + '/5 份资料，合计 ' + (view.catalogSummary.totalCharacters || 0).toLocaleString() + '/100,000 字');
+    append(root, 'p', catText, 'material-composer-catalog');
+  }
+  var catalog = view.catalogSummary;
+  if (catalog && Array.isArray(catalog.documents) && catalog.documents.length) {
+    var directory = append(root, 'details', '', 'material-composer-toc');
+    append(directory, 'summary', '资料目录（' + catalog.documents.length + ' 份）');
+    catalog.documents.forEach(function (material) {
+      var file = append(directory, 'section', '', 'material-composer-toc-file');
+      append(file, 'strong', material.fileName || '未命名资料');
+      (catalog.toc || []).filter(function (entry) { return entry.materialId === material.materialId; }).forEach(function (entry) {
+        var level = Math.max(1, Math.min(6, Number(entry.headingLevel) || 1));
+        var chapter = append(file, 'button', entry.sectionTitle, 'ghost-action material-composer-toc-chapter material-composer-toc-level-' + level);
+        chapter.type = 'button';
+        chapter.disabled = view.busy || view.status === 'queued' || view.status === 'running' || typeof onSelectChapter !== 'function';
+        if (!chapter.disabled) chapter.addEventListener('click', function () { onSelectChapter(entry.sectionTitle); });
+      });
+    });
+  }
   append(root, 'p', labels[view.status] || '', 'material-composer-status');
   if (view.phaseLabel) append(root, 'p', view.phaseLabel, 'material-composer-phase');
   if (view.error) append(root, 'p', String(view.error), 'material-composer-error');

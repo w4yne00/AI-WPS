@@ -2529,6 +2529,12 @@ body[data-task-mode="smartWrite"] #result-output {
 #material-import-result { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 240px; overflow-y: auto; }
 .material-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 #material-composer-result { white-space: pre-wrap; overflow-wrap: anywhere; }
+.material-composer-toc { border: 1px solid var(--border-color, #e0e0e0); border-radius: 8px; padding: 8px 12px; }
+.material-composer-toc-file { margin-top: 10px; display: grid; gap: 4px; }
+.material-composer-toc-chapter { display: block; text-align: left; white-space: normal; }
+.material-composer-toc-level-2 { margin-left: 12px; }
+.material-composer-toc-level-3 { margin-left: 24px; }
+.material-composer-toc-level-4, .material-composer-toc-level-5, .material-composer-toc-level-6 { margin-left: 36px; }
 #material-composer-result aside { padding: 10px 12px; border-left: 2px solid #b6c8da; background: rgba(225, 235, 244, .35); font-size: 12px; }
 body[data-task-mode="materialImport"] #home-view > .controls,
 body[data-task-mode="materialImport"] #scope-strip { display: none; }

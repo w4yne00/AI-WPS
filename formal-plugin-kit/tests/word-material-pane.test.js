@@ -135,7 +135,12 @@ window.fetch=async function(url,options){
   requests.push({path:p,body:body});
   var data={};
   if(p==='/health')data={status:'ok',modelTasksAllowed:true,configurationMutationsAllowed:true};
-  if(p==='/word/materials')data={materialId:'mat-browser',documentSessionId:body.documentSessionId,blocks:[],fragments:[],fileName:'资料.docx'};
+  if(p==='/word/materials'){
+    var catalog={totalDocuments:1,totalCharacters:24,documents:[{materialId:'mat-browser',fileName:'资料.docx'}],toc:[{materialId:'mat-browser',headingLevel:1,sectionTitle:'实施安排'}]};
+    localStorage.setItem('test-material-catalog',JSON.stringify(catalog));
+    data={materialId:'mat-browser',documentSessionId:body.documentSessionId,blocks:[],fragments:[],fileName:'资料.docx',catalogSummary:catalog};
+  }
+  if(p==='/word/materials/catalog')data=JSON.parse(localStorage.getItem('test-material-catalog')||'{"totalDocuments":0,"totalCharacters":0,"documents":[],"toc":[]}');
   if(p==='/word/material-composer/jobs'){
     localStorage.setItem('test-job',JSON.stringify(body));
     data={jobId:body.clientJobId,status:'queued',documentSessionId:body.documentSessionId};
@@ -156,7 +161,9 @@ window.fetch=async function(url,options){
     const errors = run('eval','JSON.stringify(window.paneErrors)');
     assert.ok(errors.includes('[]'),errors);
     run('eval',`(async()=>{var input=document.getElementById('material-import-file');var dt=new DataTransfer();dt.items.add(new File(['docx'],'资料.docx'));input.files=dt.files;input.dispatchEvent(new Event('change'));})();`);
-    run('fill','#material-section-title','实施安排');
+    run('click','.material-composer-toc summary');
+    run('click','.material-composer-toc-chapter');
+    assert.equal(run('eval',`document.getElementById('material-section-title').value`).trim(), '"实施安排"');
     run('fill','#material-instruction','简要说明责任和工期');
     run('click','#btn-material-generate');
     run('wait','--text','信息化处负责。');

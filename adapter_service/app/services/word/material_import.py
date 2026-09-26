@@ -3,6 +3,7 @@ import binascii
 import io
 import re
 import secrets
+import threading
 import zipfile
 from typing import Dict, List, Optional
 from xml.etree import ElementTree
@@ -16,10 +17,12 @@ from app.services.ppt.docx_security import (
 
 
 TASK_TYPE = "word.material_composer"
+MATERIAL_IMPORT_MAX_DOCUMENTS = 5
 MATERIAL_IMPORT_MAX_READABLE_CHARACTERS = 100000
 MATERIAL_IMPORT_MAX_TABLE_COLUMNS = 256
 MATERIAL_IMPORT_MAX_TABLE_CELLS = 100000
 CHARACTER_COUNT_METHOD = "unicode_codepoints_of_extracted_readable_text"
+_MAX_FRAGMENT_CHARACTERS = 256
 _PART = "word/document.xml"
 _HEADING_NAME = re.compile(r"^(?:Heading|标题)\s*([1-6])$", re.IGNORECASE)
 
@@ -27,31 +30,142 @@ _HEADING_NAME = re.compile(r"^(?:Heading|标题)\s*([1-6])$", re.IGNORECASE)
 class WordMaterialImportService:
     def __init__(self) -> None:
         self._materials = {}
+        self._session_catalogs = {}
+        self._import_lock = threading.Lock()
 
     def import_material(self, request: dict) -> dict:
+        with self._import_lock:
+            return self._import_material(request)
+
+    def _import_material(self, request: dict) -> dict:
         payload = request or {}
         file_name = str(payload.get("fileName") or payload.get("file_name") or "")
         content = _decode_upload(payload.get("contentBase64") or payload.get("content_base64"))
         _reject_wrong_type(file_name, str(payload.get("mimeType") or payload.get("mime_type") or ""))
+        session_id = str(
+            payload.get("documentSessionId") or payload.get("document_session_id") or ""
+        ).strip()
+
+        if session_id:
+            existing_cat = self._session_catalogs.get(session_id)
+            if existing_cat and len(existing_cat["documents"]) >= MATERIAL_IMPORT_MAX_DOCUMENTS:
+                raise AdapterError(
+                    "MATERIAL_COUNT_OVER_LIMIT",
+                    "资料份数超过上限（最多5份），已拒绝导入，未截断内容。",
+                    status_code=400,
+                )
+
         try:
             validated = validate_docx_bytes(content)
         except DocxSecurityError as exc:
             raise _security_error(exc) from exc
-        reading = _read_document(validated.document_xml, validated.style_names, content)
-        if reading["limits"]["readableCharacterCount"] > MATERIAL_IMPORT_MAX_READABLE_CHARACTERS:
+
+        existing_cells = 0
+        start_fragment_index = 1
+        if session_id and session_id in self._session_catalogs:
+            cat = self._session_catalogs[session_id]
+            existing_cells = cat.get("totalTableCells", 0)
+            start_fragment_index = len(cat.get("fragmentsList", [])) + 1
+
+        reading = _read_document(
+            validated.document_xml,
+            validated.style_names,
+            content,
+            remaining_table_cells=MATERIAL_IMPORT_MAX_TABLE_CELLS - existing_cells,
+            start_fragment_index=start_fragment_index,
+        )
+        char_count = reading["limits"]["readableCharacterCount"]
+        doc_cells = reading["limits"].get("extractedTableCells", 0)
+
+        if session_id and session_id in self._session_catalogs:
+            current_total = self._session_catalogs[session_id]["totalCharacters"]
+            if current_total + char_count > MATERIAL_IMPORT_MAX_READABLE_CHARACTERS:
+                raise AdapterError(
+                    "MATERIAL_TEXT_OVER_LIMIT",
+                    "可读取文字超过本阶段实施参数上限，已拒绝导入，未截断内容。",
+                    status_code=413,
+                )
+        elif char_count > MATERIAL_IMPORT_MAX_READABLE_CHARACTERS:
             raise AdapterError(
                 "MATERIAL_TEXT_OVER_LIMIT",
                 "可读取文字超过本阶段实施参数上限，已拒绝导入，未截断内容。",
                 status_code=413,
             )
+
         material_id = "mat_{0}".format(secrets.token_hex(8))
+
+        for frag in reading["fragments"]:
+            frag["fileName"] = file_name
+            frag["materialId"] = material_id
+
+        for block in reading["blocks"]:
+            block["fileName"] = file_name
+            block["materialId"] = material_id
+
+        doc_summary = {
+            "materialId": material_id,
+            "fileName": file_name,
+            "readableCharacterCount": char_count,
+            "blocksCount": len(reading["blocks"]),
+            "fragmentsCount": len(reading["fragments"]),
+        }
+
+        doc_toc = []
+        for block in reading["blocks"]:
+            if block.get("kind") == "heading":
+                doc_toc.append({
+                    "materialId": material_id,
+                    "fileName": file_name,
+                    "headingLevel": block.get("level", 1),
+                    "sectionTitle": block.get("text", ""),
+                    "blockId": block.get("blockId", ""),
+                })
+
+        if session_id:
+            if session_id not in self._session_catalogs:
+                self._session_catalogs[session_id] = {
+                    "documentSessionId": session_id,
+                    "documents": [],
+                    "toc": [],
+                    "blocks": [],
+                    "fragments": {},
+                    "fragmentsList": [],
+                    "totalCharacters": 0,
+                    "totalDocuments": 0,
+                    "totalTableCells": 0,
+                }
+            cat = self._session_catalogs[session_id]
+            cat["documents"].append(doc_summary)
+            cat["toc"].extend(doc_toc)
+            cat["blocks"].extend(reading["blocks"])
+            for frag in reading["fragments"]:
+                f_item = dict(frag)
+                f_item["fileName"] = file_name
+                cat["fragments"][frag["fragmentId"]] = f_item
+                cat["fragmentsList"].append(f_item)
+            cat["totalCharacters"] += char_count
+            cat["totalTableCells"] += doc_cells
+            cat["totalDocuments"] = len(cat["documents"])
+
+            catalog_summary = {
+                "totalDocuments": cat["totalDocuments"],
+                "totalCharacters": cat["totalCharacters"],
+                "documents": list(cat["documents"]),
+                "toc": list(cat["toc"]),
+            }
+        else:
+            catalog_summary = {
+                "totalDocuments": 1,
+                "totalCharacters": char_count,
+                "documents": [doc_summary],
+                "toc": doc_toc,
+            }
+
         view = {
             "materialId": material_id,
             "taskType": TASK_TYPE,
             "fileName": file_name,
-            "documentSessionId": str(
-                payload.get("documentSessionId") or payload.get("document_session_id") or ""
-            ),
+            "documentSessionId": session_id,
             "sourceFileUnchanged": True,
             "targetDocumentUnchanged": True,
             "understandsAllContent": False,
@@ -60,9 +174,29 @@ class WordMaterialImportService:
             "unreadRegions": reading["unreadRegions"],
             "blocks": reading["blocks"],
             "fragments": reading["fragments"],
+            "catalogSummary": catalog_summary,
         }
         self._materials[material_id] = view
         return view
+
+    def get_catalog(self, document_session_id: str) -> dict:
+        cat = self._session_catalogs.get(document_session_id)
+        if cat is None:
+            return {
+                "totalDocuments": 0,
+                "totalCharacters": 0,
+                "documents": [],
+                "toc": [],
+            }
+        return {
+            "totalDocuments": cat["totalDocuments"],
+            "totalCharacters": cat["totalCharacters"],
+            "documents": list(cat["documents"]),
+            "toc": list(cat["toc"]),
+        }
+
+    def get_session_catalog(self, document_session_id: str) -> Optional[dict]:
+        return self._session_catalogs.get(document_session_id)
 
     def view_material(self, material_id: str) -> dict:
         view = self._materials.get(material_id)
@@ -124,7 +258,13 @@ def _security_error(exc: DocxSecurityError) -> AdapterError:
     )
 
 
-def _read_document(document_xml: bytes, style_names: Dict[str, str], package: bytes) -> dict:
+def _read_document(
+    document_xml: bytes,
+    style_names: Dict[str, str],
+    package: bytes,
+    remaining_table_cells: Optional[int] = None,
+    start_fragment_index: int = 1,
+) -> dict:
     root = ElementTree.fromstring(document_xml)
     body = _find_child(root, "body")
     blocks = []
@@ -132,25 +272,33 @@ def _read_document(document_xml: bytes, style_names: Dict[str, str], package: by
     table_index = 0
     readable_count = 0
     table_cells = 0
+    max_allowed_cells = (
+        MATERIAL_IMPORT_MAX_TABLE_CELLS
+        if remaining_table_cells is None
+        else remaining_table_cells
+    )
     if body is not None:
         for child, body_path in _body_blocks(body):
             block_index = body_path[0]
             name = _local_name(child.tag)
             if name == "p":
                 block, fragment, count = _paragraph_block(
-                    child, style_names, block_index, len(fragments) + 1
+                    child, style_names, block_index, start_fragment_index + len(fragments)
                 )
                 if block is None:
                     continue
-                _locate_block(block, [fragment], body_path)
+                paragraph_fragments = (
+                    _split_text_fragment(fragment, start_fragment_index + len(fragments))
+                    if fragment is not None else []
+                )
+                _locate_block(block, paragraph_fragments, body_path)
                 blocks.append(block)
-                if fragment is not None:
-                    fragments.append(fragment)
+                fragments.extend(paragraph_fragments)
                 readable_count += count
             elif name == "tbl":
                 block, table_fragments, count = _table_block(
-                    child, block_index, table_index, len(fragments) + 1,
-                    MATERIAL_IMPORT_MAX_TABLE_CELLS - table_cells,
+                    child, block_index, table_index, start_fragment_index + len(fragments),
+                    max_allowed_cells - table_cells,
                 )
                 table_index += 1
                 if block is None:
@@ -179,6 +327,7 @@ def _read_document(document_xml: bytes, style_names: Dict[str, str], package: by
             "readableCharacterLimit": MATERIAL_IMPORT_MAX_READABLE_CHARACTERS,
             "characterCountMethod": CHARACTER_COUNT_METHOD,
             "readableCharacterCount": readable_count,
+            "extractedTableCells": table_cells,
         },
     }
 
@@ -199,6 +348,20 @@ def _locate_block(block, fragments, body_path):
     for fragment in fragments:
         fragment["blockId"] = block["blockId"]
         fragment["source"]["bodyPath"] = list(body_path)
+
+
+def _split_text_fragment(fragment, start_number):
+    text = fragment["text"]
+    if len(text) <= _MAX_FRAGMENT_CHARACTERS:
+        return [fragment]
+    parts = []
+    for offset in range(0, len(text), _MAX_FRAGMENT_CHARACTERS):
+        part = dict(fragment)
+        part["fragmentId"] = "frag-{0}".format(start_number + len(parts))
+        part["text"] = text[offset:offset + _MAX_FRAGMENT_CHARACTERS]
+        part["source"] = dict(fragment["source"], textOffset=offset)
+        parts.append(part)
+    return parts
 
 
 def _paragraph_block(paragraph, style_names, block_index, fragment_number):
@@ -271,16 +434,15 @@ def _table_block(table, block_index, table_index, fragment_start, cell_budget):
                 "row": row_index,
                 "column": column_index,
             }
-            fragments.append(
-                {
-                    "fragmentId": "frag-{0}".format(fragment_number),
-                    "blockId": "block-{0}".format(block_index),
-                    "kind": "table_cell",
-                    "text": text,
-                    "source": source,
-                }
-            )
-            fragment_number += 1
+            cell_fragments = _split_text_fragment({
+                "fragmentId": "frag-{0}".format(fragment_number),
+                "blockId": "block-{0}".format(block_index),
+                "kind": "table_cell",
+                "text": text,
+                "source": source,
+            }, fragment_number)
+            fragments.extend(cell_fragments)
+            fragment_number += len(cell_fragments)
             readable_count += len(text)
             column_index += span
             if span > 1:

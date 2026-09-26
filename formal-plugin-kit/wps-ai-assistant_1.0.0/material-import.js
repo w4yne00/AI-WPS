@@ -27,6 +27,10 @@ function renderMaterialReading(root, reading) {
   lines.push("读取结果不宣称理解全部内容。");
   lines.push(data.disclosure || "图片文字和嵌入附件未读取，不宣称理解全部内容。");
   lines.push("本阶段字数统计和文件字节上限是实施参数，不是已确认的产品数值。");
+  if (data.catalogSummary && data.catalogSummary.totalDocuments) {
+    var totalChars = typeof data.catalogSummary.totalCharacters === 'number' ? data.catalogSummary.totalCharacters.toLocaleString() : '0';
+    lines.push("已导入 " + data.catalogSummary.totalDocuments + "/5 份资料，合计 " + totalChars + "/100,000 字。");
+  }
   for (index = 0; index < blocks.length; index += 1) {
     lines.push(blockLine(blocks[index]));
   }
