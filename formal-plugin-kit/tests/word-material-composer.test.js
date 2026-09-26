@@ -18,6 +18,9 @@ function harness(shared) {
         const cached = JSON.parse(saved.get('word.material-composer:' + h.session) || '{}');
         return h.catalogResponse || {success:true,data:cached.catalogSummary || {totalDocuments:0,totalCharacters:0,documents:[],toc:[]}};
       }
+      if (url.startsWith('/word/material-composer/conflicts')) {
+        return h.conflictResponse || { success: true, data: { conflicts: [] } };
+      }
       return h.respond ? h.respond() : h.response;
     },
     render: v => h.views.push(v), copyText: t => h.copied.push(t), schedule: fn => h.scheduled.push(fn),
@@ -350,4 +353,155 @@ test('cancelled or failed task strictly rejects applyText and shows friendly err
   assert.equal(h.last().status, 'failed');
   await assert.rejects(() => h.api.apply({ sectionTitle: '第一章' }), /没有可写入/);
   assert.equal(h.applied.length, 0);
+});
+
+test('submits userFacts separately from instruction and passes to backend job', async () => {
+  const h = harness();
+  h.api.setMaterial({ materialId: 'm1' });
+  await h.api.start({
+    sectionTitle: '第一章',
+    instruction: '篇幅500字，正式语气',
+    userFacts: '2026年3月已完成初验'
+  });
+  assert.equal(h.calls.length, 1);
+  assert.equal(h.calls[0].body.instruction, '篇幅500字，正式语气');
+  assert.equal(h.calls[0].body.userFacts, '2026年3月已完成初验');
+  assert.equal(h.last().input.userFacts, '2026年3月已完成初验');
+});
+
+test('detects conflicts, displays conflict candidates without timestamp bias, and submits chosen resolution', async () => {
+  const h = harness();
+  h.api.setMaterial({ materialId: 'm1' });
+  h.conflictResponse = {
+    success: true,
+    data: {
+      conflicts: [
+        {
+          id: 'conflict-1',
+          factType: 'date',
+          description: '初验时间不一致',
+          candidates: [
+            { candidateId: 'c1', value: '2026-03-01', sourceName: '资料A.docx', sourceType: 'material' },
+            { candidateId: 'c2', value: '2026-04-01', sourceName: '用户补充事实', sourceType: 'user' }
+          ]
+        }
+      ]
+    }
+  };
+
+  const conflicts = await h.api.checkConflicts({
+    sectionTitle: '第一章',
+    instruction: '编写',
+    userFacts: '初验时间为2026年4月'
+  });
+  assert.equal(conflicts.length, 1);
+  assert.equal(h.calls[0].url, '/word/material-composer/conflicts');
+  assert.equal(h.calls[0].body.userFacts, '初验时间为2026年4月');
+  assert.equal(h.last().conflicts.length, 1);
+
+  // 用户选择采纳依据（非根据时间自动决定）
+  h.api.resolveConflict('conflict-1', 'c2', '2026-04-01');
+  assert.equal(h.last().conflictResolutions.length, 1);
+  assert.equal(h.last().conflictResolutions[0].chosenCandidateId, 'c2');
+
+  // 开始生成时携带用户选择的冲突解决项
+  await h.api.start({
+    sectionTitle: '第一章',
+    instruction: '编写',
+    userFacts: '初验时间为2026年4月'
+  });
+  assert.equal(h.calls[1].body.conflictResolutions.length, 1);
+  assert.equal(h.calls[1].body.conflictResolutions[0].chosenValue, '2026-04-01');
+});
+
+test('render distinguishes user-supplied facts, unverified key facts, and missing items in sidebar and body', () => {
+  const context = { window: {} };
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../wps-ai-assistant_1.0.0/material-composer.js'), 'utf8'), context);
+  const document = {
+    createElement(tag) {
+      return {
+        tagName: tag,
+        children: [],
+        className: '',
+        textContent: '',
+        appendChild(child) { this.children.push(child); }
+      };
+    }
+  };
+  const root = document.createElement('div');
+  root.ownerDocument = document;
+
+  const draft = {
+    taskType: 'word.material_composer',
+    documentSessionId: 'doc-a',
+    plainText: '正文第一段。〔待补充：专家名单〕',
+    paragraphs: [
+      {
+        text: '正文第一段。〔待补充：专家名单〕',
+        sources: [
+          { fileName: '用户补充事实', section: '补充事实', quote: '2026年4月初验', fragmentId: 'user-fact-1', sourceType: 'user' },
+          { fileName: '资料A.docx', section: '第一章', quote: '预算总计100万元', fragmentId: 'frag-1', sourceType: 'material' }
+        ],
+        missingItems: ['专家名单'],
+        unverifiedItems: ['预算 800 万元 (无依据)']
+      }
+    ],
+    missingItems: ['专家名单'],
+    unverifiedItems: ['预算 800 万元 (无依据)']
+  };
+
+  context.window.renderMaterialComposer(root, {
+    status: 'succeeded',
+    phaseLabel: '完成',
+    result: draft
+  });
+
+  const row = root.children.find(x => x.className === 'material-composer-paragraph');
+  assert.ok(row);
+  const aside = row.children.find(x => x.tagName === 'aside');
+  assert.ok(aside);
+  // 用户补充事实标识
+  assert.ok(aside.children.some(x => x.textContent.includes('用户补充事实')));
+  // 待补充项在侧栏
+  assert.ok(aside.children.some(x => x.textContent.includes('待补充：专家名单')));
+  // 待核对项在侧栏或专用区域
+  assert.ok(aside.children.some(x => x.textContent.includes('待核对') && x.textContent.includes('800 万元')));
+
+  // 全局待核对区域与警示
+  const unverifiedSection = root.children.find(x => x.className && x.className.includes('material-composer-unverified'));
+  assert.ok(unverifiedSection);
+  assert.ok(unverifiedSection.children.some(x => x.textContent.includes('全部冲突') || x.textContent.includes('无原文依据')));
+});
+
+test('allows user confirmation to apply draft containing missing items', async () => {
+  const h = harness();
+  h.api.setMaterial({ materialId: 'm1' });
+  await h.api.start({ sectionTitle: '第一章', instruction: '编写' });
+  const draftWithMissing = {
+    taskType: 'word.material_composer',
+    documentSessionId: 'doc-a',
+    plainText: '第一章正文。〔待补充：实施周期〕',
+    paragraphs: [
+      {
+        text: '第一章正文。〔待补充：实施周期〕',
+        sources: [{ fileName: '资料.docx', section: '一', quote: '引述', fragmentId: 'f1' }],
+        missingItems: ['实施周期']
+      }
+    ],
+    missingItems: ['实施周期']
+  };
+  h.response = { success: true, data: { jobId: 'job-a', status: 'completed', documentSessionId: 'doc-a', result: draftWithMissing } };
+  await h.api.refresh();
+
+  // 用户取消确认使用含缺项草稿时拒绝写入
+  await assert.rejects(
+    () => h.api.apply({ sectionTitle: '第一章', selectionText: '选区内容', confirmedMissingItems: false }),
+    /待补充项|取消/
+  );
+  assert.equal(h.applied.length, 0);
+
+  // 用户确认后成功写入选区
+  await h.api.apply({ sectionTitle: '第一章', selectionText: '选区内容', confirmedMissingItems: true });
+  assert.equal(h.applied.length, 1);
+  assert.ok(h.applied[0].text.includes('〔待补充：实施周期〕'));
 });

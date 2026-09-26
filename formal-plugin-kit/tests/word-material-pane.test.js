@@ -123,6 +123,7 @@ test('real pane generates and restores a read-only chapter with source sidebar i
   const run = (...args) => execFileSync('agent-browser', ['--session','material-pane', ...args], {encoding:'utf8', env:{...process.env, AGENT_BROWSER_SOCKET_DIR:temp}});
   const mock = `
 window.paneErrors=[];window.addEventListener('error',e=>paneErrors.push(e.message));
+window.confirm=function(){return true;};
 window.requests=[];
 window.mockBody='前缀|实施安排|后缀';
 var mockStart=mockBody.indexOf('实施安排'),mockEnd=mockStart+'实施安排'.length;

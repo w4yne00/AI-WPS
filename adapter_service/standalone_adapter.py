@@ -2431,6 +2431,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if (
                 path == "/word/material-composer/jobs"
+                or path == "/word/material-composer/conflicts"
                 or (
                     path.startswith("/word/material-composer/jobs/")
                     and path.endswith("/cancel")
@@ -3203,6 +3204,16 @@ class Handler(BaseHTTPRequestHandler):
                 self._write_workflow_error(error)
                 return
             self._write(200, envelope("standalone-workflow-profile-activate", "provider.workflow_profile", data, message="activated"))
+            return
+
+        if path == "/word/material-composer/conflicts":
+            trace_id = new_trace_id("standalone-material-composer-conflicts")
+            try:
+                data = MATERIAL_COMPOSER_JOBS.detect_conflicts(payload)
+            except AdapterError as error:
+                self._write(error.status_code, envelope(trace_id, "word.material_composer", success=False, message=error.message, errors=[{"code": error.code, "message": error.message}]))
+                return
+            self._write(200, envelope(trace_id, "word.material_composer", data, message="conflicts"))
             return
 
         if path == "/word/material-composer/jobs" or (path.startswith("/word/material-composer/jobs/") and path.endswith("/cancel")):

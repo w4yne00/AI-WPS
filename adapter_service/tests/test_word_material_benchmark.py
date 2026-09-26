@@ -270,3 +270,117 @@ class WordMaterial100kBenchmarkTests(unittest.TestCase):
         print("Selected source text    : checked against imported original fragments")
         print("Real model quality      : not evaluated; responses above are stubbed")
         print("=======================================================\n")
+
+
+class WordMaterialFactConflictReviewBenchmarkTests(unittest.TestCase):
+    def test_controlled_conflict_missing_facts_and_unverified_citation_benchmark(self):
+        session_id = "session-conflict-bench-" + str(int(time.time()))
+        materials_service = WordMaterialImportService()
+        coordinator = LongTaskCoordinator()
+        composer_jobs = MaterialComposerJobs(materials_service, coordinator=coordinator)
+
+        doc1_xml = (
+            """<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p><w:pPr><w:outlineLvl w:val="0" /></w:pPr><w:r><w:t>工程建设方案A</w:t></w:r></w:p>
+    <w:p><w:r><w:t>一期工程初验时间为2026年6月30日，总预算为800万元。</w:t></w:r></w:p>
+  </w:body>
+</w:document>"""
+        ).encode("utf-8")
+        doc2_xml = (
+            """<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p><w:pPr><w:outlineLvl w:val="0" /></w:pPr><w:r><w:t>工程建设方案B</w:t></w:r></w:p>
+    <w:p><w:r><w:t>一期工程初验时间为2026年7月15日，总预算为950万元。</w:t></w:r></w:p>
+  </w:body>
+</w:document>"""
+        ).encode("utf-8")
+
+        docx1 = build_docx(document_xml=doc1_xml)
+        docx2 = build_docx(document_xml=doc2_xml)
+
+        res1 = materials_service.import_material({
+            "fileName": "方案A.docx",
+            "mimeType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "sizeBytes": len(docx1),
+            "contentBase64": base64.b64encode(docx1).decode("utf-8"),
+            "documentSessionId": session_id,
+        })
+        res2 = materials_service.import_material({
+            "fileName": "方案B.docx",
+            "mimeType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "sizeBytes": len(docx2),
+            "contentBase64": base64.b64encode(docx2).decode("utf-8"),
+            "documentSessionId": session_id,
+        })
+
+        user_facts = "一期工程初验时间确定为2026年8月1日，由集团王总统一主持验收。"
+
+        conflict_result = composer_jobs.detect_conflicts({
+            "documentSessionId": session_id,
+            "sectionTitle": "工程初验与预算规划",
+            "instruction": "整理初验时间与预算分配",
+            "userFacts": user_facts,
+        })
+        conflicts = conflict_result.get("conflicts", [])
+        self.assertGreaterEqual(len(conflicts), 1)
+
+        date_conflict = next(c for c in conflicts if "时间" in c["topic"])
+        self.assertIsNotNone(date_conflict)
+        candidate_sources = {opt["sourceName"] for opt in date_conflict["options"]}
+        self.assertIn("方案A.docx", candidate_sources)
+        self.assertIn("方案B.docx", candidate_sources)
+        self.assertIn("用户补充事实", candidate_sources)
+
+        chosen_date_cand = next(opt for opt in date_conflict["options"] if opt["sourceType"] == "user")
+        conflict_resolutions = [
+            {
+                "conflictId": date_conflict["conflictId"],
+                "chosenCandidateId": chosen_date_cand["optionId"],
+                "chosenValue": chosen_date_cand["value"],
+                "chosenSource": chosen_date_cand["sourceName"],
+                "resolution": "use_candidate"
+            }
+        ]
+
+        mock_answer = {
+            "paragraphs": [
+                {
+                    "text": "一期工程初验时间确定为2026年8月1日，由集团王总统一主持验收。〔待补充：验收专家组详细名单〕",
+                    "fragmentIds": ["user-fact-1"],
+                    "missingItems": ["验收专家组详细名单"]
+                },
+                {
+                    "text": "一期工程总预算为800万元；二期追加预算 1,200 万元。",
+                    "fragmentIds": [res1["fragments"][1]["fragmentId"]],
+                    "missingItems": []
+                }
+            ]
+        }
+
+        with patch("app.services.provider_client.ProviderClient.resolve_task_auth",
+                   return_value={"providerBaseUrl": "https://model.invalid", "apiKey": "test"}), \
+             patch("app.services.provider_client.ProviderClient.post_task",
+                   return_value={"answer": json.dumps(mock_answer)}):
+            job = composer_jobs.start({
+                "documentSessionId": session_id,
+                "clientJobId": "bench-conflict-001",
+                "sectionTitle": "工程初验与预算规划",
+                "instruction": "编写初验计划与预算说明，并列出缺项",
+                "userFacts": user_facts,
+                "conflictResolutions": conflict_resolutions
+            }, "trace-bench-conflict-01")
+            terminal = coordinator.wait(job["jobId"], task_type="word.material_composer")
+            self.assertEqual(terminal["status"], "completed")
+
+            result = terminal["result"]
+            p1_sources = result["paragraphs"][0]["sources"]
+            self.assertTrue(any(s.get("sourceType") == "user" and s.get("fileName") == "用户补充事实" for s in p1_sources))
+
+            self.assertIn("验收专家组详细名单", result.get("missingItems", []))
+            self.assertIn("〔待补充：验收专家组详细名单〕", result["plainText"])
+
+            unverified = result.get("unverifiedItems", [])
+            self.assertTrue(any("1,200 万元" in item for item in unverified))
