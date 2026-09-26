@@ -200,6 +200,7 @@ class MaterialComposerBodyLimitMiddleware(FullDocumentReviewBodyLimitMiddleware)
             and scope.get("method") == "POST"
             and (
                 path == "/word/material-composer/jobs"
+                or path == "/word/material-composer/conflicts"
                 or (
                     path.startswith("/word/material-composer/jobs/")
                     and path.endswith("/cancel")

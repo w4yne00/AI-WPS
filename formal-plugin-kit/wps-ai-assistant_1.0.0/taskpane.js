@@ -1873,11 +1873,15 @@
         (busy || (!lastMaterialComposerView && !byId("material-section-title").value))) {
       byId("material-section-title").value = view.input.sectionTitle || "";
       byId("material-instruction").value = view.input.instruction || "";
+      if (byId("material-user-facts")) {
+        byId("material-user-facts").value = view.input.userFacts || "";
+      }
     }
     lastMaterialComposerView = view;
-    byId("material-composer-status").textContent = view.error || view.message || "资料仅用于本次章节草稿；请核对结果中的出处和缺项。";
-    ["material-import-file", "material-section-title", "material-instruction", "btn-material-selection", "btn-material-generate"].forEach(function (id) {
-      byId(id).disabled = busy;
+    byId("material-composer-status").textContent = view.error || view.message || "资料仅用于本次章节草稿；请核对结果中的出处、待核对项和缺项。";
+    ["material-import-file", "material-section-title", "material-instruction", "material-user-facts", "btn-material-selection", "btn-material-generate", "btn-material-check-conflicts"].forEach(function (id) {
+      var el = byId(id);
+      if (el) el.disabled = busy;
     });
     byId("btn-material-cancel").disabled = !busy;
     byId("btn-material-copy").disabled = !view.result;
@@ -1914,6 +1918,9 @@
       if (busy || view.documentSessionId !== getMaterialComposerSessionId()) return;
       byId("material-section-title").value = sectionTitle;
       renderMaterialComposerView(view);
+    }, function (conflictId, candidateId, chosenValue) {
+      if (busy || view.documentSessionId !== getMaterialComposerSessionId()) return;
+      ensureMaterialComposer().resolveConflict(conflictId, candidateId, chosenValue);
     });
   }
 
@@ -1936,11 +1943,36 @@
           start: range.Start, end: range.End, selectedText: range.Text
         } : null;
     }
-    return ensureMaterialComposer().start({
+    var userFactsEl = byId("material-user-facts");
+    var userFactsVal = userFactsEl && typeof userFactsEl.value === "string" ? userFactsEl.value.trim() : "";
+    var composerInput = {
       sectionTitle: byId("material-section-title").value,
       instruction: byId("material-instruction").value
-    }).catch(function (error) {
+    };
+    if (userFactsVal) {
+      composerInput.userFacts = userFactsVal;
+    }
+    return ensureMaterialComposer().start(composerInput).catch(function (error) {
       byId("material-composer-status").textContent = error.message || "章节草稿提交失败。";
+    });
+  }
+
+  function checkMaterialComposerConflicts() {
+    var userFactsEl = byId("material-user-facts");
+    var userFactsVal = userFactsEl ? userFactsEl.value : "";
+    byId("material-composer-status").textContent = "正在核对资料与补充事实冲突...";
+    return ensureMaterialComposer().checkConflicts({
+      sectionTitle: byId("material-section-title").value,
+      instruction: byId("material-instruction").value,
+      userFacts: userFactsVal
+    }).then(function (conflicts) {
+      if (conflicts && conflicts.length > 0) {
+        byId("material-composer-status").textContent = "发现 " + conflicts.length + " 处事实差异，请在下方手动选择采纳依据。";
+      } else {
+        byId("material-composer-status").textContent = "未检测到明显事实冲突。";
+      }
+    }).catch(function (error) {
+      byId("material-composer-status").textContent = error.message || "核对事实冲突失败。";
     });
   }
 
@@ -1999,6 +2031,17 @@
       byId("material-composer-status").textContent = "章节草稿禁止全篇替换，请缩小选区后重新确认。";
       return Promise.resolve();
     }
+    var currentRes = (lastMaterialComposerView && lastMaterialComposerView.result) || null;
+    var hasMissing = currentRes && ((currentRes.missingItems && currentRes.missingItems.length > 0) ||
+      (currentRes.paragraphs && currentRes.paragraphs.some(function (p) { return p.missingItems && p.missingItems.length > 0; })));
+    var confirmedMissing = true;
+    if (hasMissing && typeof window.confirm === "function") {
+      confirmedMissing = window.confirm("当前章节草稿包含待补充项（正文已标注“〔待补充：...〕”），确认直接使用并写入文档吗？");
+      if (!confirmedMissing) {
+        byId("material-composer-status").textContent = "草稿包含待补充项，已取消写入。您可补全信息后重新生成，或点击「复制正文」手动编辑。";
+        return Promise.resolve();
+      }
+    }
     materialComposerWriteAttempted = true;
     byId("btn-material-apply").disabled = true;
     return composer.apply({
@@ -2006,7 +2049,8 @@
       selectionText: selectionText,
       hasSelection: activeRange.End > activeRange.Start,
       documentSessionId: currentDocSession,
-      isFullDocument: false
+      isFullDocument: false,
+      confirmedMissingItems: confirmedMissing
     }).then(function (res) {
       if (res && res.mode === "replace") {
         materialComposerAppliedMessage = "章节草稿已替换至所选区域。";
@@ -2034,6 +2078,9 @@
       byId("material-import-file").value = "";
       byId("material-section-title").value = "";
       byId("material-instruction").value = "";
+      if (byId("material-user-facts")) {
+        byId("material-user-facts").value = "";
+      }
       var applyBtn = byId("btn-material-apply");
       if (applyBtn) {
         applyBtn.disabled = true;
@@ -12756,6 +12803,10 @@
     byId("btn-writing-policy-import-back").addEventListener("click", closeWritingPolicyImport);
     byId("writing-policy-import-file").addEventListener("change", handleWritingPolicyImportFileChange);
     byId("btn-material-generate").addEventListener("click", startMaterialComposer);
+    var btnCheckConflicts = byId("btn-material-check-conflicts");
+    if (btnCheckConflicts) {
+      btnCheckConflicts.addEventListener("click", checkMaterialComposerConflicts);
+    }
     byId("btn-material-selection").addEventListener("click", useMaterialComposerSelection);
     byId("btn-material-cancel").addEventListener("click", function () { ensureMaterialComposer().cancel(); });
     byId("btn-material-refresh").addEventListener("click", function () { ensureMaterialComposer().restore(); });
@@ -12770,6 +12821,16 @@
         materialSectionTitle.addEventListener(ev, function () {
           if (lastMaterialComposerView) {
             renderMaterialComposerView(lastMaterialComposerView);
+          }
+        });
+      });
+    }
+    var materialUserFacts = byId("material-user-facts");
+    if (materialUserFacts) {
+      ["input", "change"].forEach(function (ev) {
+        materialUserFacts.addEventListener(ev, function () {
+          if (lastMaterialComposerView && lastMaterialComposerView.input) {
+            lastMaterialComposerView.input.userFacts = materialUserFacts.value;
           }
         });
       });

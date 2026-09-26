@@ -52,9 +52,13 @@
           <label class="field" for="material-instruction"><span>写作要求</span>
             <textarea id="material-instruction" rows="3" placeholder="说明本章节的结构、篇幅和语气要求"></textarea>
           </label>
-          <p class="field-hint">最多使用 5 份、合计 100,000 字资料。已有正文和历史回答不作为事实来源；经确认后可插入或替换选区。</p>
+          <label class="field" for="material-user-facts"><span>补充事实</span>
+            <textarea id="material-user-facts" rows="3" placeholder="选填。补充资料未提及的最新数据、背景事实或关键信息。"></textarea>
+          </label>
+          <p class="field-hint">最多使用 5 份、合计 100,000 字资料。补充事实与写作要求分别填写；若有冲突需手动选择采纳依据。生成后核对关键数字与承诺，无依据内容标待核对，缺项草稿须经确认后方可写入选区或光标。</p>
           <div class="material-actions">
             <button id="btn-material-generate" type="button">生成章节草稿</button>
+            <button id="btn-material-check-conflicts" class="ghost-action" type="button">核对事实冲突</button>
             <button id="btn-material-cancel" class="ghost-action" type="button" disabled>取消任务</button>
             <button id="btn-material-refresh" class="ghost-action" type="button">恢复查询</button>
             <button id="btn-material-copy" class="ghost-action" type="button" disabled>复制正文</button>
