@@ -7,7 +7,8 @@ import threading
 import time
 import uuid
 from copy import deepcopy
-from http.client import IncompleteRead, RemoteDisconnected
+from contextlib import contextmanager
+from http.client import HTTPConnection, HTTPSConnection, IncompleteRead, RemoteDisconnected
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Dict, List, Optional, Tuple
@@ -66,6 +67,83 @@ class StreamingUnsupportedError(Exception):
 
 
 logger = get_logger(__name__)
+
+
+@contextmanager
+def _cancellable_urlopen(request, timeout, control):
+    state = {"connection": None, "socket": None, "response": None, "cancelled": False}
+    lock = threading.Lock()
+
+    def interrupt():
+        with lock:
+            state["cancelled"] = True
+            connection, response = state["connection"], state["response"]
+            response_socket = getattr(connection, "sock", None) or state["socket"]
+            if response is not None:
+                raw = getattr(getattr(response, "fp", None), "raw", None)
+                response_socket = getattr(raw, "_sock", None) or response_socket
+        if response_socket is not None:
+            try:
+                response_socket.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            response_socket.close()
+        elif response is not None:
+            response.close()
+
+    def connection_factory(connection_type):
+        def create(*args, **kwargs):
+            connection = connection_type(*args, **kwargs)
+            connect = connection.connect
+            with lock:
+                state["connection"] = connection
+
+            def checked_connect():
+                with lock:
+                    cancelled = state["cancelled"]
+                if cancelled:
+                    raise error.URLError("request cancelled")
+                connect()
+                with lock:
+                    state["socket"] = connection.sock
+                    cancelled = state["cancelled"]
+                if cancelled:
+                    interrupt()
+                    raise error.URLError("request cancelled")
+
+            connection.connect = checked_connect
+            return connection
+        return create
+
+    class TrackedHTTPHandler(urllib_request.HTTPHandler):
+        def http_open(self, req):
+            return self.do_open(connection_factory(HTTPConnection), req)
+
+    class TrackedHTTPSHandler(urllib_request.HTTPSHandler):
+        def https_open(self, req):
+            return self.do_open(connection_factory(HTTPSConnection), req,
+                                context=self._context)
+
+    opener = urllib_request.build_opener(TrackedHTTPHandler(), TrackedHTTPSHandler())
+    control.set_cancel_callback(interrupt)
+    try:
+        with opener.open(request, timeout=timeout) as response:
+            with lock:
+                state["response"] = response
+                cancelled = state["cancelled"]
+            if cancelled:
+                interrupt()
+                raise error.URLError("request cancelled")
+            yield response
+    finally:
+        control.clear_cancel_callback(interrupt)
+
+
+def _open_task_response(request, timeout, task_type, control):
+    if (task_type == "word.material_composer" and control is not None
+            and hasattr(control, "set_cancel_callback") and hasattr(control, "clear_cancel_callback")):
+        return _cancellable_urlopen(request, timeout, control)
+    return urllib_request.urlopen(request, timeout=timeout)
 LOCAL_KEY_PATH = Path(__file__).resolve().parents[3] / "run" / "provider_api_key"
 ROUTE_KEY_DIR = Path(__file__).resolve().parents[3] / "run" / "provider_api_keys"
 _LAST_PROVIDER_DEBUG: Dict = {}
@@ -720,13 +798,32 @@ def _sanitize_provider_error_body(
     return str(sanitized)[:limit]
 
 
-def _read_http_error_raw_result(exc: error.HTTPError) -> Tuple[str, bool]:
+def _read_http_error_raw_result(exc: error.HTTPError, control=None) -> Tuple[str, bool]:
+    cancel_callback = None
+    if control is not None and hasattr(control, "set_cancel_callback") and hasattr(control, "clear_cancel_callback"):
+        def interrupt_error_read():
+            response = getattr(exc, "fp", None)
+            raw = getattr(getattr(response, "fp", None), "raw", None)
+            response_socket = getattr(raw, "_sock", None)
+            if response_socket is not None:
+                try:
+                    response_socket.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+                response_socket.close()
+            else:
+                exc.close()
+        cancel_callback = interrupt_error_read
+        control.set_cancel_callback(cancel_callback)
     try:
         preview = exc.read(4096)
         has_more = bool(exc.read(4096))
         return preview.decode("utf-8", errors="replace"), not has_more
     except Exception:
         return "", False
+    finally:
+        if cancel_callback is not None:
+            control.clear_cancel_callback(cancel_callback)
 
 
 def _read_http_error_raw(exc: error.HTTPError) -> str:
@@ -3211,7 +3308,7 @@ class ProviderClient:
                     progress_callback("provider_waiting")
                 except Exception:
                     pass
-            with urllib_request.urlopen(req, timeout=timeout) as response:
+            with _open_task_response(req, timeout, task_type, progress_callback) as response:
                 t_headers = time.monotonic()
                 if should_stream:
                     content_type = str(
@@ -3495,7 +3592,9 @@ class ProviderClient:
         except error.HTTPError as exc:
             t_headers = time.monotonic()
             status = int(exc.code)
-            raw_error_body, error_body_complete = _read_http_error_raw_result(exc)
+            raw_error_body, error_body_complete = _read_http_error_raw_result(
+                exc, progress_callback if task_type == "word.material_composer" else None
+            )
             t_complete = time.monotonic() if error_body_complete else None
             perf_metrics = _provider_performance_metrics(
                 t_start,
@@ -3787,7 +3886,7 @@ class ProviderClient:
             t_start = time.monotonic()
             t_headers = None
             try:
-                with urllib_request.urlopen(req, timeout=timeout) as response:
+                with _open_task_response(req, timeout, task_type, progress_callback) as response:
                     t_headers = time.monotonic()
                     raw_body = response.read().decode("utf-8")
                     t_complete = time.monotonic()
@@ -3864,7 +3963,9 @@ class ProviderClient:
                     return body
             except error.HTTPError as exc:
                 t_headers = time.monotonic()
-                raw_error_body, error_body_complete = _read_http_error_raw_result(exc)
+                raw_error_body, error_body_complete = _read_http_error_raw_result(
+                    exc, progress_callback if task_type == "word.material_composer" else None
+                )
                 error_body = _sanitize_provider_error_body(
                     raw_error_body,
                     query=query,

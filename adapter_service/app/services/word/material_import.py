@@ -3,6 +3,7 @@ import binascii
 import io
 import re
 import secrets
+import threading
 import zipfile
 from typing import Dict, List, Optional
 from xml.etree import ElementTree
@@ -21,6 +22,7 @@ MATERIAL_IMPORT_MAX_READABLE_CHARACTERS = 100000
 MATERIAL_IMPORT_MAX_TABLE_COLUMNS = 256
 MATERIAL_IMPORT_MAX_TABLE_CELLS = 100000
 CHARACTER_COUNT_METHOD = "unicode_codepoints_of_extracted_readable_text"
+_MAX_FRAGMENT_CHARACTERS = 256
 _PART = "word/document.xml"
 _HEADING_NAME = re.compile(r"^(?:Heading|标题)\s*([1-6])$", re.IGNORECASE)
 
@@ -29,8 +31,13 @@ class WordMaterialImportService:
     def __init__(self) -> None:
         self._materials = {}
         self._session_catalogs = {}
+        self._import_lock = threading.Lock()
 
     def import_material(self, request: dict) -> dict:
+        with self._import_lock:
+            return self._import_material(request)
+
+    def _import_material(self, request: dict) -> dict:
         payload = request or {}
         file_name = str(payload.get("fileName") or payload.get("file_name") or "")
         content = _decode_upload(payload.get("contentBase64") or payload.get("content_base64"))
@@ -89,9 +96,11 @@ class WordMaterialImportService:
 
         for frag in reading["fragments"]:
             frag["fileName"] = file_name
+            frag["materialId"] = material_id
 
         for block in reading["blocks"]:
             block["fileName"] = file_name
+            block["materialId"] = material_id
 
         doc_summary = {
             "materialId": material_id,
@@ -278,10 +287,13 @@ def _read_document(
                 )
                 if block is None:
                     continue
-                _locate_block(block, [fragment], body_path)
+                paragraph_fragments = (
+                    _split_text_fragment(fragment, start_fragment_index + len(fragments))
+                    if fragment is not None else []
+                )
+                _locate_block(block, paragraph_fragments, body_path)
                 blocks.append(block)
-                if fragment is not None:
-                    fragments.append(fragment)
+                fragments.extend(paragraph_fragments)
                 readable_count += count
             elif name == "tbl":
                 block, table_fragments, count = _table_block(
@@ -336,6 +348,20 @@ def _locate_block(block, fragments, body_path):
     for fragment in fragments:
         fragment["blockId"] = block["blockId"]
         fragment["source"]["bodyPath"] = list(body_path)
+
+
+def _split_text_fragment(fragment, start_number):
+    text = fragment["text"]
+    if len(text) <= _MAX_FRAGMENT_CHARACTERS:
+        return [fragment]
+    parts = []
+    for offset in range(0, len(text), _MAX_FRAGMENT_CHARACTERS):
+        part = dict(fragment)
+        part["fragmentId"] = "frag-{0}".format(start_number + len(parts))
+        part["text"] = text[offset:offset + _MAX_FRAGMENT_CHARACTERS]
+        part["source"] = dict(fragment["source"], textOffset=offset)
+        parts.append(part)
+    return parts
 
 
 def _paragraph_block(paragraph, style_names, block_index, fragment_number):
@@ -408,16 +434,15 @@ def _table_block(table, block_index, table_index, fragment_start, cell_budget):
                 "row": row_index,
                 "column": column_index,
             }
-            fragments.append(
-                {
-                    "fragmentId": "frag-{0}".format(fragment_number),
-                    "blockId": "block-{0}".format(block_index),
-                    "kind": "table_cell",
-                    "text": text,
-                    "source": source,
-                }
-            )
-            fragment_number += 1
+            cell_fragments = _split_text_fragment({
+                "fragmentId": "frag-{0}".format(fragment_number),
+                "blockId": "block-{0}".format(block_index),
+                "kind": "table_cell",
+                "text": text,
+                "source": source,
+            }, fragment_number)
+            fragments.extend(cell_fragments)
+            fragment_number += len(cell_fragments)
             readable_count += len(text)
             column_index += span
             if span > 1:

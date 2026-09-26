@@ -1910,7 +1910,11 @@
       }
     }
 
-    window.renderMaterialComposer(byId("material-composer-result"), view);
+    window.renderMaterialComposer(byId("material-composer-result"), view, function (sectionTitle) {
+      if (busy || view.documentSessionId !== getMaterialComposerSessionId()) return;
+      byId("material-section-title").value = sectionTitle;
+      renderMaterialComposerView(view);
+    });
   }
 
   function startMaterialComposer() {
@@ -12754,7 +12758,7 @@
     byId("btn-material-generate").addEventListener("click", startMaterialComposer);
     byId("btn-material-selection").addEventListener("click", useMaterialComposerSelection);
     byId("btn-material-cancel").addEventListener("click", function () { ensureMaterialComposer().cancel(); });
-    byId("btn-material-refresh").addEventListener("click", function () { ensureMaterialComposer().refresh(); });
+    byId("btn-material-refresh").addEventListener("click", function () { ensureMaterialComposer().restore(); });
     byId("btn-material-copy").addEventListener("click", function () { ensureMaterialComposer().copy(); });
     var btnMaterialApply = byId("btn-material-apply");
     if (btnMaterialApply) {

@@ -1,6 +1,7 @@
 import json
 import time
 from unittest.mock import patch
+import pytest
 
 from fastapi.testclient import TestClient
 from app.main import app
@@ -34,6 +35,39 @@ def test_composer_api_resolves_sources_and_preserves_missing_information():
         assert client.post('/word/material-composer/jobs', json=request).status_code == 409
 
 
+def test_same_named_materials_keep_distinct_source_sections():
+    from app.services.long_task_coordinator import LongTaskCoordinator
+    from app.services.word.material_composer import MaterialComposerJobs
+    from app.services.word.material_import import WordMaterialImportService
+
+    materials = WordMaterialImportService()
+    first = None
+    for heading, fact in [('第一章', '第一份事实'), ('第二章', '第二份事实')]:
+        xml = ('<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+               '<w:body><w:p><w:pPr><w:outlineLvl w:val="0"/></w:pPr><w:r><w:t>{0}</w:t></w:r></w:p>'
+               '<w:p><w:r><w:t>{1}</w:t></w:r></w:p></w:body></w:document>').format(heading, fact)
+        payload = upload_payload(build_docx(document_xml=xml.encode('utf-8')), file_name='同名.docx')
+        payload['documentSessionId'] = 'same-name-sections'
+        imported = materials.import_material(payload)
+        if first is None:
+            first = imported
+
+    first_fact = next(f for f in first['fragments'] if f['text'] == '第一份事实')
+    answer = {'paragraphs': [{'text': '第一份事实', 'fragmentIds': [first_fact['fragmentId']], 'missingItems': []}]}
+    coordinator = LongTaskCoordinator()
+    jobs = MaterialComposerJobs(materials, coordinator=coordinator)
+    with patch('app.services.provider_client.ProviderClient.resolve_task_auth',
+               return_value={'providerBaseUrl': 'https://model.invalid', 'apiKey': 'test'}), \
+         patch('app.services.provider_client.ProviderClient.post_task',
+               return_value={'answer': json.dumps(answer)}):
+        job = jobs.start({'documentSessionId': 'same-name-sections', 'clientJobId': 'same-name-section-0001',
+                          'sectionTitle': '第一章', 'instruction': '整理事实'}, 'same-name-trace')
+        terminal = coordinator.wait(job['jobId'], task_type='word.material_composer')
+
+    assert terminal['status'] == 'completed', terminal
+    assert terminal['result']['paragraphs'][0]['sources'][0]['section'] == '第一章'
+
+
 def test_standalone_composer_creation_and_session_guard():
     import standalone_adapter as standalone
     from tests.test_word_material_import import _invoke_standalone
@@ -55,6 +89,41 @@ def test_over_budget_rejected_before_model_call():
         response = client.post('/word/material-composer/jobs', json=payload)
     assert response.status_code == 413
     assert response.json()['errors'][0]['code'] == 'MODEL_INPUT_OVER_BUDGET'
+
+
+def test_long_material_packs_final_prompt_inside_model_budget():
+    from app.services.long_task_coordinator import LongTaskCoordinator
+    from app.services.provider_client import _estimate_direct_tokens
+    from app.services.system_prompts import SystemPromptStore
+    from app.services.word.material_composer import MaterialComposerJobs
+    from app.services.word.material_import import WordMaterialImportService
+
+    xml = ('<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+           '<w:body><w:p><w:r><w:t>{0}</w:t></w:r></w:p></w:body></w:document>').format('关键事实' * 1250)
+    materials = WordMaterialImportService()
+    materials.import_material(upload_payload(build_docx(document_xml=xml.encode('utf-8'))))
+    coordinator = LongTaskCoordinator()
+    jobs = MaterialComposerJobs(materials, coordinator=coordinator)
+    sent = []
+
+    def provider_response(task_type, trace_id, input_data, prompt, **kwargs):
+        sent.append(prompt)
+        selected = json.loads(prompt.splitlines()[-1])['materials']
+        return {'answer': json.dumps({'paragraphs': [
+            {'text': '关键事实', 'fragmentIds': [selected[0]['fragmentId']], 'missingItems': []}
+        ]})}
+
+    with patch('app.services.provider_client.ProviderClient.resolve_task_auth',
+               return_value={'providerBaseUrl': 'https://model.invalid', 'apiKey': 'test',
+                             'contextWindowTokens': 2500, 'maxOutputTokens': 500}), \
+         patch('app.services.provider_client.ProviderClient.post_task', side_effect=provider_response):
+        job = jobs.start({'documentSessionId': 'doc-session-1', 'clientJobId': 'long-budget-0001',
+                          'sectionTitle': '关键事实', 'instruction': '编写章节'}, 'long-budget-trace')
+        terminal = coordinator.wait(job['jobId'], task_type='word.material_composer')
+
+    assert terminal['status'] == 'completed', terminal
+    system_prompt = SystemPromptStore().load('word.material_composer')['content']
+    assert _estimate_direct_tokens(system_prompt, sent[0]) <= 1750
 
 
 def test_composer_api_rejects_oversized_body_before_parsing():
@@ -113,6 +182,81 @@ def test_standalone_completed_result_and_cancel_are_session_isolated():
         assert job.get('result') is None
 
 
+@pytest.mark.parametrize('access_method', ['direct_model', 'workflow_platform'])
+@pytest.mark.parametrize('delay_headers', [True, False])
+@pytest.mark.parametrize('response_status', [200, 500])
+def test_running_cancel_interrupts_model_connection(access_method, delay_headers, response_status):
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    from app.services.long_task_coordinator import LongTaskCoordinator
+    from app.services.word.material_composer import MaterialComposerJobs
+    from app.services.word.material_import import WordMaterialImportService
+    from app.services import provider_client
+
+    started, release = threading.Event(), threading.Event()
+    reading_error = threading.Event()
+    original_error_read = provider_client._read_http_error_raw_result
+
+    def record_error_read(*args, **kwargs):
+        reading_error.set()
+        return original_error_read(*args, **kwargs)
+
+    class DelayedModel(BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.rfile.read(int(self.headers['Content-Length']))
+            content = json.dumps({'paragraphs': [
+                {'text': '事实', 'fragmentIds': ['frag-2'], 'missingItems': []}
+            ]})
+            answer = json.dumps({'answer': content, 'choices': [{'message': {'content': content}}]}).encode('utf-8')
+            try:
+                if not delay_headers:
+                    self.send_response(response_status)
+                    self.send_header('Content-Length', str(len(answer)))
+                    self.end_headers()
+                started.set()
+                release.wait(3)
+                if delay_headers:
+                    self.send_response(response_status)
+                    self.send_header('Content-Length', str(len(answer)))
+                    self.end_headers()
+                self.wfile.write(answer)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+
+        def log_message(self, *args):
+            pass
+
+    server = HTTPServer(('127.0.0.1', 0), DelayedModel)
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+    try:
+        materials = WordMaterialImportService()
+        material = materials.import_material(upload_payload(build_docx()))
+        jobs = MaterialComposerJobs(materials, coordinator=LongTaskCoordinator())
+        auth = {'accessMethod': access_method, 'providerBaseUrl': 'http://127.0.0.1:{0}/v1'.format(server.server_port),
+                'apiKey': 'test', 'modelName': 'test-model'}
+        with patch('app.services.provider_client.ProviderClient.resolve_task_auth', return_value=auth), \
+             patch('app.services.provider_client._read_http_error_raw_result', side_effect=record_error_read):
+            job = jobs.start({'materialId': material['materialId'], 'documentSessionId': 'doc-session-1',
+                              'clientJobId': 'http-cancel-0001', 'sectionTitle': '范围', 'instruction': '编写'}, 'cancel-trace')
+            assert started.wait(1)
+            if response_status == 500 and not delay_headers:
+                assert reading_error.wait(1)
+            jobs.cancel(job['jobId'], 'doc-session-1')
+            deadline = time.monotonic() + 1
+            while time.monotonic() < deadline:
+                current = jobs.get(job['jobId'], 'doc-session-1')
+                if current['status'] == 'cancelled':
+                    break
+                time.sleep(.01)
+            assert current['status'] == 'cancelled', current
+            assert current.get('result') is None
+    finally:
+        release.set()
+        server.shutdown()
+        server.server_close()
+
+
 def test_invalid_model_sources_never_become_completed_result():
     import uuid
     client = TestClient(app)
@@ -159,7 +303,8 @@ def test_composer_uses_its_own_model_configuration_and_system_prompt(tmp_path):
     def respond(request, *args, **kwargs):
         captured.append(json.loads(request.data))
         return FakeResponse({'choices':[{'message':{'content':json.dumps({'paragraphs':[{'text':'信息化处负责。', 'fragmentIds':['frag-5'], 'missingItems':[]}]})}}]})
-    with patch('app.services.provider_client.urllib_request.urlopen', side_effect=respond):
+    with patch('app.services.provider_client.urllib_request.urlopen', side_effect=respond), \
+         patch('app.services.provider_client._cancellable_urlopen', side_effect=respond):
         assert provider.validate_model_configuration(config['id'], 'validate-composer')['success'] is True
         job = jobs.start(dict(materialId=material['materialId'], documentSessionId='doc-session-1', clientJobId='own-model-0001', sectionTitle='范围', instruction='编写'), 'own-model-trace')
         terminal = jobs.coordinator.wait(job['jobId'], task_type='word.material_composer')
@@ -184,6 +329,13 @@ def test_extract_relevant_fragments_within_budget_returns_all():
     selected = extract_relevant_fragments(catalog, "第一章", "要求A", max_tokens=10000)
     assert len(selected) == 2
     assert [f["fragmentId"] for f in selected] == ["f1", "f2"]
+
+
+def test_extract_relevant_fragments_never_forces_one_oversized_fragment():
+    from app.services.word.material_composer import extract_relevant_fragments
+
+    catalog = {'fragmentsList': [{'fragmentId': 'f1', 'text': '甲' * 5000, 'blockId': 'b1'}]}
+    assert extract_relevant_fragments(catalog, '章节', '要求', max_tokens=500) == []
 
 
 def test_extract_relevant_fragments_over_budget_prioritizes_matching_heading_and_keywords():

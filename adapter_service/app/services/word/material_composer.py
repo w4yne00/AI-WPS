@@ -30,23 +30,23 @@ def extract_relevant_fragments(catalog: dict, section_title: str, instruction: s
         return []
 
     import re
-    all_text = " ".join(f.get("text", "") for f in fragments)
-    if _estimate_direct_tokens("", all_text) <= max_tokens:
+    serialized = json.dumps(fragments, ensure_ascii=False)
+    if max(len(serialized), (len(serialized.encode("utf-8")) + 3) // 4) <= max_tokens:
         return list(fragments)
 
     query_text = "{0} {1}".format(section_title or "", instruction or "")
 
     sections = {}
     section = ""
-    last_file = None
+    last_material = None
     for block in cat.get("blocks", []):
-        curr_file = block.get("fileName", "")
-        if curr_file != last_file:
+        curr_material = block.get("materialId") or block.get("fileName", "")
+        if curr_material != last_material:
             section = ""
-            last_file = curr_file
+            last_material = curr_material
         if block.get("kind") == "heading":
             section = block.get("text", "")
-        sections[(curr_file, block.get("blockId"))] = section
+        sections[(curr_material, block.get("blockId"))] = section
         sections[block.get("blockId")] = section
 
     clean_inst = re.sub(r"^(整理|列出|汇总|总结|查找|编写|说明|提取)", "", (instruction or "").strip())
@@ -63,7 +63,7 @@ def extract_relevant_fragments(catalog: dict, section_title: str, instruction: s
                     inst_phrases.add(w[i:i+n])
 
     section_phrases = [p for p in re.findall(r"[\u4e00-\u9fff]{2,}|[a-zA-Z0-9]{2,}", section_title or "") if p]
-    query_terms = [p for p in re.findall(r"[\u4e00-\u9fff]|[a-zA-Z0-9]+", query_text) if p]
+    query_terms = re.findall(r"[a-zA-Z0-9]+", query_text)
 
     matched_sections = set()
     for toc_entry in cat.get("toc", []):
@@ -73,25 +73,23 @@ def extract_relevant_fragments(catalog: dict, section_title: str, instruction: s
                 matched_sections.add(toc_title)
             elif any(phrase in toc_title for phrase in inst_phrases):
                 matched_sections.add(toc_title)
-            elif any(term in toc_title for term in query_terms):
-                matched_sections.add(toc_title)
 
     row_text_map = {}
     for frag in fragments:
         if frag.get("kind") == "table_cell":
-            b_file = frag.get("fileName", "")
+            b_material = frag.get("materialId") or frag.get("fileName", "")
             b_id = frag.get("blockId", "")
             r_idx = frag.get("source", {}).get("row")
             if r_idx is not None:
-                key = (b_file, b_id, r_idx)
+                key = (b_material, b_id, r_idx)
                 row_text_map[key] = row_text_map.get(key, "") + " " + frag.get("text", "")
 
     scored = []
     for idx, frag in enumerate(fragments):
         text = frag.get("text", "")
-        b_file = frag.get("fileName", "")
+        b_material = frag.get("materialId") or frag.get("fileName", "")
         b_id = frag.get("blockId", "")
-        sec = frag.get("section") or sections.get((b_file, b_id)) or sections.get(b_id, "")
+        sec = frag.get("section") or sections.get((b_material, b_id)) or sections.get(b_id, "")
         score = 0.0
 
         if sec and sec in matched_sections:
@@ -105,7 +103,7 @@ def extract_relevant_fragments(catalog: dict, section_title: str, instruction: s
         if frag.get("kind") == "table_cell":
             r_idx = frag.get("source", {}).get("row")
             if r_idx is not None:
-                eval_text = row_text_map.get((b_file, b_id, r_idx), text)
+                eval_text = row_text_map.get((b_material, b_id, r_idx), text)
 
         for phrase in inst_phrases:
             if phrase in eval_text:
@@ -140,14 +138,11 @@ def extract_relevant_fragments(catalog: dict, section_title: str, instruction: s
     selected_indices = set()
 
     for item in ranked:
-        t = item["fragment"].get("text", "")
-        t_tokens = max(len(t), (len(t.encode("utf-8")) + 3) // 4) + 16
+        serialized_item = json.dumps(item["fragment"], ensure_ascii=False)
+        t_tokens = max(len(serialized_item), (len(serialized_item.encode("utf-8")) + 3) // 4) + 1
         if current_tokens + t_tokens <= budget_limit:
             selected_indices.add(item["index"])
             current_tokens += t_tokens
-        elif not selected_indices:
-            selected_indices.add(item["index"])
-            break
 
     result = [fragments[i] for i in sorted(selected_indices)]
     return result
@@ -226,8 +221,8 @@ class MaterialComposerJobs:
                 int(auth.get('contextWindowTokens') or DEFAULT_CONTEXT_WINDOW_TOKENS),
                 int(auth.get('maxOutputTokens') or DEFAULT_RESERVED_OUTPUT_TOKENS)
             )
-            overhead = _estimate_direct_tokens(asset['content'], request['sectionTitle'] + '\n' + request['instruction'])
-            if overhead > budget:
+            overhead = _estimate_direct_tokens(asset['content'], self._prompt(request, []))
+            if overhead >= budget:
                 raise AdapterError('MODEL_INPUT_OVER_BUDGET', '资料超过单次模型预算，请缩小资料范围；未截断资料。', status_code=413)
 
             return self.coordinator.submit(
@@ -273,12 +268,20 @@ class MaterialComposerJobs:
         system_prompt = snapshot['systemPrompt']
 
         progress('extracting')
-        overhead = _estimate_direct_tokens(system_prompt, request['sectionTitle'] + '\n' + request['instruction'])
-        available_tokens = max(budget - overhead, 500)
+        overhead = _estimate_direct_tokens(system_prompt, self._prompt(request, []))
+        available_tokens = budget - overhead
         selected_fragments = extract_relevant_fragments(
             catalog, request['sectionTitle'], request['instruction'], available_tokens
         )
         prompt = self._prompt(request, selected_fragments)
+        while selected_fragments and _estimate_direct_tokens(system_prompt, prompt) > budget:
+            available_tokens = int(available_tokens * 0.75)
+            selected_fragments = extract_relevant_fragments(
+                catalog, request['sectionTitle'], request['instruction'], available_tokens
+            )
+            prompt = self._prompt(request, selected_fragments)
+        if not selected_fragments or _estimate_direct_tokens(system_prompt, prompt) > budget:
+            raise AdapterError('MODEL_INPUT_OVER_BUDGET', '资料超过单次模型预算，请缩小资料范围；未截断资料。', status_code=413)
 
         progress('provider_processing')
         body = self.provider.post_task(TASK_TYPE, snapshot['traceId'], {}, prompt,
@@ -294,15 +297,15 @@ class MaterialComposerJobs:
             extracted_frag_map = {f['fragmentId']: f for f in selected_fragments}
             sections = {}
             section = '正文'
-            last_file = None
+            last_material = None
             for block in catalog.get('blocks', []):
-                curr_file = block.get('fileName', '')
-                if curr_file != last_file:
+                curr_material = block.get('materialId') or block.get('fileName', '')
+                if curr_material != last_material:
                     section = '正文'
-                    last_file = curr_file
+                    last_material = curr_material
                 if block.get('kind') == 'heading':
                     section = block.get('text', '正文')
-                sections[(curr_file, block.get('blockId'))] = section
+                sections[(curr_material, block.get('blockId'))] = section
                 sections[block.get('blockId')] = section
 
             result, missing = [], []
@@ -327,7 +330,8 @@ class MaterialComposerJobs:
                         raise ValueError("fragment not in extracted set")
                     fragment = extracted_frag_map[fragment_id]
                     b_file = fragment.get('fileName', '')
-                    sec_name = sections.get((b_file, fragment.get('blockId'))) or sections.get(fragment.get('blockId'), '正文')
+                    b_material = fragment.get('materialId') or b_file
+                    sec_name = sections.get((b_material, fragment.get('blockId'))) or sections.get(fragment.get('blockId'), '正文')
                     sources.append({
                         'fragmentId': fragment_id,
                         'fileName': b_file or (catalog.get('documents') and catalog['documents'][0].get('fileName')) or '',

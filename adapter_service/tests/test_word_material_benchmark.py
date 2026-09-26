@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Benchmark and factual accuracy test for multi-document long material composition (Issue #233).
+"""Controlled extraction and timing test for long material composition (Issue #233).
 
 Generates 5 distinct DOCX materials totaling 90,000+ readable characters (approaching
 the 100,000 limit), imports them into a single session catalog, verifies deterministic
@@ -11,6 +11,7 @@ import base64
 import json
 import time
 import unittest
+from copy import deepcopy
 from unittest.mock import patch
 
 from app.services.word.material_import import WordMaterialImportService
@@ -144,6 +145,7 @@ class WordMaterial100kBenchmarkTests(unittest.TestCase):
         # 2. Benchmark Chapter 1 extraction and composition
         t_ch1_start = time.perf_counter()
         session_catalog = materials_service.get_session_catalog(session_id)
+        original_fragments = deepcopy(session_catalog['fragments'])
         fragments_ch1 = extract_relevant_fragments(
             session_catalog, "第一章 总体规划与建设目标", "整理集团自动化建设核心事实与覆盖率目标", max_tokens=3000
         )
@@ -219,7 +221,7 @@ class WordMaterial100kBenchmarkTests(unittest.TestCase):
                 "instruction": "整理技术选型与网关部署",
             }, "trace-bench-02")
             terminal_2 = coordinator.wait(job2["jobId"], task_type="word.material_composer")
-            self.assertEqual(terminal_2["status"], "completed")
+            self.assertEqual(terminal_2["status"], "completed", terminal_2)
             self.assertEqual(terminal_2["result"]["paragraphs"][0]["sources"][0]["fileName"], "02_技术架构.docx")
             self.assertEqual(terminal_2["result"]["paragraphs"][0]["sources"][0]["section"], "第二章 分布式技术架构体系")
         ch2_elapsed_ms = (time.perf_counter() - t_ch2_start) * 1000
@@ -234,6 +236,26 @@ class WordMaterial100kBenchmarkTests(unittest.TestCase):
         self.assertTrue(any("15分钟" in t for t in ch5_texts))
         ch5_elapsed_ms = (time.perf_counter() - t_ch5_start) * 1000
 
+        instructions = [
+            "整理集团自动化建设核心事实与覆盖率目标",
+            "整理API网关与分布式微服务架构技术选型",
+            "说明等保三级评测与商用密码评估、加密算法",
+            "整理一期工程初验及试运行时间、二期推广交付计划",
+            "整理SLA可用率与故障恢复时限指标要求",
+        ]
+        fact_checks, table_checks = 0, 0
+        for index, doc in enumerate(docs_spec):
+            selected = extract_relevant_fragments(session_catalog, doc['heading'], instructions[index], max_tokens=3000)
+            self.assertTrue(any(f['fileName'] == doc['file_name'] and f['text'] == doc['pre_fact'] for f in selected), doc['file_name'])
+            fact_checks += 1
+            for fragment in selected:
+                self.assertEqual(fragment, original_fragments[fragment['fragmentId']])
+            if index in (0, 1, 4):
+                cells = {f['text'] for f in selected if f['fileName'] == doc['file_name']
+                         and f['kind'] == 'table_cell' and f['source']['row'] == 1}
+                self.assertTrue(set(doc['table'][1]).issubset(cells))
+                table_checks += 1
+
         # 5. Output measured benchmark report
         print("\n=======================================================")
         print("  100k Readable Characters Material Composer Benchmark Report")
@@ -241,9 +263,10 @@ class WordMaterial100kBenchmarkTests(unittest.TestCase):
         print("Total Documents Ingested : {0} files".format(catalog["totalDocuments"]))
         print("Total Readable Characters: {0:,} chars (Unicode codepoints)".format(catalog["totalCharacters"]))
         print("Catalog Ingestion Timing : {0:.2f} ms ({1:.2f} ms/doc)".format(import_elapsed_ms, import_elapsed_ms / 5.0))
-        print("Chapter 1 Gen (Initial)  : {0:.2f} ms".format(ch1_elapsed_ms))
-        print("Chapter 2 Gen (Reused)   : {0:.2f} ms".format(ch2_elapsed_ms))
-        print("Chapter 5 Gen (Reused)   : {0:.2f} ms".format(ch5_elapsed_ms))
-        print("Facts & Tables Recall    : 100% (5/5 facts, 3/3 tables verified)")
-        print("Source Citation Verbatim : 100% (Zero model summary hallucination)")
+        print("Chapter 1 (stub provider): {0:.2f} ms".format(ch1_elapsed_ms))
+        print("Chapter 2 (stub provider): {0:.2f} ms".format(ch2_elapsed_ms))
+        print("Chapter 5 extraction    : {0:.2f} ms".format(ch5_elapsed_ms))
+        print("Controlled extraction   : {0}/5 facts, {1}/3 annotated table rows".format(fact_checks, table_checks))
+        print("Selected source text    : checked against imported original fragments")
+        print("Real model quality      : not evaluated; responses above are stubbed")
         print("=======================================================\n")

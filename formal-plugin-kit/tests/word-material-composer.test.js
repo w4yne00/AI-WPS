@@ -11,7 +11,15 @@ function harness(shared) {
   h.api = context.window.createMaterialComposer({
     storage: { getItem: k => saved.get(k), setItem: (k,v) => saved.set(k,v) },
     getSessionId: () => h.session,
-    request: async (url, body, method) => { h.calls.push({url,body,method:method.method}); if (h.error) throw Error('offline'); return h.respond ? h.respond() : h.response; },
+    request: async (url, body, method) => {
+      h.calls.push({url,body,method:method.method});
+      if (h.error) throw Error('offline');
+      if (url.startsWith('/word/materials/catalog')) {
+        const cached = JSON.parse(saved.get('word.material-composer:' + h.session) || '{}');
+        return h.catalogResponse || {success:true,data:cached.catalogSummary || {totalDocuments:0,totalCharacters:0,documents:[],toc:[]}};
+      }
+      return h.respond ? h.respond() : h.response;
+    },
     render: v => h.views.push(v), copyText: t => h.copied.push(t), schedule: fn => h.scheduled.push(fn),
     applyText: async (t, opts) => {
       h.applied.push({ text: t, options: opts });
@@ -32,13 +40,44 @@ test('submits material reference and input, persists no source text, prevents re
 test('reopening restores the same job; transient query failures keep it available for retry', async () => {
  const h=harness(); h.api.setMaterial({materialId:'m1'}); await h.api.start({sectionTitle:'范围',instruction:'编写'});
  const reopened=harness(h.saved); reopened.error=true; await reopened.api.restore(); assert.equal(reopened.last().jobId,'job-a'); assert.ok(reopened.last().error);
- reopened.error=false; await reopened.api.refresh(); assert.equal(reopened.last().status,'running'); assert.equal(reopened.calls.length,2); assert.ok(reopened.calls.every(x=>x.method==='GET' && x.url.includes('job-a')));
+ reopened.error=false; await reopened.api.refresh(); assert.equal(reopened.last().status,'running'); assert.equal(reopened.calls.length,3); assert.ok(reopened.calls.slice(1).every(x=>x.method==='GET' && x.url.includes('job-a')));
+});
+test('reopening reconciles cached materials with the server catalog', async () => {
+ const first=harness();
+ first.api.setMaterial({materialId:'m1',catalogSummary:{totalDocuments:1,totalCharacters:500,documents:[{materialId:'m1',fileName:'旧资料.docx'}],toc:[]}});
+ const reopened=harness(first.saved);
+ reopened.catalogResponse={success:true,data:{totalDocuments:2,totalCharacters:900,documents:[{materialId:'m1',fileName:'旧资料.docx'},{materialId:'m2',fileName:'新资料.docx'}],toc:[{materialId:'m2',sectionTitle:'第二章'}]}};
+ await reopened.api.restore();
+ assert.ok(reopened.calls.some(call=>call.url.startsWith('/word/materials/catalog?documentSessionId=doc-a')));
+ assert.equal(reopened.last().catalogSummary.totalDocuments,2);
+ assert.equal(reopened.last().catalogSummary.toc[0].sectionTitle,'第二章');
+ assert.deepEqual(Array.from(reopened.last().materialIds),['m1','m2']);
+});
+test('late catalog restore cannot overwrite a newer material import', async () => {
+ const h=harness(); let finish;
+ h.catalogResponse=new Promise(resolve=>{finish=resolve;});
+ const restoring=h.api.restore();
+ h.api.setMaterial({materialId:'m1',catalogSummary:{totalDocuments:1,totalCharacters:500,documents:[{materialId:'m1',fileName:'新资料.docx'}],toc:[]}});
+ finish({success:true,data:{totalDocuments:0,totalCharacters:0,documents:[],toc:[]}});
+ await restoring;
+ assert.deepEqual(Array.from(h.last().materialIds),['m1']);
+ assert.equal(h.last().catalogSummary.totalDocuments,1);
 });
 test('cancel requests the original job and renders cancellation', async () => {
  const h=harness(); h.api.setMaterial({materialId:'m1'}); await h.api.start({sectionTitle:'范围',instruction:'编写'}); h.response={success:true,data:{jobId:'job-a',status:'cancelled',documentSessionId:'doc-a'}}; await h.api.cancel(); assert.equal(h.last().status,'cancelled'); assert.equal(h.calls[1].url,'/word/material-composer/jobs/job-a/cancel'); assert.equal(h.calls[1].body.documentSessionId,'doc-a');
 });
+test('running job phase shows the matching Chinese progress label', async () => {
+ const h=harness(); h.api.setMaterial({materialId:'m1'});
+ const expected={preparing:'正在校验任务与资料',extracting:'正在检索资料原文',provider_processing:'正在依据原文编写',parsing:'正在核对草稿出处'};
+ for(const phase of Object.keys(expected)) {
+  h.response={success:true,data:{jobId:'job-a',status:'running',phase,documentSessionId:'doc-a'}};
+  if(phase==='preparing') await h.api.start({sectionTitle:'范围',instruction:'编写'});
+  else await h.api.refresh();
+  assert.ok(h.last().phaseLabel.includes(expected[phase]), phase);
+ }
+});
 test('switching documents isolates material, job and late response', async () => {
- const h=harness(); h.api.setMaterial({materialId:'m1'}); await h.api.start({sectionTitle:'范围',instruction:'编写'}); h.session='doc-b'; await h.api.restore(); assert.equal(h.last().materialId,''); assert.equal(h.last().jobId,''); await h.scheduled[0](); assert.equal(h.calls.length,1); h.session='doc-a'; await h.api.restore(); assert.equal(h.last().jobId,'job-a');
+ const h=harness(); h.api.setMaterial({materialId:'m1'}); await h.api.start({sectionTitle:'范围',instruction:'编写'}); h.session='doc-b'; await h.api.restore(); assert.equal(h.last().materialId,''); assert.equal(h.last().jobId,''); await h.scheduled[0](); assert.equal(h.calls.length,2); h.session='doc-a'; await h.api.restore(); assert.equal(h.last().jobId,'job-a');
 });
 test('only a validated result from the current document can be copied', async () => {
  const h=harness(); h.api.setMaterial({materialId:'m1'}); await h.api.start({sectionTitle:'范围',instruction:'编写'}); h.response={success:true,data:{jobId:'job-a',status:'succeeded',documentSessionId:'doc-a',result:result()}}; await h.api.refresh(); await h.api.copy(); assert.deepEqual(h.copied,['正文']); h.session='doc-b'; await h.api.copy(); assert.equal(h.copied.length,1);
@@ -61,23 +100,23 @@ test('late material import stays bound to its originating document', async () =>
 });
 test('reopening uncertain submission queries client id without posting and retains server phase', async () => {
  const h=harness(); h.api.setMaterial({materialId:'m1'}); h.error=true; await h.api.start({sectionTitle:'范围',instruction:'编写'}); const clientId=h.calls[0].body.clientJobId;
- const reopened=harness(h.saved); reopened.response={success:true,data:{jobId:clientId,status:'running',documentSessionId:'doc-a',phase:'checking',phaseLabel:'核对出处'}}; await reopened.api.restore(); assert.equal(reopened.calls.length,1); assert.equal(reopened.calls[0].method,'GET'); assert.ok(reopened.calls[0].url.includes(clientId)); assert.equal(reopened.last().phase,'checking'); assert.equal(reopened.last().phaseLabel,'核对出处');
+ const reopened=harness(h.saved); reopened.response={success:true,data:{jobId:clientId,status:'running',documentSessionId:'doc-a',phase:'checking',phaseLabel:'核对出处'}}; await reopened.api.restore(); assert.equal(reopened.calls.length,2); assert.equal(reopened.calls[1].method,'GET'); assert.ok(reopened.calls[1].url.includes(clientId)); assert.equal(reopened.last().phase,'checking'); assert.equal(reopened.last().phaseLabel,'核对出处');
 });
 test('missing uncertain job can be explicitly retried with its existing client id', async () => {
  const h=harness(); h.api.setMaterial({materialId:'m1'}); h.error=true; await h.api.start({sectionTitle:'范围',instruction:'编写'}); const clientId=h.calls[0].body.clientJobId;
- const reopened=harness(h.saved); reopened.respond=()=>Promise.reject(Object.assign(Error('not found'),{status:404})); await reopened.api.restore(); assert.equal(reopened.calls.length,1); assert.equal(reopened.last().status,'idle'); reopened.respond=null; await reopened.api.start({sectionTitle:'范围',instruction:'编写'}); assert.equal(reopened.calls[1].body.clientJobId,clientId);
+ const reopened=harness(h.saved); reopened.respond=()=>Promise.reject(Object.assign(Error('not found'),{status:404})); await reopened.api.restore(); assert.equal(reopened.calls.length,2); assert.equal(reopened.last().status,'idle'); reopened.respond=null; await reopened.api.start({sectionTitle:'范围',instruction:'编写'}); assert.equal(reopened.calls[2].body.clientJobId,clientId);
 });
 test('reopened uncertain job keeps its original input after a missing query and later edits', async () => {
  const h=harness(); h.api.setMaterial({materialId:'m1'}); h.error=true; await h.api.start({sectionTitle:'原章节',instruction:'原要求'});
  const reopened=harness(h.saved); reopened.respond=()=>Promise.reject(Object.assign(Error('not found'),{status:404})); await reopened.api.restore(); reopened.respond=null;
  await reopened.api.start({sectionTitle:'新章节',instruction:'新要求'});
- assert.equal(reopened.calls[1].body.sectionTitle,'原章节'); assert.equal(reopened.calls[1].body.instruction,'原要求');
+ assert.equal(reopened.calls[2].body.sectionTitle,'原章节'); assert.equal(reopened.calls[2].body.instruction,'原要求');
 });
 test('reopened uncertain job can retry its original input after restored fields are cleared', async () => {
  const h=harness(); h.api.setMaterial({materialId:'m1'}); h.error=true; await h.api.start({sectionTitle:'原章节',instruction:'原要求'});
  const reopened=harness(h.saved); reopened.respond=()=>Promise.reject(Object.assign(Error('not found'),{status:404})); await reopened.api.restore(); reopened.respond=null;
  await reopened.api.start({sectionTitle:'',instruction:''});
- assert.equal(reopened.calls[1].body.sectionTitle,'原章节'); assert.equal(reopened.calls[1].body.instruction,'原要求');
+ assert.equal(reopened.calls[2].body.sectionTitle,'原章节'); assert.equal(reopened.calls[2].body.instruction,'原要求');
 });
 test('render separates each paragraph from its source sidebar and safely displays markup as text', () => {
  const context={window:{}}; vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../wps-ai-assistant_1.0.0/material-composer.js'),'utf8'),context);
@@ -260,6 +299,40 @@ test('render displays multi-file source citations with accurate quotes', () => {
   assert.ok(paragraphs[0].children[1].children.some(x => x.textContent === '原句1'));
   assert.ok(paragraphs[1].children[1].children.some(x => x.textContent.includes('doc2.docx')));
   assert.ok(paragraphs[1].children[1].children.some(x => x.textContent === '原句2'));
+});
+
+test('catalog lists each file and its chapters and selects a chapter', () => {
+  const context = { window: {} };
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../wps-ai-assistant_1.0.0/material-composer.js'), 'utf8'), context);
+  const document = {
+    createElement(tag) {
+      return { tagName: tag, children: [], textContent: '', className: '',
+        appendChild(child) { this.children.push(child); },
+        addEventListener(type, handler) { this[type] = handler; } };
+    }
+  };
+  const root = document.createElement('div');
+  root.ownerDocument = document;
+  const selected = [];
+  context.window.renderMaterialComposer(root, {
+    status: 'idle',
+    catalogSummary: {
+      totalDocuments: 2,
+      totalCharacters: 1200,
+      documents: [{ materialId: 'm1', fileName: '资料.docx' }, { materialId: 'm2', fileName: '资料.docx' }],
+      toc: [{ materialId: 'm1', sectionTitle: '第一章' }, { materialId: 'm2', sectionTitle: '第二章' }]
+    }
+  }, title => selected.push(title));
+  const catalog = root.children.find(node => node.className === 'material-composer-toc');
+  assert.ok(catalog);
+  const files = catalog.children.filter(node => node.className === 'material-composer-toc-file');
+  assert.equal(files.length, 2);
+  assert.equal(files[0].children[0].textContent, '资料.docx');
+  assert.equal(files[1].children[0].textContent, '资料.docx');
+  const secondChapter = files[1].children.find(node => node.tagName === 'button');
+  assert.equal(secondChapter.textContent, '第二章');
+  secondChapter.click();
+  assert.deepEqual(selected, ['第二章']);
 });
 
 test('cancelled or failed task strictly rejects applyText and shows friendly error', async () => {

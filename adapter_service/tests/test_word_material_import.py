@@ -1,9 +1,12 @@
 import base64
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 from io import BytesIO
+import threading
 import unittest
 import zipfile
+from unittest.mock import patch
 
 
 CONTENT_TYPES_XML = b"""<?xml version="1.0" encoding="UTF-8"?>
@@ -267,6 +270,42 @@ class WordMaterialImportApiTests(unittest.TestCase):
         catalog = service.get_catalog(session_id)
         self.assertEqual(catalog["totalDocuments"], 5)
 
+    def test_concurrent_imports_cannot_exceed_session_limit_or_repeat_fragment_ids(self):
+        from app.core.errors import AdapterError
+        from app.services.word import material_import
+
+        service = material_import.WordMaterialImportService()
+        content = build_docx(document_xml=_paragraph_document("测试正文"))
+        for i in range(4):
+            service.import_material(upload_payload(content, file_name="doc_{0}.docx".format(i)))
+
+        both_reading = threading.Barrier(2)
+        real_read = material_import._read_document
+
+        def paused_read(*args, **kwargs):
+            try:
+                both_reading.wait(timeout=1)
+            except threading.BrokenBarrierError:
+                pass
+            return real_read(*args, **kwargs)
+
+        def import_one(index):
+            try:
+                return service.import_material(upload_payload(content, file_name="extra_{0}.docx".format(index)))
+            except AdapterError as exc:
+                return exc.code
+
+        with patch.object(material_import, "_read_document", side_effect=paused_read):
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                outcomes = list(pool.map(import_one, (1, 2)))
+
+        self.assertEqual(sum(isinstance(outcome, dict) for outcome in outcomes), 1)
+        self.assertEqual(outcomes.count("MATERIAL_COUNT_OVER_LIMIT"), 1)
+        catalog = service.get_session_catalog("doc-session-1")
+        self.assertEqual(catalog["totalDocuments"], 5)
+        fragment_ids = [item["fragmentId"] for item in catalog["fragmentsList"]]
+        self.assertEqual(len(fragment_ids), len(set(fragment_ids)))
+
     def test_multi_material_cumulative_text_limit_rejected(self):
         from app.core.errors import AdapterError
         from app.services.word.material_import import WordMaterialImportService
@@ -290,6 +329,26 @@ class WordMaterialImportApiTests(unittest.TestCase):
         catalog = service.get_catalog(session_id)
         self.assertEqual(catalog["totalDocuments"], 1)
         self.assertEqual(catalog["totalCharacters"], 60000)
+
+    def test_long_paragraph_and_table_cell_keep_all_original_text_in_bounded_fragments(self):
+        from app.services.word.material_import import WordMaterialImportService
+
+        paragraph_text = "甲" * 5000
+        cell_text = "乙" * 5000
+        xml = ("<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">"
+               "<w:body><w:p><w:r><w:t>{0}</w:t></w:r></w:p>"
+               "<w:tbl><w:tr><w:tc><w:p><w:r><w:t>{1}</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"
+               "</w:body></w:document>").format(paragraph_text, cell_text).encode("utf-8")
+        imported = WordMaterialImportService().import_material(upload_payload(build_docx(document_xml=xml)))
+        paragraphs = [f for f in imported["fragments"] if f["kind"] == "paragraph"]
+        cells = [f for f in imported["fragments"] if f["kind"] == "table_cell"]
+
+        self.assertEqual("".join(f["text"] for f in paragraphs), paragraph_text)
+        self.assertEqual("".join(f["text"] for f in cells), cell_text)
+        self.assertTrue(all(len(f["text"]) < 1000 for f in paragraphs + cells))
+        self.assertEqual(imported["limits"]["readableCharacterCount"], 10000)
+        ids = [f["fragmentId"] for f in imported["fragments"]]
+        self.assertEqual(len(ids), len(set(ids)))
 
     def test_multi_material_catalog_aggregation_and_toc(self):
         from app.services.word.material_import import WordMaterialImportService
