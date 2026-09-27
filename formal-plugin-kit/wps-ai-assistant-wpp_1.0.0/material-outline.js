@@ -245,20 +245,49 @@
       }, { method: "POST" });
       if (res && res.success) {
         await refreshCatalog();
+        await detectConflicts();
       }
       return res;
     }
 
-    async function importMaterial(fileName, base64Content, docIdentity) {
+    async function importMaterial(upload, base64OrMaterialId, docIdentity) {
       var s = current();
-      var res = await request("/ppt/materials/import", {
+      var fileName = "";
+      var contentBase64 = "";
+      var materialId = "";
+      if (typeof upload === "string") {
+        fileName = upload;
+        contentBase64 = base64OrMaterialId;
+      } else if (upload && typeof upload === "object") {
+        fileName = upload.fileName || upload.name;
+        contentBase64 = upload.contentBase64;
+        materialId = typeof base64OrMaterialId === "string" ? base64OrMaterialId : "";
+        if (!contentBase64) {
+          if (typeof upload.arrayBuffer === "function") {
+            var bytes = new Uint8Array(await upload.arrayBuffer());
+            var binary = "";
+            for (var i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+            contentBase64 = btoa(binary);
+          } else if (typeof FileReader !== "undefined") {
+            contentBase64 = await new Promise(function (resolve, reject) {
+              var reader = new FileReader();
+              reader.onload = function () { resolve(String(reader.result || "").split(",").pop()); };
+              reader.onerror = function () { reject(new Error("读取资料文件失败")); };
+              reader.readAsDataURL(upload);
+            });
+          }
+        }
+      }
+      var url = materialId ? ("/ppt/materials/" + encodeURIComponent(materialId)) : "/ppt/materials/import";
+      var res = await request(url, {
         documentSessionId: s.documentSessionId,
         documentIdentity: docIdentity || "",
         fileName: fileName,
-        contentBase64: base64Content
-      }, { method: "POST" });
+        contentBase64: contentBase64
+      }, { method: materialId ? "PUT" : "POST" });
       if (res && res.success) {
         await refreshCatalog();
+        await detectConflicts();
       }
       return res;
     }
@@ -268,6 +297,7 @@
       var res = await request("/ppt/materials/" + encodeURIComponent(materialId) + "?documentSessionId=" + encodeURIComponent(s.documentSessionId), null, { method: "DELETE" });
       if (res && res.success) {
         await refreshCatalog();
+        await detectConflicts();
       }
       return res;
     }
@@ -281,6 +311,7 @@
       }, { method: "PUT" });
       if (res && res.success) {
         await refreshCatalog();
+        await detectConflicts();
       }
       return res;
     }

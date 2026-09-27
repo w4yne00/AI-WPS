@@ -259,3 +259,46 @@ test("pure read-only slide invariant: calls 0 slide modification APIs", () => {
   assert.equal(h.mockApp.ActivePresentation.Slides.Count, 0);
   // Entire controller has no slide modification side-effects
 });
+
+test("ribbon.xml and ribbon.js integrate btnAiPptMaterialOutline", () => {
+  const ribbonXml = fs.readFileSync(path.join(root, "ribbon.xml"), "utf8");
+  assert.ok(ribbonXml.includes('id="btnAiPptMaterialOutline"'), "ribbon.xml must declare btnAiPptMaterialOutline");
+  assert.ok(ribbonXml.includes('label="资料大纲"'), "ribbon.xml must label button as 资料大纲");
+
+  const ribbonJs = fs.readFileSync(path.join(root, "ribbon.js"), "utf8");
+  const context = { window: { Application: {} }, location: { href: "http://localhost/" } };
+  vm.runInNewContext(ribbonJs, context);
+  assert.equal(typeof context.resolveMode, "function");
+  assert.equal(context.resolveMode("btnAiPptMaterialOutline"), "pptMaterialOutline");
+});
+
+test("taskpane.html contains material outline controls, outline result section, and confirmation elements", () => {
+  const taskpaneHtml = fs.readFileSync(path.join(root, "taskpane.html"), "utf8");
+  assert.ok(taskpaneHtml.includes('id="ppt-material-outline-controls"'), "taskpane.html must contain outline controls");
+  assert.ok(taskpaneHtml.includes('id="outline-result-section"'), "taskpane.html must contain outline result section");
+  assert.ok(taskpaneHtml.includes('id="outline-material-count-label"'), "taskpane.html must contain material count label");
+  assert.ok(taskpaneHtml.includes('id="btn-import-outline-material"'), "taskpane.html must contain import material button");
+  assert.ok(taskpaneHtml.includes('id="outline-reusable-select"'), "taskpane.html must contain reusable source select");
+  assert.ok(taskpaneHtml.includes('id="ppt-outline-audience"'), "taskpane.html must contain audience input");
+  assert.ok(taskpaneHtml.includes('id="ppt-outline-slide-count"'), "taskpane.html must contain slide count select");
+  assert.ok(taskpaneHtml.includes('id="btn-run-outline"'), "taskpane.html must contain run outline button");
+  assert.ok(taskpaneHtml.includes('id="btn-confirm-outline"'), "taskpane.html must contain confirm outline button");
+  assert.ok(taskpaneHtml.includes('id="outline-source-drawer"'), "taskpane.html must contain source drawer");
+  assert.ok(taskpaneHtml.includes('src="./material-outline.js'), "taskpane.html must load material-outline.js");
+});
+
+test("taskpane.js initializes material outline mode, attaches event handlers, and routes mode correctly", () => {
+  const taskpaneJs = fs.readFileSync(path.join(root, "taskpane.js"), "utf8");
+  assert.ok(taskpaneJs.includes("pptMaterialOutline"), "taskpane.js must handle pptMaterialOutline mode");
+  assert.ok(taskpaneJs.includes("ensureMaterialOutline"), "taskpane.js must declare ensureMaterialOutline");
+  assert.ok(taskpaneJs.includes("renderMaterialOutlineView"), "taskpane.js must declare renderMaterialOutlineView");
+  assert.ok(taskpaneJs.includes("btn-run-outline"), "taskpane.js must bind btn-run-outline");
+  assert.ok(taskpaneJs.includes("btn-confirm-outline"), "taskpane.js must bind btn-confirm-outline");
+  assert.ok(taskpaneJs.includes("btn-copy-outline-markdown"), "taskpane.js must bind btn-copy-outline-markdown");
+  assert.ok(taskpaneJs.includes("ppt-outline-audience"), "taskpane.js must bind ppt-outline-audience");
+  assert.ok(taskpaneJs.includes("ppt-outline-slide-count"), "taskpane.js must bind ppt-outline-slide-count");
+  assert.ok(taskpaneJs.includes("ppt-outline-file-input"), "taskpane.js must bind ppt-outline-file-input");
+  assert.ok(taskpaneJs.includes("outline-reusable-select"), "taskpane.js must bind outline-reusable-select");
+  assert.ok(taskpaneJs.includes("outline-material-list"), "taskpane.js must bind outline-material-list");
+  assert.ok(taskpaneJs.includes("outline-conflicts"), "taskpane.js must bind outline-conflicts");
+});

@@ -14,6 +14,7 @@ function resolveMode(controlId) {
   var modeMap = {
     btnAiPptSlideAssistant: "pptSlideAssistant",
     btnAiPptStructureReview: "pptStructureReview",
+    btnAiPptMaterialOutline: "pptMaterialOutline",
     btnAiSettings: "settings"
   };
   return modeMap[controlId] || "pptSlideAssistant";
@@ -22,6 +23,7 @@ function resolveMode(controlId) {
 var ribbonIconMap = {
   btnAiPptSlideAssistant: "assets/icon-ppt-slide-assistant.png",
   btnAiPptStructureReview: "assets/icon-ppt-structure-review.png",
+  btnAiPptMaterialOutline: "assets/icon-ppt-slide-assistant.png",
   btnAiSettings: "assets/icon-settings.png"
 };
 
