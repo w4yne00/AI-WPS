@@ -94,6 +94,7 @@ class ReviewModeContractTests(unittest.TestCase):
                 "ppt.slide_assistant",
                 "ppt.structure_review",
                 "ppt.material_outline",
+                "ppt.template_page",
             ],
         )
 

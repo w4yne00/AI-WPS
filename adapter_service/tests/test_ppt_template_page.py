@@ -90,6 +90,9 @@ def test_ppt_template_page_generation_lifecycle(page_setup, monkeypatch):
     }
 
     class DummyProvider:
+        def resolve_task_auth(self, *args, **kwargs):
+            return {"providerBaseUrl": "http://mock", "apiKey": "mock_key"}
+
         def post_task(self, *args, **kwargs):
             return {"answer": json.dumps(mock_model_output)}
 
@@ -141,6 +144,9 @@ def test_ppt_template_page_fake_fragment_id_rejected(page_setup, monkeypatch):
     }
 
     class DummyProvider:
+        def resolve_task_auth(self, *args, **kwargs):
+            return {"providerBaseUrl": "http://mock", "apiKey": "mock_key"}
+
         def post_task(self, *args, **kwargs):
             return {"answer": json.dumps(fake_output)}
 

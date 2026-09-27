@@ -173,6 +173,8 @@ class PptTemplatePageCoordinator:
                 raise AdapterError("PPT_TEMPLATE_PAGE_SESSION_MISMATCH", "会话不匹配。", status_code=403)
             return deepcopy(job)
 
+    query_job = get_job
+
     def cancel_job(self, job_id: str, document_session_id: str = "") -> dict:
         with self._lock:
             job = self._jobs.get(job_id)
@@ -187,6 +189,27 @@ class PptTemplatePageCoordinator:
             if self._active_sessions.get(job["documentSessionId"]) == job_id:
                 self._active_sessions.pop(job["documentSessionId"], None)
             return deepcopy(job)
+
+    def _call_provider_model(
+        self,
+        system_prompt: str,
+        user_content: str,
+        task_auth=None,
+        trace_id: str = "",
+        progress=None,
+    ) -> str:
+        auth = task_auth if task_auth is not None else self.provider.resolve_task_auth(TASK_TYPE)
+        if not auth.get("providerBaseUrl") or not auth.get("apiKey"):
+            raise AdapterError("MODEL_CONFIG_INCOMPLETE", "模板正文页任务尚未配置模型，请前往设置。", status_code=400)
+        body = self.provider.post_task(
+            task_type=TASK_TYPE,
+            system_prompt=system_prompt,
+            user_content=user_content,
+            trace_id=trace_id,
+            progress=progress,
+            task_auth=auth,
+        )
+        return extract_answer(body)
 
     def _execute_job(
         self,
@@ -239,12 +262,7 @@ class PptTemplatePageCoordinator:
                 "materials": materials_payload,
             }, ensure_ascii=False)
 
-            response = self.provider.post_task(
-                TASK_TYPE,
-                system_prompt=system_prompt,
-                user_prompt=user_content,
-            )
-            raw_answer = extract_answer(response)
+            raw_answer = self._call_provider_model(system_prompt, user_content, trace_id=job.get("traceId", ""))
 
             job["phase"] = "parsing"
             parsed_data = _extract_json_payload(raw_answer)
