@@ -749,3 +749,43 @@ test('renderMaterialComposer displays warning badge and renders update/delete bu
   btnUpdate.eventListeners['click']({ stopPropagation() {} });
   assert.equal(updatedMid, 'm1');
 });
+
+test('switching documents isolates material catalog and prevents cross-document pollution', async () => {
+  const h = harness();
+  h.api.setMaterial({
+    materialId: 'm1',
+    catalogSummary: {
+      totalDocuments: 1,
+      totalCharacters: 500,
+      documents: [{ materialId: 'm1', fileName: '文档A资料.docx' }],
+      toc: [{ materialId: 'm1', sectionTitle: 'A第一章' }]
+    }
+  });
+  assert.equal(h.last().catalogSummary.totalDocuments, 1);
+  assert.equal(h.last().catalogSummary.documents[0].fileName, '文档A资料.docx');
+
+  // Switch to doc-b
+  h.session = 'doc-b';
+  await h.api.restore();
+  assert.equal(h.last().catalogSummary.totalDocuments, 0);
+  assert.equal(h.last().materialIds.length, 0);
+
+  // Import material into doc-b
+  h.api.setMaterial({
+    materialId: 'm2',
+    catalogSummary: {
+      totalDocuments: 1,
+      totalCharacters: 800,
+      documents: [{ materialId: 'm2', fileName: '文档B资料.docx' }],
+      toc: [{ materialId: 'm2', sectionTitle: 'B第一章' }]
+    }
+  });
+  assert.equal(h.last().catalogSummary.totalDocuments, 1);
+  assert.equal(h.last().catalogSummary.documents[0].fileName, '文档B资料.docx');
+
+  // Switch back to doc-a
+  h.session = 'doc-a';
+  await h.api.restore();
+  assert.equal(h.last().catalogSummary.totalDocuments, 1);
+  assert.equal(h.last().catalogSummary.documents[0].fileName, '文档A资料.docx');
+});

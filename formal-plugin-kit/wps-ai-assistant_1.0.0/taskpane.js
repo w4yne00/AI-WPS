@@ -1825,6 +1825,8 @@
   var materialComposerWriteAttempted = false;
   var materialComposerAppliedMessage = "";
   var materialImportRequestSequences = {};
+  var lastBoundDocumentObject = null;
+  var lastBoundDocumentSessionId = "";
 
   function getMaterialComposerSessionId() {
     var activeDocument = getActiveDocument();
@@ -2100,7 +2102,43 @@
     if (state.currentMode !== "materialImport") {
       return;
     }
+    var activeDoc = (typeof getActiveDocument === "function") ? getActiveDocument() : null;
     var sessionId = getMaterialComposerSessionId();
+
+    if (activeDoc && lastBoundDocumentObject === activeDoc && lastBoundDocumentSessionId && sessionId && lastBoundDocumentSessionId !== sessionId) {
+      var oldSessionId = lastBoundDocumentSessionId;
+      var newSessionId = sessionId;
+      lastBoundDocumentSessionId = newSessionId;
+      materialComposerSession = newSessionId;
+
+      if (typeof window !== "undefined" && window.localStorage) {
+        var oldState = window.localStorage.getItem("word.material-composer:" + oldSessionId);
+        if (oldState) {
+          try {
+            var parsed = JSON.parse(oldState);
+            parsed.documentSessionId = newSessionId;
+            window.localStorage.setItem("word.material-composer:" + newSessionId, JSON.stringify(parsed));
+          } catch (e) {
+            window.localStorage.setItem("word.material-composer:" + newSessionId, oldState);
+          }
+        }
+      }
+
+      request("/word/materials/bind-document", {
+        oldDocumentSessionId: oldSessionId,
+        newDocumentSessionId: newSessionId,
+        newDocumentIdentity: newSessionId
+      }).then(function () {
+        ensureMaterialComposer().restore();
+      }).catch(function () {
+        ensureMaterialComposer().restore();
+      });
+      return;
+    }
+
+    lastBoundDocumentObject = activeDoc;
+    lastBoundDocumentSessionId = sessionId;
+
     if (sessionId !== materialComposerSession) {
       materialComposerSession = sessionId;
       lastMaterialComposerView = null;

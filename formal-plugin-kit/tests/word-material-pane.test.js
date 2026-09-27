@@ -643,3 +643,67 @@ test('applyMaterialComposerResult pauses write-back when basis is updated or rem
   assert.equal(nodes['btn-material-apply'].disabled, true);
   assert.ok(nodes['material-composer-status'].textContent.includes('参考资料已更新'));
 });
+
+test('syncMaterialComposerSession migrates material session when the same document instance is saved as a new identity', () => {
+  const doc = { FullName: '未命名1.docx' };
+  let currentDocSession = 'unsaved-session-1';
+  const nodes = {
+    'material-import-result': { textContent: '' },
+    'material-import-file': { value: '' },
+    'material-section-title': { value: '' },
+    'material-instruction': { value: '' },
+    'material-user-facts': { value: '' },
+    'btn-material-apply': { disabled: false },
+    'material-import-status': { textContent: '' }
+  };
+  const requests = [];
+  const storage = new Map();
+  storage.set('word.material-composer:unsaved-session-1', JSON.stringify({
+    materialIds: ['m1'],
+    documentSessionId: 'unsaved-session-1',
+    catalogSummary: { totalDocuments: 1, documents: [{ materialId: 'm1', fileName: '资料1.docx' }] }
+  }));
+
+  let restored = 0;
+  const context = {
+    state: { currentMode: 'materialImport' },
+    getActiveDocument: () => doc,
+    getMaterialComposerSessionId: () => currentDocSession,
+    lastBoundDocumentObject: doc,
+    lastBoundDocumentSessionId: 'unsaved-session-1',
+    materialComposerSession: 'unsaved-session-1',
+    request: (url, body) => {
+      requests.push({ url, body });
+      return Promise.resolve({ success: true, data: { totalDocuments: 1 } });
+    },
+    ensureMaterialComposer: () => ({
+      restore: () => { restored += 1; }
+    }),
+    byId: id => nodes[id],
+    window: {
+      localStorage: {
+        getItem: k => storage.get(k),
+        setItem: (k, v) => storage.set(k, v)
+      }
+    }
+  };
+
+  const sync = load('syncMaterialComposerSession', context);
+
+  // Document now saved as real path
+  currentDocSession = 'saved-session-2';
+  doc.FullName = '/path/to/saved.docx';
+
+  sync();
+
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, '/word/materials/bind-document');
+  assert.equal(requests[0].body.oldDocumentSessionId, 'unsaved-session-1');
+  assert.equal(requests[0].body.newDocumentSessionId, 'saved-session-2');
+
+  // Verify storage was migrated
+  assert.ok(storage.has('word.material-composer:saved-session-2'));
+  const migrated = JSON.parse(storage.get('word.material-composer:saved-session-2'));
+  assert.equal(migrated.documentSessionId, 'saved-session-2');
+  assert.deepEqual(migrated.materialIds, ['m1']);
+});
