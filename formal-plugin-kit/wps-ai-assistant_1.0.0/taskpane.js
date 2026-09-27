@@ -1825,6 +1825,9 @@
   var materialComposerWriteAttempted = false;
   var materialComposerAppliedMessage = "";
   var materialImportRequestSequences = {};
+  var lastBoundDocumentObject = null;
+  var lastBoundDocumentSessionId = "";
+  var materialComposerBindings = [];
 
   function getMaterialComposerSessionId() {
     var activeDocument = getActiveDocument();
@@ -1906,6 +1909,15 @@
         if (materialComposerAppliedMessage) {
           byId("material-composer-status").textContent = materialComposerAppliedMessage;
         }
+      } else if (view.basisStatus === "checking") {
+        applyBtn.disabled = true;
+        byId("material-composer-status").textContent = (view.error ? view.error + " " : "") + "资料依据正在核查，已暂停写入；草稿仍可复制。";
+      } else if (view.basisStatus === "removed") {
+        applyBtn.disabled = true;
+        byId("material-composer-status").textContent = (view.error ? view.error + " " : "") + "所引参考资料已被移除，当前草稿依据已失效。已暂停写入，请重新生成草稿或复制使用。";
+      } else if (view.basisStatus === "updated") {
+        applyBtn.disabled = true;
+        byId("material-composer-status").textContent = (view.error ? view.error + " " : "") + "参考资料已更新，当前草稿依据已变更。已暂停写入，请重新生成草稿或复制使用。";
       } else if (sectionChanged) {
         applyBtn.disabled = true;
         byId("material-composer-status").textContent = "目标章节或选区已变更，写入已暂停。请重新生成；重开窗格后仍可复制草稿。";
@@ -1921,6 +1933,12 @@
     }, function (conflictId, candidateId) {
       if (busy || view.documentSessionId !== getMaterialComposerSessionId()) return;
       ensureMaterialComposer().resolveConflict(conflictId, candidateId);
+    }, function (materialId) {
+      if (busy || view.documentSessionId !== getMaterialComposerSessionId()) return;
+      handleMaterialUpdate(materialId);
+    }, function (materialId) {
+      if (busy || view.documentSessionId !== getMaterialComposerSessionId()) return;
+      handleMaterialDelete(materialId);
     });
   }
 
@@ -2041,6 +2059,22 @@
       byId("material-composer-status").textContent = "章节草稿禁止全篇替换，请缩小选区后重新确认。";
       return Promise.resolve();
     }
+    var currentBasis = (lastMaterialComposerView && lastMaterialComposerView.basisStatus) || (composer.evaluateBasisStatus && composer.evaluateBasisStatus()) || "current";
+    if (currentBasis === "checking") {
+      byId("btn-material-apply").disabled = true;
+      byId("material-composer-status").textContent = "资料依据正在核查，已暂停写入；草稿仍可复制。";
+      return Promise.resolve();
+    }
+    if (currentBasis === "removed") {
+      byId("btn-material-apply").disabled = true;
+      byId("material-composer-status").textContent = "所引参考资料已被移除，当前草稿依据已失效。已暂停写入，请重新生成草稿或复制使用。";
+      return Promise.resolve();
+    }
+    if (currentBasis === "updated") {
+      byId("btn-material-apply").disabled = true;
+      byId("material-composer-status").textContent = "参考资料已更新，当前草稿依据已变更。已暂停写入，请重新生成草稿或复制使用。";
+      return Promise.resolve();
+    }
     var currentRes = (lastMaterialComposerView && lastMaterialComposerView.result) || null;
     var hasMissing = currentRes && ((currentRes.missingItems && currentRes.missingItems.length > 0) ||
       (currentRes.paragraphs && currentRes.paragraphs.some(function (p) { return p.missingItems && p.missingItems.length > 0; })));
@@ -2077,7 +2111,85 @@
     if (state.currentMode !== "materialImport") {
       return;
     }
+    var activeDoc = (typeof getActiveDocument === "function") ? getActiveDocument() : null;
     var sessionId = getMaterialComposerSessionId();
+
+    var binding = materialComposerBindings.filter(function (item) { return item.document === activeDoc; })[0];
+    if (!binding && activeDoc && sessionId) {
+      binding = { document: activeDoc, boundSessionId: lastBoundDocumentObject === activeDoc && lastBoundDocumentSessionId || sessionId };
+      materialComposerBindings.push(binding);
+    }
+    if (binding && !binding.inFlight && binding.boundSessionId !== sessionId && binding.newSessionId !== sessionId) {
+      binding.oldSessionId = binding.boundSessionId;
+      binding.newSessionId = sessionId;
+      binding.retryAt = 0;
+    }
+    if (binding && binding.oldSessionId) {
+      if (binding.inFlight || Date.now() < binding.retryAt) return;
+      binding.inFlight = true;
+      var oldSessionId = binding.oldSessionId;
+      var newSessionId = binding.newSessionId;
+      lastMaterialComposerView = null;
+      materialComposerTargetSnapshot = null;
+      byId("btn-material-apply").disabled = true;
+      byId("material-import-status").textContent = "正在绑定保存后的文档资料，请稍候。";
+      request("/word/materials/bind-document", {
+        oldDocumentSessionId: oldSessionId,
+        newDocumentSessionId: newSessionId,
+        newDocumentIdentity: newSessionId
+      }).catch(function (error) {
+        if (error && error.httpStatus === 404 && error.adapterCode === "MATERIAL_NOT_FOUND") {
+          return { sourceMissing: true };
+        }
+        throw error;
+      }).then(function (body) {
+        var sourceMissing = body && body.sourceMissing === true;
+        var migrated = null;
+        if (window.localStorage) {
+          var oldState = window.localStorage.getItem("word.material-composer:" + oldSessionId);
+          if (oldState) {
+            migrated = JSON.parse(oldState);
+            if (!sourceMissing) {
+              migrated.documentSessionId = newSessionId;
+              delete migrated.jobId;
+              delete migrated.clientJobId;
+              delete migrated.submittedRequest;
+              window.localStorage.setItem("word.material-composer:" + newSessionId, JSON.stringify(migrated));
+            }
+          }
+        }
+        binding.boundSessionId = newSessionId;
+        binding.oldSessionId = "";
+        binding.newSessionId = "";
+        binding.inFlight = false;
+        if (getActiveDocument() !== binding.document) return;
+        lastBoundDocumentObject = binding.document;
+        lastBoundDocumentSessionId = newSessionId;
+        if (getMaterialComposerSessionId() !== newSessionId) return;
+        materialComposerSession = newSessionId;
+        var composer = ensureMaterialComposer();
+        if (!sourceMissing && migrated && composer.updateInput) composer.updateInput(migrated.editingInput || migrated.input || {});
+        if (body && body.data && composer.updateMaterialCatalog) composer.updateMaterialCatalog(body.data);
+        composer.restore();
+        var hasCachedMaterials = migrated && (migrated.materialId || migrated.materialIds && migrated.materialIds.length);
+        byId("material-import-status").textContent = sourceMissing
+          ? (hasCachedMaterials ? "原会话资料在服务端已不可用，本地旧任务已保留；当前文档可重新导入资料。" : "当前文档尚无参考资料，可直接导入。")
+          : "已绑定保存后的文档资料；原任务仍属于保存前的会话，请重新生成草稿。";
+      }).catch(function (error) {
+        binding.inFlight = false;
+        var busy = error && error.adapterCode === "MATERIAL_COMPOSER_BUSY";
+        binding.retryAt = busy ? Date.now() + 1500 : Infinity;
+        if (getActiveDocument() !== binding.document || getMaterialComposerSessionId() !== newSessionId) return;
+        byId("material-import-status").textContent = busy
+          ? "保存前的生成任务尚未结束，资料绑定将自动重试。"
+          : "资料绑定失败：" + ((error && error.message) || "请检查文档身份后重试。") + " 原会话资料已保留。";
+      });
+      return;
+    }
+
+    lastBoundDocumentObject = activeDoc;
+    lastBoundDocumentSessionId = sessionId;
+
     if (sessionId !== materialComposerSession) {
       materialComposerSession = sessionId;
       lastMaterialComposerView = null;
@@ -2095,7 +2207,7 @@
       if (applyBtn) {
         applyBtn.disabled = true;
       }
-      byId("material-import-status").textContent = "资料与当前文档会话分别管理；服务重启后需重新导入。";
+      byId("material-import-status").textContent = "资料按当前文档分别保存；服务重启或窗格重开后可继续使用。";
       ensureMaterialComposer().restore();
     }
   }
@@ -2133,10 +2245,14 @@
     var sessionId = getMaterialComposerSessionId();
     var requestSequence = (materialImportRequestSequences[sessionId] || 0) + 1;
     materialImportRequestSequences[sessionId] = requestSequence;
+    var mutationComposer = null;
+    var mutationError = "";
     window.readMaterialFile(file).then(function (contentBase64) {
       if (materialImportRequestSequences[sessionId] !== requestSequence) {
         return null;
       }
+      mutationComposer = ensureMaterialComposer();
+      mutationComposer.beginMaterialMutation(sessionId);
       return window.submitMaterialImport({
         fileName: file.name,
         mimeType: file.type || "",
@@ -2159,9 +2275,113 @@
         }
       }
     }).catch(function (error) {
-      if (materialImportRequestSequences[sessionId] === requestSequence && status) {
-        status.textContent = (error && error.message) || "资料导入失败。";
+      if (materialImportRequestSequences[sessionId] === requestSequence) mutationError = (error && error.message) || "资料导入失败。";
+      if (sessionId === getMaterialComposerSessionId() && materialImportRequestSequences[sessionId] === requestSequence && status) {
+        status.textContent = mutationError;
       }
+    }).finally(function () {
+      if (mutationComposer) return mutationComposer.endMaterialMutation(sessionId, mutationError);
+    });
+  }
+
+  function handleMaterialUpdate(materialId) {
+    if (!materialId || typeof window.submitMaterialUpdate !== "function" || typeof window.readMaterialFile !== "function") {
+      return;
+    }
+    var sessionId = getMaterialComposerSessionId();
+    var fileInput = document.createElement("input");
+    fileInput.type = "file";
+    fileInput.accept = ".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    fileInput.style.display = "none";
+    document.body.appendChild(fileInput);
+    fileInput.addEventListener("change", function (e) {
+      var file = e.target.files && e.target.files[0];
+      if (fileInput.parentNode) {
+        fileInput.parentNode.removeChild(fileInput);
+      }
+      if (!file || sessionId !== getMaterialComposerSessionId()) return;
+      var status = byId("material-composer-status");
+      if (status) {
+        status.textContent = "正在更新参考资料...";
+      }
+      var requestSequence = (materialImportRequestSequences[sessionId] || 0) + 1;
+      materialImportRequestSequences[sessionId] = requestSequence;
+      var mutationComposer = null;
+      var mutationError = "";
+      window.readMaterialFile(file).then(function (contentBase64) {
+        if (materialImportRequestSequences[sessionId] !== requestSequence) return null;
+        mutationComposer = ensureMaterialComposer();
+        mutationComposer.beginMaterialMutation(sessionId);
+        return window.submitMaterialUpdate({
+          materialId: materialId,
+          fileName: file.name,
+          mimeType: file.type || "",
+          sizeBytes: file.size || 0,
+          contentBase64: contentBase64,
+          documentSessionId: sessionId || "",
+          request: request
+        });
+      }).then(function (res) {
+        if (!res || sessionId !== getMaterialComposerSessionId() || materialImportRequestSequences[sessionId] !== requestSequence) return;
+        if (res.catalogSummary) {
+          ensureMaterialComposer().updateMaterialCatalog(res.catalogSummary);
+        }
+        var currentStatus = byId("material-composer-status");
+        if (currentStatus) {
+          currentStatus.textContent = "资料「" + (res.fileName || file.name) + "」已更新。";
+        }
+      }).catch(function (err) {
+        if (materialImportRequestSequences[sessionId] === requestSequence) mutationError = (err && err.message) || "资料更新失败。";
+        if (sessionId !== getMaterialComposerSessionId() || materialImportRequestSequences[sessionId] !== requestSequence) return;
+        var currentStatus = byId("material-composer-status");
+        if (currentStatus) {
+          currentStatus.textContent = mutationError;
+        }
+      }).finally(function () {
+        if (mutationComposer) return mutationComposer.endMaterialMutation(sessionId, mutationError);
+      });
+    });
+    fileInput.click();
+  }
+
+  function handleMaterialDelete(materialId) {
+    if (!materialId || typeof window.submitMaterialDelete !== "function") {
+      return;
+    }
+    if (typeof window.confirm === "function") {
+      var confirmed = window.confirm("确认移除该参考资料吗？已生成的草稿如引用该资料将无法直接写入，需重新生成或复制使用。");
+      if (!confirmed) return;
+    }
+    var sessionId = getMaterialComposerSessionId();
+    var requestSequence = (materialImportRequestSequences[sessionId] || 0) + 1;
+    materialImportRequestSequences[sessionId] = requestSequence;
+    var status = byId("material-composer-status");
+    if (status) {
+      status.textContent = "正在移除参考资料...";
+    }
+    var mutationComposer = ensureMaterialComposer();
+    var mutationError = "";
+    mutationComposer.beginMaterialMutation(sessionId);
+    window.submitMaterialDelete({
+      materialId: materialId,
+      documentSessionId: sessionId || "",
+      request: request
+    }).then(function (res) {
+      if (!res || sessionId !== getMaterialComposerSessionId() || materialImportRequestSequences[sessionId] !== requestSequence) return;
+      ensureMaterialComposer().updateMaterialCatalog(res);
+      var currentStatus = byId("material-composer-status");
+      if (currentStatus) {
+        currentStatus.textContent = "资料已移除。";
+      }
+    }).catch(function (err) {
+      if (materialImportRequestSequences[sessionId] === requestSequence) mutationError = (err && err.message) || "资料移除失败。";
+      if (sessionId !== getMaterialComposerSessionId() || materialImportRequestSequences[sessionId] !== requestSequence) return;
+      var currentStatus = byId("material-composer-status");
+      if (currentStatus) {
+        currentStatus.textContent = mutationError;
+      }
+    }).finally(function () {
+      return mutationComposer.endMaterialMutation(sessionId, mutationError);
     });
   }
 

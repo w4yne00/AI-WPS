@@ -8,6 +8,8 @@ import unittest
 import zipfile
 from unittest.mock import patch
 
+import pytest
+
 
 CONTENT_TYPES_XML = b"""<?xml version="1.0" encoding="UTF-8"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
@@ -67,8 +69,7 @@ def upload_payload(content, file_name="资料.docx", mime_type=""):
 class WordMaterialImportApiTests(unittest.TestCase):
     def setUp(self):
         from app.api.word import material_import_service
-        material_import_service._session_catalogs.clear()
-        material_import_service._materials.clear()
+        material_import_service.clear()
 
     def test_import_and_view_keeps_source_and_shows_located_reading(self):
         """Dropping heading level, table columns, source location, or unread
@@ -407,3 +408,352 @@ def _paragraph_document(text):
         '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
         "<w:body><w:p><w:r><w:t>{0}</w:t></w:r></w:p></w:body></w:document>"
     ).format(text).encode("utf-8")
+
+
+def test_word_material_store_persists_and_restores_catalog_across_instances(tmp_path):
+    from app.services.word.material_import import WordMaterialImportService
+
+    state_dir = tmp_path / "state"
+    state_dir.mkdir(parents=True)
+    session_id = "doc_session_persist_1"
+    xml = """<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p><w:pPr><w:outlineLvl w:val="0" /></w:pPr><w:r><w:t>第一章 概述</w:t></w:r></w:p>
+    <w:p><w:r><w:t>项目总预算为500万元人民币。</w:t></w:r></w:p>
+  </w:body>
+</w:document>""".encode("utf-8")
+    doc_bytes = build_docx(document_xml=xml)
+    b64 = base64.b64encode(doc_bytes).decode("ascii")
+
+    # Instance 1
+    service1 = WordMaterialImportService(state_dir=state_dir)
+    res1 = service1.import_material({
+        "fileName": "立项.docx",
+        "contentBase64": b64,
+        "documentSessionId": session_id,
+        "documentIdentity": "full:/path/to/project.docx",
+    })
+    mat_id = res1["materialId"]
+    assert res1["catalogSummary"]["totalDocuments"] == 1
+
+    # Instance 2 pointing to same state_dir
+    service2 = WordMaterialImportService(state_dir=state_dir)
+    cat2 = service2.get_catalog(session_id)
+    assert cat2["totalDocuments"] == 1
+    assert cat2["documents"][0]["materialId"] == mat_id
+    assert cat2["documents"][0]["fileName"] == "立项.docx"
+    assert len(cat2["toc"]) >= 1
+
+
+def test_word_material_update_and_remove_lifecycle(tmp_path):
+    import pytest
+    from app.core.errors import AdapterError
+    from app.services.word.material_import import WordMaterialImportService
+
+    service = WordMaterialImportService(state_dir=tmp_path / "state")
+    session_id = "doc_session_upd_1"
+    doc1 = build_docx(document_xml=_paragraph_document("第一章\n原始文本内容一百字。"))
+    res1 = service.import_material({
+        "fileName": "doc1.docx",
+        "contentBase64": base64.b64encode(doc1).decode("ascii"),
+        "documentSessionId": session_id
+    })
+    mid = res1["materialId"]
+    orig_chars = res1["catalogSummary"]["totalCharacters"]
+
+    # 1. Update with new docx
+    doc2 = build_docx(document_xml=_paragraph_document("第一章\n更新后的文本内容两百字，包含新增细节。"))
+    upd_res = service.update_material(mid, {
+        "fileName": "doc1_v2.docx",
+        "contentBase64": base64.b64encode(doc2).decode("ascii"),
+        "documentSessionId": session_id
+    })
+    assert upd_res["materialId"] == mid
+    assert upd_res["fileName"] == "doc1_v2.docx"
+    assert upd_res["catalogSummary"]["totalDocuments"] == 1
+    assert upd_res["catalogSummary"]["totalCharacters"] > orig_chars
+    assert "updatedAt" in upd_res
+
+    # 2. Delete material
+    del_res = service.delete_material(mid, document_session_id=session_id)
+    assert del_res["totalDocuments"] == 0
+    assert del_res["totalCharacters"] == 0
+
+    # 3. Check 404 after delete
+    with pytest.raises(AdapterError) as exc_info:
+        service.view_material(mid)
+    assert exc_info.value.code == "MATERIAL_NOT_FOUND"
+
+
+def test_word_material_update_over_limit_preserves_original(tmp_path):
+    import pytest
+    from app.core.errors import AdapterError
+    from app.services.word.material_import import WordMaterialImportService
+
+    service = WordMaterialImportService(state_dir=tmp_path / "state")
+    session_id = "doc_session_limit_1"
+    doc1 = build_docx(document_xml=_paragraph_document("第一章\n原始文本内容五十字。"))
+    res1 = service.import_material({
+        "fileName": "doc1.docx",
+        "contentBase64": base64.b64encode(doc1).decode("ascii"),
+        "documentSessionId": session_id
+    })
+    mid = res1["materialId"]
+    orig_chars = res1["catalogSummary"]["totalCharacters"]
+
+    # Try updating with > 100,000 characters
+    huge_text = "甲" * 100005
+    doc_huge = build_docx(document_xml=_paragraph_document(huge_text))
+    with pytest.raises(AdapterError) as exc_info:
+        service.update_material(mid, {
+            "fileName": "doc1_huge.docx",
+            "contentBase64": base64.b64encode(doc_huge).decode("ascii"),
+            "documentSessionId": session_id
+        })
+    assert exc_info.value.code == "MATERIAL_TEXT_OVER_LIMIT"
+    assert exc_info.value.status_code == 413
+
+    # Verify original unchanged
+    view = service.view_material(mid)
+    assert view["fileName"] == "doc1.docx"
+    assert view["catalogSummary"]["totalCharacters"] == orig_chars
+
+
+def test_word_material_update_and_delete_error_guards(tmp_path):
+    import pytest
+    from app.core.errors import AdapterError
+    from app.services.word.material_import import WordMaterialImportService
+
+    service = WordMaterialImportService(state_dir=tmp_path / "state")
+    session_id = "doc_session_guard_1"
+    doc1 = build_docx(document_xml=_paragraph_document("第一章\n原始文本。"))
+    res1 = service.import_material({
+        "fileName": "doc1.docx",
+        "contentBase64": base64.b64encode(doc1).decode("ascii"),
+        "documentSessionId": session_id
+    })
+    mid = res1["materialId"]
+
+    # Non-existent material
+    with pytest.raises(AdapterError) as exc:
+        service.delete_material("non_existent_mat", document_session_id=session_id)
+    assert exc.value.code == "MATERIAL_NOT_FOUND"
+
+    with pytest.raises(AdapterError) as exc:
+        service.update_material("non_existent_mat", {
+            "fileName": "x.docx",
+            "contentBase64": base64.b64encode(doc1).decode("ascii"),
+            "documentSessionId": session_id
+        })
+    assert exc.value.code == "MATERIAL_NOT_FOUND"
+
+    # Wrong session
+    with pytest.raises(AdapterError) as exc:
+        service.delete_material(mid, document_session_id="wrong_session")
+    assert exc.value.code == "MATERIAL_NOT_FOUND"
+
+    with pytest.raises(AdapterError) as exc:
+        service.update_material(mid, {
+            "fileName": "x.docx",
+            "contentBase64": base64.b64encode(doc1).decode("ascii"),
+            "documentSessionId": "wrong_session"
+        })
+    assert exc.value.code == "MATERIAL_NOT_FOUND"
+
+
+def test_word_material_update_and_delete_persistence_across_instances(tmp_path):
+    import pytest
+    from app.core.errors import AdapterError
+    from app.services.word.material_import import WordMaterialImportService
+
+    state_dir = tmp_path / "state"
+    service1 = WordMaterialImportService(state_dir=state_dir)
+    session_id = "doc_session_persist_1"
+    doc1 = build_docx(document_xml=_paragraph_document("第一章 基础\n初版文字内容。"))
+    res1 = service1.import_material({
+        "fileName": "doc1.docx",
+        "contentBase64": base64.b64encode(doc1).decode("ascii"),
+        "documentSessionId": session_id
+    })
+    mid = res1["materialId"]
+
+    # Update in instance 1
+    doc2 = build_docx(document_xml=_paragraph_document("第一章 基础\n改版文字内容详情。"))
+    service1.update_material(mid, {
+        "fileName": "doc1_revised.docx",
+        "contentBase64": base64.b64encode(doc2).decode("ascii"),
+        "documentSessionId": session_id
+    })
+
+    # Read from new instance 2
+    service2 = WordMaterialImportService(state_dir=state_dir)
+    view2 = service2.view_material(mid)
+    assert view2["fileName"] == "doc1_revised.docx"
+    cat2 = service2.get_catalog(session_id)
+    assert cat2["totalDocuments"] == 1
+    assert cat2["documents"][0]["fileName"] == "doc1_revised.docx"
+
+    # Delete in instance 2
+    service2.delete_material(mid, document_session_id=session_id)
+
+    # Read from new instance 3
+    service3 = WordMaterialImportService(state_dir=state_dir)
+    cat3 = service3.get_catalog(session_id)
+    assert cat3["totalDocuments"] == 0
+    with pytest.raises(AdapterError) as exc:
+        service3.view_material(mid)
+    assert exc.value.code == "MATERIAL_NOT_FOUND"
+
+
+def test_material_fragment_ids_stay_unique_after_update_delete_and_reimport(tmp_path):
+    """Counting surviving fragments can overwrite another material's source."""
+    from app.services.long_task_coordinator import LongTaskCoordinator
+    from app.services.word.material_composer import MaterialComposerJobs
+    from app.services.word.material_import import WordMaterialImportService
+
+    state_dir = tmp_path / "state"
+    service = WordMaterialImportService(state_dir=state_dir)
+    first = service.import_material(upload_payload(
+        build_docx(document_xml=_paragraph_document("甲资料原文")), "甲.docx"))
+    second = service.import_material(upload_payload(
+        build_docx(document_xml=_paragraph_document("乙资料原文")), "乙.docx"))
+    updated = service.update_material(first["materialId"], upload_payload(
+        build_docx(document_xml=_paragraph_document("甲资料新版")), "甲新版.docx"))
+    fragments = service.get_session_catalog("doc-session-1")["fragmentsList"]
+    assert len({f["fragmentId"] for f in fragments}) == 2
+    assert updated["fragments"][0]["fragmentId"] == "frag-3"
+
+    answer = {"paragraphs": [
+        {"text": "甲资料新版", "fragmentIds": ["frag-3"], "missingItems": []},
+        {"text": "乙资料原文", "fragmentIds": ["frag-2"], "missingItems": []},
+    ]}
+    coordinator = LongTaskCoordinator()
+    jobs = MaterialComposerJobs(service, coordinator=coordinator)
+    with patch("app.services.provider_client.ProviderClient.resolve_task_auth",
+               return_value={"providerBaseUrl": "https://model.invalid", "apiKey": "test"}), \
+         patch("app.services.provider_client.ProviderClient.post_task",
+               return_value={"answer": json.dumps(answer)}):
+        job = jobs.start({"documentSessionId": "doc-session-1",
+                          "clientJobId": "fragment-update-0001",
+                          "sectionTitle": "资料", "instruction": "整理原文"}, "fragment-update-trace")
+        terminal = coordinator.wait(job["jobId"], task_type="word.material_composer")
+    assert terminal["status"] == "completed", terminal
+    sources = [p["sources"][0] for p in terminal["result"]["paragraphs"]]
+    assert [(s["fileName"], s["quote"]) for s in sources] == [
+        ("甲新版.docx", "甲资料新版"), ("乙.docx", "乙资料原文")]
+
+    service.delete_material(first["materialId"], "doc-session-1")
+    service = WordMaterialImportService(state_dir=state_dir)
+    third = service.import_material(upload_payload(
+        build_docx(document_xml=_paragraph_document("丙资料原文")), "丙.docx"))
+    assert third["fragments"][0]["fragmentId"] == "frag-3"
+    catalog = service.get_session_catalog("doc-session-1")
+    assert {f["fragmentId"] for f in catalog["fragmentsList"]} == {"frag-2", "frag-3"}
+    assert catalog["fragments"]["frag-2"]["materialId"] == second["materialId"]
+    assert catalog["fragments"]["frag-3"]["text"] == "丙资料原文"
+
+
+@pytest.mark.parametrize("operation", ["update", "delete", "generate"])
+def test_bound_materials_remain_usable_after_restart(tmp_path, operation):
+    """Leaving material details in the old session rejects real operations."""
+    from app.services.long_task_coordinator import LongTaskCoordinator
+    from app.services.word.material_composer import MaterialComposerJobs
+    from app.services.word.material_import import WordMaterialImportService
+
+    state_dir = tmp_path / "state"
+    service = WordMaterialImportService(state_dir=state_dir)
+    first = service.import_material(upload_payload(
+        build_docx(document_xml=_paragraph_document("甲资料原文")), "甲.docx"))
+    second = service.import_material(upload_payload(
+        build_docx(document_xml=_paragraph_document("乙资料原文")), "乙.docx"))
+    service.bind_document({"oldDocumentSessionId": "doc-session-1",
+                           "newDocumentSessionId": "saved-session",
+                           "newDocumentIdentity": "full:/资料/正式文档.docx"})
+    restored = WordMaterialImportService(state_dir=state_dir)
+
+    if operation == "update":
+        payload = upload_payload(build_docx(document_xml=_paragraph_document("甲新版")), "甲新版.docx")
+        payload["documentSessionId"] = "saved-session"
+        result = restored.update_material(first["materialId"], payload)
+        assert result["fragments"][0]["text"] == "甲新版"
+        assert WordMaterialImportService(state_dir=state_dir).view_material(
+            first["materialId"])["documentSessionId"] == "saved-session"
+    elif operation == "delete":
+        result = restored.delete_material(second["materialId"], "saved-session")
+        assert [d["materialId"] for d in result["documents"]] == [first["materialId"]]
+        assert WordMaterialImportService(state_dir=state_dir).get_catalog(
+            "saved-session")["totalDocuments"] == 1
+    else:
+        coordinator = LongTaskCoordinator()
+        jobs = MaterialComposerJobs(restored, coordinator=coordinator)
+        answer = {"paragraphs": [
+            {"text": "甲资料原文", "fragmentIds": ["frag-1"], "missingItems": []},
+            {"text": "乙资料原文", "fragmentIds": ["frag-2"], "missingItems": []},
+        ]}
+        with patch("app.services.provider_client.ProviderClient.resolve_task_auth",
+                   return_value={"providerBaseUrl": "https://model.invalid", "apiKey": "test"}), \
+             patch("app.services.provider_client.ProviderClient.post_task",
+                   return_value={"answer": json.dumps(answer)}):
+            job = jobs.start({"documentSessionId": "saved-session",
+                              "materialIds": [first["materialId"], second["materialId"]],
+                              "clientJobId": "bound-materials-0001", "sectionTitle": "资料",
+                              "instruction": "整理原文"}, "bound-materials-trace")
+            terminal = coordinator.wait(job["jobId"], task_type="word.material_composer")
+        assert terminal["status"] == "completed", terminal
+        sources = [p["sources"][0] for p in terminal["result"]["paragraphs"]]
+        assert [(s["fileName"], s["quote"]) for s in sources] == [
+            ("甲.docx", "甲资料原文"), ("乙.docx", "乙资料原文")]
+
+
+def test_same_instant_replacements_have_monotonic_consistent_updated_at(tmp_path):
+    """Second precision and storage-generated timestamps hide new versions."""
+    from datetime import datetime, timezone
+    from app.services.word.material_import import WordMaterialImportService
+
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 9, 27, 12, 0, 0, 123456, tzinfo=timezone.utc)
+
+    state_dir = tmp_path / "state"
+    with patch("app.services.word.material_import.datetime", FixedDateTime):
+        service = WordMaterialImportService(state_dir=state_dir)
+        view = service.import_material(upload_payload(
+            build_docx(document_xml=_paragraph_document("初版")), "资料.docx"))
+        material_id = view["materialId"]
+        imported_at = view["importedAt"]
+        versions = [view["updatedAt"]]
+        for text in ("第二版", "第三版"):
+            # Rebuild between replacements to exercise the persisted timestamp.
+            service = WordMaterialImportService(state_dir=state_dir)
+            view = service.update_material(material_id, upload_payload(
+                build_docx(document_xml=_paragraph_document(text)), "资料.docx"))
+            versions.append(view["updatedAt"])
+            assert view["importedAt"] == imported_at
+            assert view["catalogSummary"]["documents"][0]["updatedAt"] == versions[-1]
+            assert service.get_catalog("doc-session-1")["documents"][0]["updatedAt"] == versions[-1]
+            restored = WordMaterialImportService(state_dir=state_dir)
+            assert restored.view_material(material_id)["updatedAt"] == versions[-1]
+            assert restored.get_catalog("doc-session-1")["documents"][0]["updatedAt"] == versions[-1]
+            manifest = json.loads(next(state_dir.glob("*/manifest.json")).read_text(encoding="utf-8"))
+            assert manifest["documents"][0]["updatedAt"] == versions[-1]
+            assert manifest["updatedAt"] == versions[-1]
+
+    parsed = [datetime.fromisoformat(v.replace("Z", "+00:00")) for v in versions]
+    assert parsed[0] < parsed[1] < parsed[2]
+    assert versions[0] == "2026-09-27T12:00:00.123456Z"
+
+
+def test_bind_document_updates_view_cached_without_catalog(tmp_path):
+    """A cached detail must migrate even when its catalog was not loaded."""
+    from app.services.word.material_import import WordMaterialImportService
+
+    state_dir = tmp_path / "state"
+    imported = WordMaterialImportService(state_dir=state_dir).import_material(
+        upload_payload(build_docx(document_xml=_paragraph_document("原文"))))
+    service = WordMaterialImportService(state_dir=state_dir)
+    service.view_material(imported["materialId"])
+    service.bind_document({"oldDocumentSessionId": "doc-session-1",
+                           "newDocumentSessionId": "saved-session"})
+    assert service.view_material(imported["materialId"])["documentSessionId"] == "saved-session"

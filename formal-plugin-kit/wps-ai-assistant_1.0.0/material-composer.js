@@ -1,3 +1,30 @@
+function evaluateBasisStatus(s) {
+  if (s && s.result && (s.materialMutationPending || s.catalogPending)) return 'checking';
+  if (!s || !s.result || !Array.isArray(s.result.basisMaterials) || !s.result.basisMaterials.length) {
+    return 'current';
+  }
+  var currentDocs = (s.catalogSummary && Array.isArray(s.catalogSummary.documents)) ? s.catalogSummary.documents : [];
+  var docMap = {};
+  currentDocs.forEach(function (doc) {
+    if (doc && doc.materialId) docMap[doc.materialId] = doc;
+  });
+
+  for (var i = 0; i < s.result.basisMaterials.length; i++) {
+    var basis = s.result.basisMaterials[i];
+    var mid = basis.materialId;
+    if (!docMap[mid]) {
+      return 'removed';
+    }
+    var currentDoc = docMap[mid];
+    var currentUpdated = currentDoc.updatedAt || currentDoc.importedAt || '';
+    var basisUpdated = basis.updatedAt || basis.importedAt || '';
+    if (currentUpdated && basisUpdated && currentUpdated !== basisUpdated) {
+      return 'updated';
+    }
+  }
+  return 'current';
+}
+
 function createMaterialComposer(options) {
   var states = {};
   var schedule = options.schedule || function (fn, ms) { return setTimeout(fn, ms); };
@@ -31,6 +58,8 @@ function createMaterialComposer(options) {
         materials: data.materials || [],
         catalogSummary: catalogSummary,
         catalogRequestVersion: 0,
+        materialMutationPending: 0,
+        catalogPending: false,
         catalogLabel: formatCatalogLabel(catalogSummary),
         jobId: data.jobId || '',
         clientJobId: data.clientJobId || '',
@@ -44,6 +73,7 @@ function createMaterialComposer(options) {
         phase: '',
         phaseLabel: '',
         result: null,
+        basisStatus: 'current',
         error: '',
         busy: false,
         pending: false
@@ -68,6 +98,7 @@ function createMaterialComposer(options) {
     }));
   }
   function show(s) {
+    s.basisStatus = evaluateBasisStatus(s);
     if (options.getSessionId() === s.documentSessionId) options.render(clone(s));
   }
   function validResult(r, id) {
@@ -127,6 +158,8 @@ function createMaterialComposer(options) {
     await execute(s, '/word/material-composer/jobs/' + encodeURIComponent(s.jobId || s.clientJobId) + '?documentSessionId=' + encodeURIComponent(s.documentSessionId), undefined, 'GET');
   }
   async function restoreCatalog(s) {
+    s.catalogPending = true;
+    show(s);
     var version = ++s.catalogRequestVersion;
     var response = await options.request('/word/materials/catalog?documentSessionId=' + encodeURIComponent(s.documentSessionId), undefined, { method: 'GET' });
     if (version !== s.catalogRequestVersion) return;
@@ -135,6 +168,7 @@ function createMaterialComposer(options) {
       throw new Error('资料目录返回格式不正确，请重试查询。');
     }
     s.catalogSummary = catalog;
+    s.catalogPending = false;
     s.catalogLabel = formatCatalogLabel(catalog);
     s.materialIds = catalog.documents.map(function (item) { return item.materialId; }).filter(Boolean);
     s.materialId = s.materialIds[s.materialIds.length - 1] || '';
@@ -228,7 +262,7 @@ function createMaterialComposer(options) {
     },
     start: async function (input) {
       var s = current();
-      if (s.busy || (s.jobId && active(s))) { show(s); return; }
+      if (s.busy || s.materialMutationPending || (s.jobId && active(s))) { show(s); return; }
       var retryingUncertain = Boolean(s.clientJobId && !s.jobId);
       var selectedInput = retryingUncertain ? s.input : input;
       var hasMaterial = Boolean(s.materialId || (s.materialIds && s.materialIds.length) || (s.catalogSummary && s.catalogSummary.totalDocuments));
@@ -297,6 +331,20 @@ function createMaterialComposer(options) {
       if (s.status !== 'succeeded' || !validResult(s.result, s.documentSessionId)) {
         throw new Error('当前没有可写入的章节草稿。');
       }
+      var basisStatus = evaluateBasisStatus(s);
+      if (basisStatus === 'checking') {
+        throw new Error('正在核查资料依据，已暂停写入；请等待目录核查完成或重试查询。');
+      }
+      if (basisStatus === 'removed') {
+        s.error = '所引参考资料已被移除，当前草稿依据已失效。已暂停写入，请重新生成草稿或复制使用。';
+        show(s);
+        throw new Error(s.error);
+      }
+      if (basisStatus === 'updated') {
+        s.error = '参考资料已更新，当前草稿依据已变更。已暂停写入，请重新生成草稿或复制使用。';
+        show(s);
+        throw new Error(s.error);
+      }
       var hasMissing = (s.result.missingItems && s.result.missingItems.length > 0) ||
         (s.result.paragraphs && s.result.paragraphs.some(function (p) { return p.missingItems && p.missingItems.length > 0; }));
       if (hasMissing && target && target.confirmedMissingItems === false) {
@@ -335,11 +383,44 @@ function createMaterialComposer(options) {
         show(s);
         throw error;
       }
+    },
+    updateMaterialCatalog: function (catalogSummary) {
+      var s = current();
+      s.catalogRequestVersion += 1;
+      s.catalogPending = false;
+      s.catalogSummary = catalogSummary;
+      if (catalogSummary && Array.isArray(catalogSummary.documents)) {
+        s.materialIds = catalogSummary.documents.map(function (d) { return d.materialId; }).filter(Boolean);
+      }
+      s.catalogLabel = formatCatalogLabel(s.catalogSummary);
+      s.basisStatus = evaluateBasisStatus(s);
+      persist(s);
+      show(s);
+    },
+    beginMaterialMutation: function (sessionId) {
+      var s = stateFor(sessionId);
+      s.error = '';
+      s.materialMutationPending += 1;
+      s.catalogPending = true;
+      s.catalogRequestVersion += 1;
+      show(s);
+    },
+    endMaterialMutation: async function (sessionId, errorMessage) {
+      var s = stateFor(sessionId);
+      if (errorMessage) s.error = errorMessage;
+      s.materialMutationPending -= 1;
+      if (s.materialMutationPending) { show(s); return; }
+      try { await restoreCatalog(s); }
+      catch (error) { s.error = (s.error ? s.error + ' ' : '') + (error.message || '资料目录核查失败，已暂停写入，请重试查询。'); show(s); }
+    },
+    evaluateBasisStatus: function () {
+      return evaluateBasisStatus(current());
     }
   };
 }
-function renderMaterialComposer(root, view, onSelectChapter, onResolveConflict) {
+function renderMaterialComposer(root, view, onSelectChapter, onResolveConflict, onUpdateMaterial, onDeleteMaterial) {
   var doc = root.ownerDocument;
+  var busy = view.busy || Boolean(view.materialMutationPending);
   function append(parent, tag, text, className) {
     var node = doc.createElement(tag);
     node.className = className || '';
@@ -353,6 +434,14 @@ function renderMaterialComposer(root, view, onSelectChapter, onResolveConflict) 
     var catText = view.catalogLabel || ('已导入 ' + view.catalogSummary.totalDocuments + '/5 份资料，合计 ' + (view.catalogSummary.totalCharacters || 0).toLocaleString() + '/100,000 字');
     append(root, 'p', catText, 'material-composer-catalog');
   }
+  if (view.basisStatus === 'checking') {
+    append(root, 'div', '正在核查资料依据，已暂停写入；请等待目录核查完成或重试查询。', 'material-composer-basis-warning basis-checking');
+  } else if (view.basisStatus === 'updated' || view.basisStatus === 'removed') {
+    var warningText = view.basisStatus === 'removed'
+      ? '所引参考资料已被移除，当前草稿依据已失效。已暂停写入，请重新生成草稿或复制使用。'
+      : '参考资料已更新，当前草稿依据已变更。已暂停写入，请重新生成草稿或复制使用。';
+    append(root, 'div', warningText, 'material-composer-basis-warning basis-' + view.basisStatus);
+  }
   var catalog = view.catalogSummary;
   if (catalog && Array.isArray(catalog.documents) && catalog.documents.length) {
     var directory = append(root, 'details', '', 'material-composer-toc');
@@ -360,11 +449,32 @@ function renderMaterialComposer(root, view, onSelectChapter, onResolveConflict) 
     catalog.documents.forEach(function (material) {
       var file = append(directory, 'section', '', 'material-composer-toc-file');
       append(file, 'strong', material.fileName || '未命名资料');
+      var actions = append(file, 'span', '', 'material-composer-file-actions');
+      var btnUpdate = append(actions, 'button', '更新', 'ghost-action material-composer-btn-update');
+      btnUpdate.type = 'button';
+      btnUpdate.title = '更新/替换此资料';
+      btnUpdate.disabled = Boolean(busy || (view.jobId && (view.status === 'queued' || view.status === 'running')) || typeof onUpdateMaterial !== 'function');
+      if (!btnUpdate.disabled) {
+        btnUpdate.addEventListener('click', function (e) {
+          if (e && e.stopPropagation) e.stopPropagation();
+          onUpdateMaterial(material.materialId);
+        });
+      }
+      var btnDelete = append(actions, 'button', '移除', 'ghost-action material-composer-btn-delete');
+      btnDelete.type = 'button';
+      btnDelete.title = '移除此资料';
+      btnDelete.disabled = Boolean(busy || (view.jobId && (view.status === 'queued' || view.status === 'running')) || typeof onDeleteMaterial !== 'function');
+      if (!btnDelete.disabled) {
+        btnDelete.addEventListener('click', function (e) {
+          if (e && e.stopPropagation) e.stopPropagation();
+          onDeleteMaterial(material.materialId);
+        });
+      }
       (catalog.toc || []).filter(function (entry) { return entry.materialId === material.materialId; }).forEach(function (entry) {
         var level = Math.max(1, Math.min(6, Number(entry.headingLevel) || 1));
         var chapter = append(file, 'button', entry.sectionTitle, 'ghost-action material-composer-toc-chapter material-composer-toc-level-' + level);
         chapter.type = 'button';
-        chapter.disabled = view.busy || view.status === 'queued' || view.status === 'running' || typeof onSelectChapter !== 'function';
+        chapter.disabled = busy || view.status === 'queued' || view.status === 'running' || typeof onSelectChapter !== 'function';
         if (!chapter.disabled) chapter.addEventListener('click', function () { onSelectChapter(entry.sectionTitle); });
       });
     });
@@ -385,7 +495,7 @@ function renderMaterialComposer(root, view, onSelectChapter, onResolveConflict) 
         var label = '[' + (cand.sourceType === 'user' ? '用户补充事实' : cand.sourceName) + '] ' + cand.value;
         var btn = append(card, 'button', label, 'ghost-action material-composer-conflict-choice' + (isChosen ? ' active' : ''));
         btn.type = 'button';
-        btn.disabled = view.busy || Boolean(view.jobId && (view.status === 'queued' || view.status === 'running'));
+        btn.disabled = busy || Boolean(view.jobId && (view.status === 'queued' || view.status === 'running'));
         if (!btn.disabled && typeof onResolveConflict === 'function') {
           btn.addEventListener('click', function () {
             onResolveConflict(conflict.conflictId, cand.optionId);
@@ -434,4 +544,5 @@ function renderMaterialComposer(root, view, onSelectChapter, onResolveConflict) 
 if (typeof window !== 'undefined') {
   window.createMaterialComposer = createMaterialComposer;
   window.renderMaterialComposer = renderMaterialComposer;
+  window.evaluateBasisStatus = evaluateBasisStatus;
 }

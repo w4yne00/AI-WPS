@@ -2432,6 +2432,7 @@ class Handler(BaseHTTPRequestHandler):
             if (
                 path == "/word/material-composer/jobs"
                 or path == "/word/material-composer/conflicts"
+                or path == "/word/materials/bind-document"
                 or (
                     path.startswith("/word/material-composer/jobs/")
                     and path.endswith("/cancel")
@@ -3249,6 +3250,28 @@ class Handler(BaseHTTPRequestHandler):
             self._write(
                 200,
                 envelope(trace_id, "word.material_composer", data, message="imported"),
+            )
+            return
+
+        if path == "/word/materials/bind-document":
+            trace_id = new_trace_id("standalone-word-material-bind")
+            try:
+                data = WORD_MATERIAL_IMPORT_SERVICE.bind_document(payload)
+            except AdapterError as error:
+                self._write(
+                    error.status_code,
+                    envelope(
+                        trace_id,
+                        "word.material_composer",
+                        success=False,
+                        message=error.message,
+                        errors=[{"code": error.code, "message": error.message}],
+                    ),
+                )
+                return
+            self._write(
+                200,
+                envelope(trace_id, "word.material_composer", data, message="bound"),
             )
             return
 
@@ -4102,6 +4125,45 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
 
+        if path.startswith("/word/materials/"):
+            material_id = unquote(path[len("/word/materials/"): ]).strip("/")
+            trace_id = new_trace_id("standalone-word-material-update")
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                raw_bytes = self.rfile.read(length) if length else b"{}"
+                payload = json.loads(raw_bytes.decode("utf-8") or "{}")
+                data = WORD_MATERIAL_IMPORT_SERVICE.update_material(material_id, payload)
+            except AdapterError as error:
+                self._write(
+                    error.status_code,
+                    envelope(
+                        trace_id,
+                        "word.material_composer",
+                        success=False,
+                        message=error.message,
+                        errors=[{"code": error.code, "message": error.message}],
+                    ),
+                )
+                return
+            except (UnicodeDecodeError, ValueError):
+                message = "资料更新请求格式无效。"
+                self._write(
+                    400,
+                    envelope(
+                        trace_id,
+                        "word.material_composer",
+                        success=False,
+                        message=message,
+                        errors=[{"code": "REQUEST_VALIDATION_FAILED", "message": message}],
+                    ),
+                )
+                return
+            self._write(
+                200,
+                envelope(trace_id, "word.material_composer", data, message="updated"),
+            )
+            return
+
         self.send_error(501, "Unsupported method (%r)" % self.command)
 
     def do_DELETE(self):
@@ -4119,6 +4181,30 @@ class Handler(BaseHTTPRequestHandler):
             clear_local_api_key()
             client = ProviderClient()
             self._write(200, envelope("standalone-provider-api-key", "provider.api_key", {"configured": client.is_configured(), "authSource": client.get_auth_source()}, message="cleared"))
+            return
+
+        if path.startswith("/word/materials/"):
+            material_id = unquote(path[len("/word/materials/"): ]).strip("/")
+            session = parse_qs(parsed.query).get("documentSessionId", [""])[0]
+            trace_id = new_trace_id("standalone-word-material-delete")
+            try:
+                data = WORD_MATERIAL_IMPORT_SERVICE.delete_material(material_id, document_session_id=session)
+            except AdapterError as error:
+                self._write(
+                    error.status_code,
+                    envelope(
+                        trace_id,
+                        "word.material_composer",
+                        success=False,
+                        message=error.message,
+                        errors=[{"code": error.code, "message": error.message}],
+                    ),
+                )
+                return
+            self._write(
+                200,
+                envelope(trace_id, "word.material_composer", data, message="deleted"),
+            )
             return
 
         deterministic_format_job_prefix = "/word/format-review/jobs/"

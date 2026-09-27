@@ -32,10 +32,113 @@ function harness(shared) {
     }
   });
   h.saved = saved;
+  h.context = context;
+  h.renderComposer = context.window.renderMaterialComposer;
+  h.evaluateBasisStatus = context.window.evaluateBasisStatus;
   h.last = () => h.views[h.views.length - 1];
   return h;
 }
 function result(session = 'doc-a') { return { taskType: 'word.material_composer', documentSessionId: session, plainText: '正文', paragraphs: [{text:'正文',sources:[{fileName:'资料.docx',section:'第一章',quote:'原句',fragmentId:'f1'}],missingItems:[]}],missingItems:[] }; }
+test('a new unsaved document with the same name never restores the previous document materials', async () => {
+  const helpers = require('../wps-ai-assistant_1.0.0/taskpane-helpers.js');
+  for (const fullName of ['', '文档1']) {
+    const firstDoc = { Name: '文档1', FullName: fullName };
+    const first = harness();
+    first.session = helpers.getDocumentSessionId(firstDoc);
+    first.api.setMaterial({materialId:'private-material', catalogSummary:{
+      totalDocuments:1, totalCharacters:5, documents:[{materialId:'private-material',fileName:'上份文档资料.docx'}], toc:[]
+    }});
+    assert.equal(helpers.getDocumentSessionId(firstDoc), first.session);
+    const reopenedPane = harness(first.saved);
+    reopenedPane.session = helpers.getDocumentSessionId(firstDoc);
+    await reopenedPane.api.restore();
+    assert.equal(reopenedPane.last().catalogSummary.totalDocuments, 1);
+    const nextDocument = harness(first.saved);
+    nextDocument.session = helpers.getDocumentSessionId({Name:'文档1', FullName:fullName});
+    await nextDocument.api.restore();
+    assert.equal(nextDocument.last().catalogSummary.totalDocuments, 0);
+    assert.deepEqual(Array.from(nextDocument.last().materialIds), []);
+    firstDoc.FullName = '/documents/已保存.docx';
+    const savedId = helpers.getDocumentSessionId(firstDoc);
+    assert.notEqual(savedId, first.session);
+    assert.equal(savedId, helpers.getDocumentSessionId({FullName:'/documents/已保存.docx'}));
+  }
+});
+test('an updated material timestamp within the same second pauses write-back and preserves copy', async () => {
+  const h = harness();
+  h.api.setMaterial({materialId:'m1',catalogSummary:{totalDocuments:1,totalCharacters:2,documents:[{
+    materialId:'m1',fileName:'资料.docx',updatedAt:'2026-09-27T10:00:00Z'
+  }],toc:[]}});
+  h.response = {success:true,data:{jobId:'job-a',status:'completed',documentSessionId:'doc-a',result:{
+    ...result(), basisMaterials:[{materialId:'m1',updatedAt:'2026-09-27T10:00:00Z'}]
+  }}};
+  await h.api.start({sectionTitle:'范围',instruction:'编写'});
+  h.api.updateMaterialCatalog({totalDocuments:1,totalCharacters:2,documents:[{
+    materialId:'m1',fileName:'资料.docx',updatedAt:'2026-09-27T10:00:00.000001Z'
+  }],toc:[]});
+  assert.equal(h.last().basisStatus, 'updated');
+  await assert.rejects(h.api.apply({documentSessionId:'doc-a'}), /参考资料已更新/);
+  assert.equal(h.applied.length, 0);
+  await h.api.copy();
+  assert.deepEqual(h.copied, ['正文']);
+});
+test('late catalog restore cannot undo a successful material update or removal', async () => {
+  for (const documents of [[{materialId:'m1',fileName:'新版.docx'}], []]) {
+    const h = harness();
+    let finish;
+    h.catalogResponse = new Promise(resolve => {finish=resolve;});
+    const restoring = h.api.restore();
+    h.api.updateMaterialCatalog({totalDocuments:documents.length,totalCharacters:documents.length,toc:[],documents});
+    finish({success:true,data:{totalDocuments:1,totalCharacters:1,documents:[{materialId:'m1',fileName:'旧版.docx'}],toc:[]}});
+    await restoring;
+    assert.deepEqual(JSON.parse(JSON.stringify(h.last().catalogSummary.documents)), documents);
+  }
+});
+test('write-back waits for every material mutation and reconciles the final server version', async () => {
+  const h = harness();
+  h.api.setMaterial({materialId:'m1',catalogSummary:{totalDocuments:1,totalCharacters:2,documents:[{materialId:'m1',updatedAt:'2026-09-27T10:00:00Z'}],toc:[]}});
+  h.response = {success:true,data:{jobId:'job-a',status:'completed',documentSessionId:'doc-a',result:{...result(),basisMaterials:[{materialId:'m1',updatedAt:'2026-09-27T10:00:00Z'}]}}};
+  await h.api.start({sectionTitle:'范围',instruction:'编写'});
+  h.api.beginMaterialMutation('doc-a');
+  h.api.beginMaterialMutation('doc-a');
+  assert.equal(h.last().basisStatus, 'checking');
+  await assert.rejects(h.api.apply(), /核查/);
+  await h.api.copy();
+  assert.deepEqual(h.copied, ['正文']);
+  h.catalogResponse = {success:true,data:{totalDocuments:1,totalCharacters:2,documents:[{materialId:'m1',updatedAt:'2026-09-27T10:30:00Z'}],toc:[]}};
+  await h.api.endMaterialMutation('doc-a', '第二份 DOCX 已被拒绝');
+  assert.equal(h.last().basisStatus, 'checking');
+  assert.equal(h.last().error, '第二份 DOCX 已被拒绝');
+  await h.api.endMaterialMutation('doc-a');
+  assert.equal(h.last().basisStatus, 'updated');
+  assert.equal(h.last().error, '第二份 DOCX 已被拒绝');
+  await assert.rejects(h.api.apply(), /参考资料已更新/);
+  assert.equal(h.applied.length, 0);
+});
+test('a failed catalog check preserves the draft for copy and blocks write-back until retry succeeds', async () => {
+  const h = harness();
+  h.api.setMaterial({materialId:'m1',catalogSummary:{totalDocuments:1,totalCharacters:2,documents:[{materialId:'m1',updatedAt:'2026-09-27T10:00:00Z'}],toc:[]}});
+  h.response = {success:true,data:{jobId:'job-a',status:'completed',documentSessionId:'doc-a',result:{...result(),basisMaterials:[{materialId:'m1',updatedAt:'2026-09-27T10:00:00Z'}]}}};
+  await h.api.start({sectionTitle:'范围',instruction:'编写'});
+  h.api.beginMaterialMutation('doc-a');
+  h.error = true;
+  await h.api.endMaterialMutation('doc-a');
+  assert.equal(h.last().basisStatus, 'checking');
+  await assert.rejects(h.api.apply(), /核查/);
+  await h.api.copy();
+  assert.deepEqual(h.copied, ['正文']);
+  h.error = false;
+  await h.api.restore();
+  assert.equal(h.last().basisStatus, 'current');
+});
+test('generation waits until a material mutation has finished', async () => {
+  const h = harness();
+  h.api.setMaterial({materialId:'m1'});
+  h.api.beginMaterialMutation('doc-a');
+  await h.api.start({sectionTitle:'范围',instruction:'编写'});
+  assert.equal(h.calls.some(call => call.method === 'POST'), false);
+  assert.equal(h.last().status, 'idle');
+});
 test('submits material reference and input, persists no source text, prevents repeated submission while running', async () => {
  const h=harness(); h.api.setMaterial({materialId:'m1',text:'秘密原文'}); await h.api.start({sectionTitle:'范围',instruction:'编写'}); await h.api.start({sectionTitle:'范围',instruction:'编写'});
  assert.equal(h.calls.filter(x=>x.method==='POST').length,1); assert.equal(h.calls[0].body.materialId,'m1'); assert.equal(h.calls[0].body.documentSessionId,'doc-a'); assert.ok(h.calls[0].body.clientJobId); assert.equal(h.last().status,'running'); assert.ok(!JSON.stringify([...h.saved]).includes('秘密原文'));
@@ -616,4 +719,173 @@ test('late conflict failure after a document switch is discarded while current f
   assert.equal(await pending.catch(error=>error),null);
   h.conflictResponse=Promise.reject(Error('当前请求失败'));
   await assert.rejects(h.api.checkConflicts({sectionTitle:'预算',instruction:'编写'}),/当前请求失败/);
+});
+
+test('evaluates basis status as updated when referenced material has newer updatedAt', async () => {
+  const h = harness();
+  h.api.setMaterial({
+    materialId: 'm1',
+    catalogSummary: {
+      totalDocuments: 1,
+      totalCharacters: 500,
+      documents: [{ materialId: 'm1', fileName: '资料1.docx', updatedAt: '2026-09-27T10:00:00Z' }],
+      toc: []
+    }
+  });
+  const compResult = {
+    ...result('doc-a'),
+    basisMaterials: [{ materialId: 'm1', fileName: '资料1.docx', updatedAt: '2026-09-27T10:00:00Z' }],
+    generatedAt: '2026-09-27T10:00:00Z'
+  };
+  h.response = { success: true, data: { jobId: 'job-a', status: 'completed', documentSessionId: 'doc-a', result: compResult } };
+  await h.api.start({ sectionTitle: '范围', instruction: '编写' });
+  assert.equal(h.last().status, 'succeeded');
+  assert.equal(h.last().basisStatus, 'current');
+
+  // Now catalog material is updated to 10:30:00Z
+  h.api.updateMaterialCatalog({
+    totalDocuments: 1,
+    totalCharacters: 600,
+    documents: [{ materialId: 'm1', fileName: '资料1.docx', updatedAt: '2026-09-27T10:30:00Z' }],
+    toc: []
+  });
+  assert.equal(h.last().basisStatus, 'updated');
+
+  // Applying text should throw because basis is updated
+  await assert.rejects(h.api.apply({ hasSelection: true }), /参考资料已更新/);
+
+  // Copying text should still work!
+  await h.api.copy();
+  assert.deepEqual(h.copied, ['正文']);
+});
+
+test('evaluates basis status as removed when referenced material is deleted from catalog', async () => {
+  const h = harness();
+  h.api.setMaterial({
+    materialId: 'm1',
+    catalogSummary: {
+      totalDocuments: 1,
+      totalCharacters: 500,
+      documents: [{ materialId: 'm1', fileName: '资料1.docx', updatedAt: '2026-09-27T10:00:00Z' }],
+      toc: []
+    }
+  });
+  const compResult = {
+    ...result('doc-a'),
+    basisMaterials: [{ materialId: 'm1', fileName: '资料1.docx', updatedAt: '2026-09-27T10:00:00Z' }],
+    generatedAt: '2026-09-27T10:00:00Z'
+  };
+  h.response = { success: true, data: { jobId: 'job-a', status: 'completed', documentSessionId: 'doc-a', result: compResult } };
+  await h.api.start({ sectionTitle: '范围', instruction: '编写' });
+  assert.equal(h.last().status, 'succeeded');
+
+  // Now material m1 is removed from catalog
+  h.api.updateMaterialCatalog({
+    totalDocuments: 0,
+    totalCharacters: 0,
+    documents: [],
+    toc: []
+  });
+  assert.equal(h.last().basisStatus, 'removed');
+
+  // Applying text should throw because basis is removed
+  await assert.rejects(h.api.apply({ hasSelection: true }), /已被移除/);
+
+  // Copying text still works
+  await h.api.copy();
+  assert.deepEqual(h.copied, ['正文']);
+});
+
+test('renderMaterialComposer displays warning badge and renders update/delete buttons', () => {
+  const h = harness();
+  const doc = {
+    createElement(tag) {
+      const el = { ownerDocument: null, tagName: tag, className: '', textContent: '', children: [], disabled: false, eventListeners: {} };
+      el.ownerDocument = doc;
+      el.appendChild = child => el.children.push(child);
+      el.addEventListener = (ev, fn) => { el.eventListeners[ev] = fn; };
+      return el;
+    }
+  };
+  doc.ownerDocument = doc;
+  const root = doc.createElement('div');
+
+  const compResult = {
+    ...result('doc-a'),
+    basisMaterials: [{ materialId: 'm1', fileName: '资料1.docx', updatedAt: '2026-09-27T10:00:00Z' }],
+    generatedAt: '2026-09-27T10:00:00Z'
+  };
+  const view = {
+    documentSessionId: 'doc-a',
+    status: 'succeeded',
+    result: compResult,
+    catalogSummary: {
+      totalDocuments: 1,
+      totalCharacters: 600,
+      documents: [{ materialId: 'm1', fileName: '资料1.docx', updatedAt: '2026-09-27T10:30:00Z' }],
+      toc: []
+    },
+    basisStatus: 'updated'
+  };
+
+  let updatedMid = '';
+  let deletedMid = '';
+  h.renderComposer(root, view, null, null, mid => { updatedMid = mid; }, mid => { deletedMid = mid; });
+
+  // Warning badge present
+  const warning = root.children.find(c => c.className && c.className.includes('material-composer-basis-warning'));
+  assert.ok(warning, 'warning badge must be rendered');
+  assert.ok(warning.textContent.includes('参考资料已更新'));
+
+  // Update and delete buttons rendered
+  const toc = root.children.find(c => c.className && c.className.includes('material-composer-toc'));
+  assert.ok(toc);
+  const fileSec = toc.children.find(c => c.className && c.className.includes('material-composer-toc-file'));
+  assert.ok(fileSec);
+  const btnUpdate = fileSec.children.find(c => c.className && c.className.includes('material-composer-btn-update')) ||
+    fileSec.children.flatMap(c => c.children || []).find(c => c.className && c.className.includes('material-composer-btn-update'));
+  assert.ok(btnUpdate, 'update button must exist');
+  assert.equal(btnUpdate.disabled, false);
+  btnUpdate.eventListeners['click']({ stopPropagation() {} });
+  assert.equal(updatedMid, 'm1');
+});
+
+test('switching documents isolates material catalog and prevents cross-document pollution', async () => {
+  const h = harness();
+  h.api.setMaterial({
+    materialId: 'm1',
+    catalogSummary: {
+      totalDocuments: 1,
+      totalCharacters: 500,
+      documents: [{ materialId: 'm1', fileName: '文档A资料.docx' }],
+      toc: [{ materialId: 'm1', sectionTitle: 'A第一章' }]
+    }
+  });
+  assert.equal(h.last().catalogSummary.totalDocuments, 1);
+  assert.equal(h.last().catalogSummary.documents[0].fileName, '文档A资料.docx');
+
+  // Switch to doc-b
+  h.session = 'doc-b';
+  await h.api.restore();
+  assert.equal(h.last().catalogSummary.totalDocuments, 0);
+  assert.equal(h.last().materialIds.length, 0);
+
+  // Import material into doc-b
+  h.api.setMaterial({
+    materialId: 'm2',
+    catalogSummary: {
+      totalDocuments: 1,
+      totalCharacters: 800,
+      documents: [{ materialId: 'm2', fileName: '文档B资料.docx' }],
+      toc: [{ materialId: 'm2', sectionTitle: 'B第一章' }]
+    }
+  });
+  assert.equal(h.last().catalogSummary.totalDocuments, 1);
+  assert.equal(h.last().catalogSummary.documents[0].fileName, '文档B资料.docx');
+
+  // Switch back to doc-a
+  h.session = 'doc-a';
+  await h.api.restore();
+  assert.equal(h.last().catalogSummary.totalDocuments, 1);
+  assert.equal(h.last().catalogSummary.documents[0].fileName, '文档A资料.docx');
 });

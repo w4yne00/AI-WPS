@@ -1,5 +1,32 @@
 # Codex Handoff - AI-WPS
 
+## PR #246 审查修复（2026-09-27）
+
+- 删除回包直接刷新目录；更新、删除及导入的迟到成功或失败只影响发起会话。所有在途资料变更结束后重新读取服务端目录；核查中或查询失败时暂停草稿写回，预览、复制和明确的操作错误仍保留。
+- 更新及删除后重导入按现存片段最大编号继续分配，避免不同资料共用片段编号而错配出处。`updatedAt` 保留微秒并严格递增，资料详情、目录与磁盘使用同一版本时间，旧草稿按版本差异识别依据更新。
+- 已保存文档继续按绝对路径识别；未保存文档即使同名也按实例分开。首次保存、另存为成功后才迁移窗格资料缓存；生成中的绑定拒绝延后重试，连续另存为及文档切换分别保留迁移链路，身份冲突明确提示。
+- 绑定同步更新磁盘和内存中的资料归属，服务重启后仍可生成、更新和移除。无资料时首次保存不会卡住后续导入和另存为；旧任务仍属于原会话，不以新会话查询。
+- 自检：Docker Python 3.8 全量 `1606 passed / 55 skipped`，正式插件含真实 Chrome `378 passed`，原型 `12 passed` 且构建成功；99 个生产及交付 Python 文件兼容扫描、差异检查、临时交付目录的通用及 Preview 审计通过。容器测试使用普通用户及已有 Linux Node/lsof，补齐测试要求的 `/usr/bin/false`；未修改宿主机运行环境或安装依赖。
+- 真实 WPS、真实模型质量与麒麟真机仍待验证；此次不生成正式交付归档。
+
+## Issue #235：Word：资料跨次复用、更新与移除（2026-09-27）
+
+- **资料跨次复用与持久化存储**：引入 `WordMaterialStore`，在 `word_materials/<会话目录>/` 下保留原始 DOCX 副本（`files/{materialId}.docx`）、单份抽取详情（`materials/{materialId}.json`）、资料清单（`manifest.json`）与目录缓存（`catalog_cache.json`）；服务重启、窗格重开及同文档跨次起草可复用目录与原文。
+- **主动更新与原子容量重算**：新增 `PUT /word/materials/{material_id}` 接口（FastAPI 与 Standalone 双运行时对等支持），支持替换单份 DOCX 资料；在锁内重算 5 份文件、10 万字符与 10 万展开单元格安全上限，超限拒绝且不改变原资料。成功更新覆盖当前副本，不保留旧文件归档。
+- **主动移除与物理清理**：新增 `DELETE /word/materials/{material_id}` 接口（双运行时对等），支持移除指定资料，物理删除磁盘原始文件及关联的结构块、原文片段与目录条目；剩余资料重新整理目录并持久化。
+- **生成并发互斥门禁**：在资料导入、更新、移除时检查协调器活跃任务；当该会话存在 `queued` 或 `running` 状态任务时拒绝变更并返回 409 `MATERIAL_COMPOSER_BUSY`，保证起草依据与提取原文在单次生成生命周期内不可变。
+- **草稿依据追踪与写回熔断保护**：
+  - 生成结果快照新增 `basisMaterials`（记录本次起草引用的资料编号、文件名及生成时 `updatedAt` 时间戳）与 `generatedAt`；
+  - 任务窗格通过 `evaluateBasisStatus` 实时对照服务端当前目录；当依据资料发生更新（`updated`）或被移除（`removed`）时，在结果顶部渲染醒目警告，并立即熔断禁用直接写入文档按钮（`btn-material-apply`），同时保留纯文本预览和复制按钮（`btn-material-copy`）。
+- **多文档隔离与另存为迁移**：
+  - 任务窗格通过 `helpers.getDocumentSessionId` 彻底隔离各文档会话资料目录；
+  - 新增 `POST /word/materials/bind-document` 接口，在文档另存为或路径持久化时，将临时会话导入的资料与元数据无缝迁移绑定至新文档标识，避免用户另存后资料丢失。
+- **全量回归验证**：
+  - 后端 Python 3.8 核心用例：`adapter_service/tests/test_word_material_*.py` 共 84 项测试全部通过；
+  - 正式插件全量契约测试：`formal-plugin-kit/tests/` 共 355 项测试全部通过（含 50 项 `word-material-composer`、26 项 `word-material-pane` 及真实 Chrome 浏览器视口测试）；
+  - `wps-addon` 原型插件：Vitest 12 passed，生产打包 `vite build` 成功；
+  - 语法扫描与格式校验：Python 3.8 `compileall` 0 错误，`git diff --check` 0 警告。
+
 ## PR #245 审查修复（2026-09-27）
 
 - 冲突接口与正式窗格统一使用 `conflictId/topic/difference/options`，每个候选含 `optionId/sourceId/sourceType/sourceName/value/text`；`sourceId` 为资料编号或 `user`，同名资料仍独立。逐项比较预算、工期与责任，交付、初验、终验等里程碑及一期、二期分别核对，不只取每份资料的首次匹配。

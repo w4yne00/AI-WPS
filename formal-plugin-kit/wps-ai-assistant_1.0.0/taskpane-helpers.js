@@ -6896,19 +6896,16 @@
 
   function getStableDocumentSessionId(document) {
     var fullName = "";
-    var name = "";
     var identity;
     try {
       fullName = document.FullName || document.fullName || "";
     } catch (e) {}
-    try {
-      name = document.Name || document.name || "";
-    } catch (e) {}
-    identity = String(fullName || name || "").trim().replace(/\\/g, "/");
-    if (!identity) {
+    identity = String(fullName || "").trim().replace(/\\/g, "/");
+    // An unsaved host document may report its temporary name as FullName.
+    if (!/^(?:\/|[A-Za-z]:\/|[A-Za-z][A-Za-z0-9+.-]*:\/\/)/.test(identity)) {
       return "";
     }
-    identity = (fullName ? "full:" : "name:") + identity;
+    identity = "full:" + identity;
     return "doc_session_v2_" +
       hashDocumentIdentity(identity, 2166136261) +
       hashDocumentIdentity(identity, 2246822507) +
