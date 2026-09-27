@@ -601,3 +601,445 @@ def test_material_composer_request_body_size_limit():
     standalone_res = _invoke_standalone(standalone, 'do_POST', '/word/material-composer/jobs', oversized)
     assert standalone_res['status'] == 413
     assert standalone_res['body']['errors'][0]['code'] == 'MATERIAL_COMPOSER_REQUEST_TOO_LARGE'
+
+
+def test_composer_supports_user_supplied_facts_and_labels_user_source():
+    client = TestClient(app)
+    material = client.post('/word/materials', json=upload_payload(build_docx())).json()['data']
+    session_id = 'doc-session-user-facts'
+    # Import material to session
+    p = upload_payload(build_docx())
+    p['documentSessionId'] = session_id
+    m_data = client.post('/word/materials', json=p).json()['data']
+
+    user_facts = '项目预算调整为600万元。信息化处总工张工担任技术负责人。'
+    request = {
+        'materialId': m_data['materialId'],
+        'documentSessionId': session_id,
+        'clientJobId': 'composer-userfact-0001',
+        'sectionTitle': '预算与组织',
+        'instruction': '按严肃公文语气编写，篇幅约200字',
+        'userFacts': user_facts,
+    }
+    answer = {
+        'paragraphs': [
+            {
+                'text': '本项目预算经核定调整为600万元。',
+                'fragmentIds': ['user-fact-1'],
+                'missingItems': []
+            },
+            {
+                'text': '项目由信息化处组织实施。',
+                'fragmentIds': ['frag-5'],
+                'missingItems': []
+            }
+        ]
+    }
+    captured_prompt = []
+    def fake_post_task(task_type, trace_id, params, prompt, **kwargs):
+        captured_prompt.append(prompt)
+        return {'answer': json.dumps(answer)}
+
+    with patch('app.services.provider_client.ProviderClient.resolve_task_auth',
+               return_value={'providerBaseUrl': 'https://model.invalid', 'apiKey': 'test'}), \
+         patch('app.services.provider_client.ProviderClient.post_task', side_effect=fake_post_task):
+        response = client.post('/word/material-composer/jobs', json=request)
+        assert response.status_code == 200, response.text
+        job_id = response.json()['data']['jobId']
+
+        for _ in range(100):
+            job = client.get('/word/material-composer/jobs/' + job_id, params={'documentSessionId': session_id}).json()['data']
+            if job['status'] in ('completed', 'failed'):
+                break
+            time.sleep(0.01)
+
+        assert job['status'] == 'completed', job
+        result = job['result']
+        # Paragraph 1 cites user fact
+        p1 = result['paragraphs'][0]
+        assert len(p1['sources']) == 1
+        assert p1['sources'][0]['sourceType'] == 'user'
+        assert p1['sources'][0]['fileName'] == '用户补充事实'
+        assert '600万元' in p1['sources'][0]['quote']
+
+        # Paragraph 2 cites material
+        p2 = result['paragraphs'][1]
+        assert len(p2['sources']) == 1
+        assert p2['sources'][0]['sourceType'] == 'material'
+
+        # Verify prompt received userFacts separated from instruction
+        assert len(captured_prompt) == 1
+        prompt_data = json.loads(captured_prompt[0].rsplit('\n', 1)[-1])
+        assert prompt_data['instruction'] == '按严肃公文语气编写，篇幅约200字'
+        assert 'userFacts' in prompt_data
+        assert '600万元' in prompt_data['userFacts']
+
+
+def test_composer_conflict_detection_and_user_selection():
+    client = TestClient(app)
+    session_id = 'session-conflicts'
+
+    # Doc 1: 预算500万元，交付时间为2026年10月
+    xml1 = ('<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+            '<w:body><w:p><w:pPr><w:outlineLvl w:val="0"/></w:pPr><w:r><w:t>第一章 预算</w:t></w:r></w:p>'
+            '<w:p><w:r><w:t>项目规划预算500万元，交付时间为2026年10月。</w:t></w:r></w:p></w:body></w:document>')
+    # Doc 2: 交付时间为2026年12月
+    xml2 = ('<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+            '<w:body><w:p><w:pPr><w:outlineLvl w:val="0"/></w:pPr><w:r><w:t>实施计划</w:t></w:r></w:p>'
+            '<w:p><w:r><w:t>工程建设交付时间为2026年12月。</w:t></w:r></w:p></w:body></w:document>')
+
+    p1 = upload_payload(build_docx(document_xml=xml1.encode('utf-8')), file_name='立项方案.docx')
+    p1['documentSessionId'] = session_id
+    m1 = client.post('/word/materials', json=p1).json()['data']
+
+    p2 = upload_payload(build_docx(document_xml=xml2.encode('utf-8')), file_name='招标文件.docx')
+    p2['documentSessionId'] = session_id
+    m2 = client.post('/word/materials', json=p2).json()['data']
+
+    # Conflict check request
+    conflict_req = {
+        'documentSessionId': session_id,
+        'userFacts': '项目实际预算确认为600万元。',
+        'sectionTitle': '第一章 预算',
+        'instruction': '整理预算与时间安排'
+    }
+    conflict_res = client.post('/word/material-composer/conflicts', json=conflict_req)
+    assert conflict_res.status_code == 200, conflict_res.text
+    conflicts = conflict_res.json()['data']['conflicts']
+    assert len(conflicts) >= 2, conflicts  # Should detect budget conflict (user vs doc1) and delivery date conflict (doc1 vs doc2)
+
+    # Check differences are exposed without automatic decision based on timestamp
+    date_conflict = next(c for c in conflicts if '时间' in c['topic'] or '交付' in c['topic'])
+    assert len(date_conflict['options']) >= 2
+    # Verify neither option is pre-selected by timestamp as final
+    assert any('2026年10月' in opt['value'] for opt in date_conflict['options'])
+    assert any('2026年12月' in opt['value'] for opt in date_conflict['options'])
+
+    budget_conflict = next(c for c in conflicts if '预算' in c['topic'])
+    assert any('500万元' in opt['value'] for opt in budget_conflict['options'])
+    assert any('600万元' in opt['value'] for opt in budget_conflict['options'])
+
+    # Now submit job with user chosen resolutions
+    resolutions = [
+        {
+            'conflictId': date_conflict['conflictId'],
+            'chosenSource': '招标文件.docx',
+            'chosenValue': '2026年12月',
+        },
+        {
+            'conflictId': budget_conflict['conflictId'],
+            'chosenSource': '用户补充事实',
+            'chosenValue': '600万元',
+        }
+    ]
+    job_req = {
+        'documentSessionId': session_id,
+        'clientJobId': 'composer-conflict-0001',
+        'sectionTitle': '第一章 预算',
+        'instruction': '整理预算与时间安排',
+        'userFacts': '项目实际预算确认为600万元。',
+        'conflictResolutions': resolutions,
+    }
+
+    captured_prompt = []
+    answer = {
+        'paragraphs': [
+            {
+                'text': '项目核定预算为600万元，交付时间确定为2026年12月。',
+                'fragmentIds': ['user-fact-1'],
+                'missingItems': []
+            }
+        ]
+    }
+    with patch('app.services.provider_client.ProviderClient.resolve_task_auth',
+               return_value={'providerBaseUrl': 'https://model.invalid', 'apiKey': 'test'}), \
+         patch('app.services.provider_client.ProviderClient.post_task',
+               side_effect=lambda t, tr, p, pr, **kw: (captured_prompt.append(pr), {'answer': json.dumps(answer)})[1]):
+        res = client.post('/word/material-composer/jobs', json=job_req)
+        assert res.status_code == 200, res.text
+        job_id = res.json()['data']['jobId']
+
+        for _ in range(100):
+            job = client.get('/word/material-composer/jobs/' + job_id, params={'documentSessionId': session_id}).json()['data']
+            if job['status'] in ('completed', 'failed'):
+                break
+            time.sleep(0.01)
+
+        assert job['status'] == 'completed', job
+        assert 'conflictResolutions' in captured_prompt[0]
+        assert '2026年12月' in captured_prompt[0]
+
+
+def test_composer_post_verification_flags_unverified_key_facts():
+    client = TestClient(app)
+    session_id = 'session-unverified-check'
+    xml = ('<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+           '<w:body><w:p><w:pPr><w:outlineLvl w:val="0"/></w:pPr><w:r><w:t>实施主体</w:t></w:r></w:p>'
+           '<w:p><w:r><w:t>本项目由信息化处牵头实施，工期为12个月。</w:t></w:r></w:p></w:body></w:document>')
+    p = upload_payload(build_docx(document_xml=xml.encode('utf-8')), file_name='方案.docx')
+    p['documentSessionId'] = session_id
+    m = client.post('/word/materials', json=p).json()['data']
+    frag_id = next(f['fragmentId'] for f in m['fragments'] if '信息化处' in f['text'])
+
+    # Model returned a paragraph that cites frag_id, but invents a 999万元 budget and 2030年 date not in the fragment
+    answer = {
+        'paragraphs': [
+            {
+                'text': '本项目由信息化处牵头实施，工期为12个月，总预算为999万元，预计于2030年完成验收。',
+                'fragmentIds': [frag_id],
+                'missingItems': []
+            }
+        ]
+    }
+    request = {
+        'materialId': m['materialId'],
+        'documentSessionId': session_id,
+        'clientJobId': 'composer-unverified-0001',
+        'sectionTitle': '实施主体',
+        'instruction': '整理实施主体和工期'
+    }
+    with patch('app.services.provider_client.ProviderClient.resolve_task_auth',
+               return_value={'providerBaseUrl': 'https://model.invalid', 'apiKey': 'test'}), \
+         patch('app.services.provider_client.ProviderClient.post_task', return_value={'answer': json.dumps(answer)}):
+        res = client.post('/word/material-composer/jobs', json=request)
+        assert res.status_code == 200, res.text
+        job_id = res.json()['data']['jobId']
+
+        for _ in range(100):
+            job = client.get('/word/material-composer/jobs/' + job_id, params={'documentSessionId': session_id}).json()['data']
+            if job['status'] in ('completed', 'failed'):
+                break
+            time.sleep(0.01)
+
+        assert job['status'] == 'completed', job
+        p0 = job['result']['paragraphs'][0]
+        # Verified fact check: ungrounded numbers/dates are flagged under unverifiedItems
+        assert len(p0['unverifiedItems']) > 0
+        unverified_str = ' '.join(p0['unverifiedItems'])
+        assert '999万元' in unverified_str or '2030年' in unverified_str
+        assert len(job['result']['unverifiedItems']) > 0
+
+
+def test_fastapi_and_standalone_conflict_endpoint_parity():
+    import standalone_adapter as standalone
+    from tests.test_word_material_import import _invoke_standalone
+
+    client = TestClient(app)
+    session_id = 'session-conflict-parity'
+
+    xml1 = ('<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+            '<w:body><w:p><w:r><w:t>工程预算500万元。</w:t></w:r></w:p></w:body></w:document>')
+    p1 = upload_payload(build_docx(document_xml=xml1.encode('utf-8')), file_name='预算.docx')
+    p1['documentSessionId'] = session_id
+    client.post('/word/materials', json=p1)
+    _invoke_standalone(standalone, 'do_POST', '/word/materials', p1)
+
+    conflict_req = {
+        'documentSessionId': session_id,
+        'userFacts': '工程预算调整为700万元。',
+        'sectionTitle': '工程概算',
+        'instruction': '整理预算要求'
+    }
+
+    # FastAPI
+    fastapi_res = client.post('/word/material-composer/conflicts', json=conflict_req)
+    assert fastapi_res.status_code == 200, fastapi_res.text
+    f_data = fastapi_res.json()['data']
+
+    # Standalone
+    standalone_res = _invoke_standalone(standalone, 'do_POST', '/word/material-composer/conflicts', conflict_req)
+    assert standalone_res['status'] == 200, standalone_res
+    s_data = standalone_res['body']['data']
+
+    assert len(f_data['conflicts']) == len(s_data['conflicts'])
+    assert f_data['conflicts'][0]['topic'] == s_data['conflicts'][0]['topic']
+
+
+def _compose_review_paragraph(paragraph, **inputs):
+    from app.services.long_task_coordinator import LongTaskCoordinator
+    from app.services.word.material_composer import MaterialComposerJobs
+    from app.services.word.material_import import WordMaterialImportService
+
+    materials = WordMaterialImportService()
+    materials.import_material(upload_payload(build_docx()))
+    coordinator = LongTaskCoordinator()
+    jobs = MaterialComposerJobs(materials, coordinator=coordinator)
+    request = dict(documentSessionId='doc-session-1', clientJobId='review-regression-0001',
+                   sectionTitle='责任安排', instruction='整理资料事实', **inputs)
+    with patch('app.services.provider_client.ProviderClient.resolve_task_auth',
+               return_value={'providerBaseUrl': 'https://model.invalid', 'apiKey': 'test'}), \
+         patch('app.services.provider_client.ProviderClient.post_task',
+               return_value={'answer': json.dumps({'paragraphs': [paragraph]})}):
+        job = jobs.start(request, 'review-regression-trace')
+        return coordinator.wait(job['jobId'], task_type='word.material_composer')
+
+
+@pytest.mark.parametrize('fragment_id,user_facts', [
+    ('user-fact-999', ''),
+    ('user-fact', ''),
+    ('user-fact-999', '信息化处负责。'),
+    (123, '信息化处负责。'),
+])
+def test_composer_rejects_nonexistent_user_fact_sources(fragment_id, user_facts):
+    terminal = _compose_review_paragraph(
+        {'text': '安全处负责并承诺终身免费维护。',
+         'fragmentIds': [fragment_id], 'missingItems': []}, userFacts=user_facts)
+    assert terminal['status'] == 'failed', terminal
+    assert terminal['error']['code'] == 'MATERIAL_COMPOSER_INVALID_RESULT'
+    assert not terminal.get('result')
+
+
+@pytest.mark.parametrize('fragment_id,quote', [
+    ('user-fact-1', '信息化处负责'),
+    ('user-fact', '信息化处负责。预算500万元。'),
+])
+def test_composer_preserves_valid_user_fact_sources(fragment_id, quote):
+    terminal = _compose_review_paragraph(
+        {'text': '信息化处负责。', 'fragmentIds': [fragment_id], 'missingItems': []},
+        userFacts='信息化处负责。预算500万元。')
+    assert terminal['status'] == 'completed', terminal
+    source = terminal['result']['paragraphs'][0]['sources'][0]
+    assert source['sourceType'] == 'user'
+    assert source['quote'] == quote
+
+
+@pytest.mark.parametrize('text,quote,unsupported', [
+    ('预算50万元。', '预算150万元。', '50万元'),
+    ('预算500万元。', '预算1500万元。', '500万元'),
+    ('交付时间为2030-12-31。', '交付时间为2026-10-01。', '2030-12-31'),
+    ('由安全处负责。', '由信息化处负责。', '安全处'),
+    ('张三担任项目经理。', '李四担任项目经理。', '张三'),
+    ('张三担任项目经理。', '王张三担任项目经理。', '张三'),
+    ('项目名称为智能办公平台。', '项目名称为财务平台。', '智能办公平台'),
+    ('承诺终身免费维护。', '提供一年维护服务。', '终身免费维护'),
+])
+def test_composer_flags_unsupported_key_fact_changes(text, quote, unsupported):
+    terminal = _compose_review_paragraph(
+        {'text': text, 'fragmentIds': ['user-fact-1'], 'missingItems': []}, userFacts=quote)
+    assert terminal['status'] == 'completed', terminal
+    warnings = terminal['result']['unverifiedItems']
+    assert any(unsupported in item for item in warnings), warnings
+
+
+@pytest.mark.parametrize('text,quote', [
+    ('预算500万元。', '预算500万元。'),
+    ('预算1,200万元。', '预算1,200 万元。'),
+    ('交付时间为2026-10-01。', '交付时间为2026年10月1日。'),
+    ('2026年10月交付。', '2026-10-01交付。'),
+    ('由信息化处负责。', '由信息化处负责。'),
+    ('张三担任项目经理。', '张三担任项目经理。'),
+    ('承诺一年免费维护。', '承诺一年免费维护。'),
+])
+def test_composer_keeps_supported_key_facts_without_warnings(text, quote):
+    terminal = _compose_review_paragraph(
+        {'text': text, 'fragmentIds': ['user-fact-1'], 'missingItems': []}, userFacts=quote)
+    assert terminal['status'] == 'completed', terminal
+    assert terminal['result']['unverifiedItems'] == []
+
+
+def test_composer_does_not_use_uncited_user_facts_to_verify_a_paragraph():
+    terminal = _compose_review_paragraph(
+        {'text': '信息化处负责，预算500万元。', 'fragmentIds': ['frag-5'], 'missingItems': []},
+        userFacts='另一个项目预算500万元。')
+    assert terminal['status'] == 'completed', terminal
+    assert any('500万元' in item for item in terminal['result']['unverifiedItems'])
+
+
+@pytest.mark.parametrize('case_id,documents,topic,values', [
+    ('same-name', [('预算.docx', '项目预算500万元。'), ('预算.docx', '项目预算600万元。')],
+     '项目预算', ['500万元', '600万元']),
+    ('later-milestone', [('A.docx', '初验时间为2026年6月。终验时间为2026年8月。'),
+                         ('B.docx', '初验时间为2026年6月。终验时间为2026年9月。')],
+     '终验时间', ['2026年8月', '2026年9月']),
+    ('different-milestone', [('A.docx', '初验时间为2026年6月。'), ('B.docx', '终验时间为2026年8月。')],
+     None, []),
+    ('later-phase', [('A.docx', '一期工程预算500万元。二期工程预算600万元。'),
+                    ('B.docx', '一期工程预算500万元。二期工程预算700万元。')],
+     '二期项目预算', ['600万元', '700万元']),
+    ('numeric-format', [('A.docx', '项目预算1,000 万元。'), ('B.docx', '项目预算1000万元。')],
+     None, []),
+    ('different-numeric-format', [('A.docx', '项目预算1,000 万元。'), ('B.docx', '项目预算1200万元。')],
+     '项目预算', ['1,000 万元', '1200万元']),
+])
+def test_conflict_endpoint_compares_each_fact_and_keeps_material_identity(case_id, documents, topic, values):
+    client = TestClient(app)
+    session_id = 'review-conflicts-' + case_id
+    mids = []
+    for file_name, text in documents:
+        xml = ('<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+               '<w:body><w:p><w:r><w:t>{0}</w:t></w:r></w:p></w:body></w:document>').format(text)
+        payload = upload_payload(build_docx(document_xml=xml.encode('utf-8')), file_name=file_name)
+        payload['documentSessionId'] = session_id
+        response = client.post('/word/materials', json=payload)
+        assert response.status_code == 200, response.text
+        mids.append(response.json()['data']['materialId'])
+    response = client.post('/word/material-composer/conflicts', json={'documentSessionId': session_id})
+    assert response.status_code == 200, response.text
+    conflicts = response.json()['data']['conflicts']
+    if topic is None:
+        assert conflicts == []
+    else:
+        assert len(conflicts) == 1, conflicts
+        assert conflicts[0]['topic'] == topic
+        assert [option['value'] for option in conflicts[0]['options']] == values
+        assert {option['sourceId'] for option in conflicts[0]['options']} == set(mids)
+
+
+@pytest.mark.parametrize('stale_field,stale_value', [
+    ('chosenValue', '700万元'),
+    ('sourceId', 'removed-material'),
+    ('topic', '终验时间'),
+    ('chosenCandidateId', 'opt-no-longer-present'),
+])
+def test_composer_rejects_conflict_choices_that_no_longer_match(stale_field, stale_value):
+    from app.core.errors import AdapterError
+    from app.services.word.material_composer import MaterialComposerJobs
+    from app.services.word.material_import import WordMaterialImportService
+    from app.services.long_task_coordinator import LongTaskCoordinator
+
+    materials = WordMaterialImportService()
+    xml = ('<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+           '<w:body><w:p><w:r><w:t>项目预算500万元。</w:t></w:r></w:p></w:body></w:document>')
+    materials.import_material(upload_payload(build_docx(document_xml=xml.encode('utf-8'))))
+    jobs = MaterialComposerJobs(materials, coordinator=LongTaskCoordinator())
+    choice = {'conflictId': 'conflict-1', 'topic': '项目预算',
+              'chosenCandidateId': 'opt-1-2', 'chosenValue': '600万元', 'sourceId': 'user'}
+    choice[stale_field] = stale_value
+    with patch('app.services.provider_client.ProviderClient.resolve_task_auth',
+               return_value={'providerBaseUrl': 'https://model.invalid', 'apiKey': 'test'}), \
+         patch('app.services.provider_client.ProviderClient.post_task') as provider:
+        with pytest.raises(AdapterError) as error:
+            jobs.start(dict(documentSessionId='doc-session-1', clientJobId='review-choice-0001',
+                            sectionTitle='预算', instruction='编写', userFacts='项目预算600万元。',
+                            conflictResolutions=[choice]), 'choice-trace')
+        assert error.value.code == 'REQUEST_VALIDATION_FAILED'
+        provider.assert_not_called()
+
+
+def test_composer_flags_result_that_ignores_a_valid_conflict_choice():
+    from app.services.word.material_composer import MaterialComposerJobs
+    from app.services.word.material_import import WordMaterialImportService
+    from app.services.long_task_coordinator import LongTaskCoordinator
+
+    materials = WordMaterialImportService()
+    xml = ('<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+           '<w:body><w:p><w:r><w:t>项目预算500万元。</w:t></w:r></w:p></w:body></w:document>')
+    material = materials.import_material(upload_payload(build_docx(document_xml=xml.encode('utf-8'))))
+    coordinator = LongTaskCoordinator()
+    jobs = MaterialComposerJobs(materials, coordinator=coordinator)
+    conflicts = jobs.detect_conflicts({'documentSessionId': 'doc-session-1', 'userFacts': '项目预算600万元。'})['conflicts']
+    choice = {'conflictId': conflicts[0]['conflictId'],
+              'chosenCandidateId': conflicts[0]['options'][1]['optionId'], 'chosenValue': '600万元'}
+    with patch('app.services.provider_client.ProviderClient.resolve_task_auth',
+               return_value={'providerBaseUrl': 'https://model.invalid', 'apiKey': 'test'}), \
+         patch('app.services.provider_client.ProviderClient.post_task', return_value={'answer': json.dumps({
+             'paragraphs': [{'text': '项目预算500万元。',
+                             'fragmentIds': [material['fragments'][0]['fragmentId']], 'missingItems': []}]})}):
+        job = jobs.start(dict(documentSessionId='doc-session-1', clientJobId='review-choice-0002',
+                              sectionTitle='预算', instruction='编写', userFacts='项目预算600万元。',
+                              conflictResolutions=[choice]), 'choice-trace')
+        terminal = coordinator.wait(job['jobId'], task_type='word.material_composer')
+    assert terminal['status'] == 'completed', terminal
+    assert terminal['result']['conflictResolutions'][0]['topic'] == '项目预算'
+    assert terminal['result']['conflictResolutions'][0]['chosenSource'] == '用户补充事实'
+    assert any('500万元' in item and '600万元' in item for item in terminal['result']['unverifiedItems'])

@@ -1,6 +1,19 @@
 function createMaterialComposer(options) {
   var states = {};
   var schedule = options.schedule || function (fn, ms) { return setTimeout(fn, ms); };
+  function clone(value) { return JSON.parse(JSON.stringify(value)); }
+  function inputs(input) {
+    return { sectionTitle: input && input.sectionTitle || '', instruction: input && input.instruction || '', userFacts: input && input.userFacts || '' };
+  }
+  function updateInput(s, input) {
+    var next = inputs(input);
+    if (JSON.stringify(next) !== JSON.stringify(s.editingInput)) {
+      s.editingInput = next;
+      s.conflictRequestVersion += 1;
+      s.conflicts = [];
+      s.conflictResolutions = [];
+    }
+  }
   function formatCatalogLabel(summary) {
     if (!summary || !summary.totalDocuments) return '';
     var totalChars = typeof summary.totalCharacters === 'number' ? summary.totalCharacters.toLocaleString() : '0';
@@ -22,6 +35,11 @@ function createMaterialComposer(options) {
         jobId: data.jobId || '',
         clientJobId: data.clientJobId || '',
         input: data.input || {},
+        editingInput: inputs(data.editingInput || data.input),
+        submittedRequest: data.submittedRequest || null,
+        conflictRequestVersion: 0,
+        conflicts: data.conflicts || [],
+        conflictResolutions: data.conflictResolutions || [],
         status: (data.jobId || data.clientJobId) ? 'running' : 'idle',
         phase: '',
         phaseLabel: '',
@@ -42,15 +60,19 @@ function createMaterialComposer(options) {
       catalogSummary: s.catalogSummary,
       jobId: s.jobId,
       clientJobId: s.clientJobId,
-      input: s.input
+      input: s.input,
+      editingInput: s.editingInput,
+      submittedRequest: s.submittedRequest,
+      conflicts: s.conflicts,
+      conflictResolutions: s.conflictResolutions
     }));
   }
   function show(s) {
-    if (options.getSessionId() === s.documentSessionId) options.render(Object.assign({}, s));
+    if (options.getSessionId() === s.documentSessionId) options.render(clone(s));
   }
   function validResult(r, id) {
-    return r && r.taskType === 'word.material_composer' && r.documentSessionId === id && typeof r.plainText === 'string' && r.plainText.trim() && Array.isArray(r.missingItems) && Array.isArray(r.paragraphs) && r.paragraphs.length > 0 && r.paragraphs.every(function (p) {
-      return typeof p.text === 'string' && p.text.trim() && Array.isArray(p.missingItems) && Array.isArray(p.sources) && p.sources.every(function (source) {
+    return r && r.taskType === 'word.material_composer' && r.documentSessionId === id && typeof r.plainText === 'string' && r.plainText.trim() && Array.isArray(r.missingItems) && (!r.unverifiedItems || Array.isArray(r.unverifiedItems)) && Array.isArray(r.paragraphs) && r.paragraphs.length > 0 && r.paragraphs.every(function (p) {
+      return typeof p.text === 'string' && p.text.trim() && Array.isArray(p.missingItems) && (!p.unverifiedItems || Array.isArray(p.unverifiedItems)) && Array.isArray(p.sources) && p.sources.every(function (source) {
         return ['fileName', 'section', 'quote', 'fragmentId'].every(function (key) { return typeof source[key] === 'string'; });
       });
     });
@@ -124,6 +146,8 @@ function createMaterialComposer(options) {
       var s = stateFor(reading.documentSessionId || options.getSessionId());
       if (s.busy || active(s)) return;
       s.catalogRequestVersion += 1;
+      s.conflictRequestVersion += 1;
+      s.submittedRequest = null;
       s.materialId = reading.materialId || '';
       if (!s.materialIds) s.materialIds = [];
       if (s.materialId && s.materialIds.indexOf(s.materialId) === -1) {
@@ -142,11 +166,63 @@ function createMaterialComposer(options) {
         };
       }
       s.catalogLabel = formatCatalogLabel(s.catalogSummary);
+      s.conflicts = [];
+      s.conflictResolutions = [];
       s.jobId = '';
       s.clientJobId = '';
       s.result = null;
       s.status = 'idle';
       s.error = '';
+      persist(s);
+      show(s);
+    },
+    updateInput: function (input) {
+      var s = current();
+      updateInput(s, input);
+      persist(s);
+      show(s);
+    },
+    checkConflicts: async function (input) {
+      var s = current();
+      updateInput(s, input || s.editingInput);
+      var version = ++s.conflictRequestVersion;
+      s.conflicts = [];
+      s.conflictResolutions = [];
+      persist(s);
+      show(s);
+      var body = Object.assign({ documentSessionId: s.documentSessionId }, s.editingInput);
+      var mids = (s.materialIds && s.materialIds.length) ? s.materialIds.slice() : (s.materialId ? [s.materialId] : []);
+      if (mids.length) { body.materialIds = mids; body.materialId = mids[0]; }
+      var res;
+      try { res = await options.request('/word/material-composer/conflicts', body, { method: 'POST' }); }
+      catch (error) {
+        if (version !== s.conflictRequestVersion || options.getSessionId() !== s.documentSessionId) return null;
+        throw error;
+      }
+      if (version !== s.conflictRequestVersion || options.getSessionId() !== s.documentSessionId) return null;
+      var data = res && res.success === true && res.data;
+      if (!data || !Array.isArray(data.conflicts)) throw new Error('事实冲突返回格式不正确，请重试。');
+      s.conflicts = data.conflicts;
+      persist(s);
+      show(s);
+      return s.conflicts;
+    },
+    resolveConflict: function (conflictId, optionId) {
+      var s = current();
+      var conflict = s.conflicts.filter(function (item) { return item.conflictId === conflictId; })[0];
+      var option = conflict && (conflict.options || []).filter(function (item) { return item.optionId === optionId; })[0];
+      if (!option) return;
+      s.conflictResolutions = s.conflictResolutions.filter(function (r) { return r.conflictId !== conflictId; });
+      s.conflictResolutions.push({
+        conflictId: conflictId,
+        chosenCandidateId: option.optionId,
+        topic: conflict.topic,
+        chosenSource: option.sourceName,
+        sourceType: option.sourceType,
+        sourceId: option.sourceId,
+        chosenValue: option.value,
+        resolution: 'use_candidate'
+      });
       persist(s);
       show(s);
     },
@@ -157,7 +233,23 @@ function createMaterialComposer(options) {
       var selectedInput = retryingUncertain ? s.input : input;
       var hasMaterial = Boolean(s.materialId || (s.materialIds && s.materialIds.length) || (s.catalogSummary && s.catalogSummary.totalDocuments));
       if (!hasMaterial || !s.documentSessionId || !selectedInput || typeof selectedInput.sectionTitle !== 'string' || typeof selectedInput.instruction !== 'string' || !selectedInput.sectionTitle.trim() || !selectedInput.instruction.trim()) { s.error = '请先导入资料，并填写章节标题和编写要求。'; show(s); return; }
-      if (!retryingUncertain) s.input = { sectionTitle: selectedInput.sectionTitle, instruction: selectedInput.instruction };
+      if (!retryingUncertain) {
+        updateInput(s, selectedInput);
+        if (s.conflicts.some(function (conflict) {
+          return !s.conflictResolutions.some(function (resolution) { return resolution.conflictId === conflict.conflictId; });
+        })) { s.error = '请先对已展示的事实差异手动选择采纳依据。'; show(s); return; }
+        s.input = {
+          sectionTitle: selectedInput.sectionTitle,
+          instruction: selectedInput.instruction
+        };
+        var uFacts = typeof selectedInput.userFacts === 'string' ? selectedInput.userFacts : '';
+        if (uFacts) {
+          s.input.userFacts = uFacts;
+        }
+        if (selectedInput.conflictResolutions && Array.isArray(selectedInput.conflictResolutions)) {
+          s.conflictResolutions = clone(selectedInput.conflictResolutions);
+        }
+      }
       // Keep the idempotency key after an uncertain submission so a retry cannot create another job.
       if (s.jobId || !s.clientJobId) s.clientJobId = 'composer-' + Date.now() + '-' + Math.random().toString(36).slice(2);
       s.jobId = ''; s.result = null; s.status = 'queued'; persist(s);
@@ -168,13 +260,21 @@ function createMaterialComposer(options) {
         sectionTitle: s.input.sectionTitle,
         instruction: s.input.instruction
       };
+      if (s.input.userFacts) {
+        body.userFacts = s.input.userFacts;
+      }
+      if (s.conflictResolutions && s.conflictResolutions.length) {
+        body.conflictResolutions = s.conflictResolutions;
+      }
       if (mids.length) {
         body.materialIds = mids;
         body.materialId = mids[0];
       } else if (s.materialId) {
         body.materialId = s.materialId;
       }
-      await execute(s, '/word/material-composer/jobs', body, 'POST');
+      if (!retryingUncertain || !s.submittedRequest) s.submittedRequest = clone(body);
+      persist(s);
+      await execute(s, '/word/material-composer/jobs', clone(s.submittedRequest), 'POST');
     },
     refresh: refresh,
     restore: async function () {
@@ -196,6 +296,11 @@ function createMaterialComposer(options) {
       }
       if (s.status !== 'succeeded' || !validResult(s.result, s.documentSessionId)) {
         throw new Error('当前没有可写入的章节草稿。');
+      }
+      var hasMissing = (s.result.missingItems && s.result.missingItems.length > 0) ||
+        (s.result.paragraphs && s.result.paragraphs.some(function (p) { return p.missingItems && p.missingItems.length > 0; }));
+      if (hasMissing && target && target.confirmedMissingItems === false) {
+        throw new Error('草稿中包含待补充项，已取消写入。请补充或确认直接使用草稿。');
       }
       var currentSection = (target && typeof target.sectionTitle === 'string') ? target.sectionTitle.trim() : '';
       var originalSection = (s.input && typeof s.input.sectionTitle === 'string') ? s.input.sectionTitle.trim() : '';
@@ -233,7 +338,7 @@ function createMaterialComposer(options) {
     }
   };
 }
-function renderMaterialComposer(root, view, onSelectChapter) {
+function renderMaterialComposer(root, view, onSelectChapter, onResolveConflict) {
   var doc = root.ownerDocument;
   function append(parent, tag, text, className) {
     var node = doc.createElement(tag);
@@ -264,6 +369,32 @@ function renderMaterialComposer(root, view, onSelectChapter) {
       });
     });
   }
+
+  if (view.conflicts && view.conflicts.length) {
+    var conflictSec = append(root, 'section', '', 'material-composer-conflicts');
+    append(conflictSec, 'h4', '资料与补充事实冲突（需手动选择采纳依据）：');
+    append(conflictSec, 'small', '资料之间及补充事实之间的差异由您手动选择，系统不按文件时间自动决定。');
+    view.conflicts.forEach(function (conflict) {
+      var card = append(conflictSec, 'div', '', 'material-composer-conflict-card');
+      append(card, 'strong', conflict.topic);
+      append(card, 'p', conflict.difference);
+      (conflict.options || []).forEach(function (cand) {
+        var isChosen = (view.conflictResolutions || []).some(function (cr) {
+          return cr.conflictId === conflict.conflictId && cr.chosenCandidateId === cand.optionId;
+        });
+        var label = '[' + (cand.sourceType === 'user' ? '用户补充事实' : cand.sourceName) + '] ' + cand.value;
+        var btn = append(card, 'button', label, 'ghost-action material-composer-conflict-choice' + (isChosen ? ' active' : ''));
+        btn.type = 'button';
+        btn.disabled = view.busy || Boolean(view.jobId && (view.status === 'queued' || view.status === 'running'));
+        if (!btn.disabled && typeof onResolveConflict === 'function') {
+          btn.addEventListener('click', function () {
+            onResolveConflict(conflict.conflictId, cand.optionId);
+          });
+        }
+      });
+    });
+  }
+
   append(root, 'p', labels[view.status] || '', 'material-composer-status');
   if (view.phaseLabel) append(root, 'p', view.phaseLabel, 'material-composer-phase');
   if (view.error) append(root, 'p', String(view.error), 'material-composer-error');
@@ -274,15 +405,30 @@ function renderMaterialComposer(root, view, onSelectChapter) {
     var sources = append(row, 'aside', '', 'material-composer-sources');
     append(sources, 'h4', '第 ' + (index + 1) + ' 段出处');
     paragraph.sources.forEach(function (source) {
-      append(sources, 'p', source.fileName + ' / ' + source.section + ' / ' + source.fragmentId);
+      var srcText = (source.sourceType === 'user' ? '[用户补充事实] ' : '') + source.fileName + ' / ' + source.section + ' / ' + source.fragmentId;
+      append(sources, 'p', srcText);
       append(sources, 'blockquote', source.quote);
     });
     paragraph.missingItems.forEach(function (item) { append(sources, 'p', '待补充：' + item, 'material-composer-missing'); });
+    if (paragraph.unverifiedItems && paragraph.unverifiedItems.length) {
+      paragraph.unverifiedItems.forEach(function (item) {
+        append(sources, 'p', '待核对：' + item, 'material-composer-unverified');
+      });
+    }
   });
+
+  if (view.result.unverifiedItems && view.result.unverifiedItems.length) {
+    var unverified = append(root, 'aside', '', 'material-composer-unverified');
+    append(unverified, 'h4', '待核对关键事实（数字/日期/名称/责任/承诺）');
+    append(unverified, 'small', '已标出未能与引文对齐的内容；AI 核对不伪造出处，亦不宣称发现全部冲突，请逐项核对。');
+    view.result.unverifiedItems.forEach(function (item) { append(unverified, 'p', '待核对：' + String(item)); });
+  }
+
   if (view.result.missingItems.length) {
     var missing = append(root, 'aside', '', 'material-composer-missing');
     append(missing, 'h4', '待补充项');
-    view.result.missingItems.forEach(function (item) { append(missing, 'p', String(item)); });
+    append(missing, 'small', '正文中已显示“〔待补充：具体信息〕”，可确认直接使用草稿或补充信息后写入。');
+    view.result.missingItems.forEach(function (item) { append(missing, 'p', '待补充：' + String(item)); });
   }
 }
 if (typeof window !== 'undefined') {

@@ -675,6 +675,12 @@ def _deterministic_format_review_envelope(
     }
 
 
+@router.post('/word/material-composer/conflicts')
+def detect_material_composer_conflicts(request: dict):
+    data = material_composer_jobs.detect_conflicts(request)
+    return _material_envelope(data, message="conflicts")
+
+
 @router.post('/word/material-composer/jobs')
 def start_material_composer(request: dict):
     job = material_composer_jobs.start(request, new_trace_id('word-material-composer'))
