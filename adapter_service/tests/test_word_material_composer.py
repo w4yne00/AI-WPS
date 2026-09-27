@@ -853,3 +853,193 @@ def test_fastapi_and_standalone_conflict_endpoint_parity():
 
     assert len(f_data['conflicts']) == len(s_data['conflicts'])
     assert f_data['conflicts'][0]['topic'] == s_data['conflicts'][0]['topic']
+
+
+def _compose_review_paragraph(paragraph, **inputs):
+    from app.services.long_task_coordinator import LongTaskCoordinator
+    from app.services.word.material_composer import MaterialComposerJobs
+    from app.services.word.material_import import WordMaterialImportService
+
+    materials = WordMaterialImportService()
+    materials.import_material(upload_payload(build_docx()))
+    coordinator = LongTaskCoordinator()
+    jobs = MaterialComposerJobs(materials, coordinator=coordinator)
+    request = dict(documentSessionId='doc-session-1', clientJobId='review-regression-0001',
+                   sectionTitle='责任安排', instruction='整理资料事实', **inputs)
+    with patch('app.services.provider_client.ProviderClient.resolve_task_auth',
+               return_value={'providerBaseUrl': 'https://model.invalid', 'apiKey': 'test'}), \
+         patch('app.services.provider_client.ProviderClient.post_task',
+               return_value={'answer': json.dumps({'paragraphs': [paragraph]})}):
+        job = jobs.start(request, 'review-regression-trace')
+        return coordinator.wait(job['jobId'], task_type='word.material_composer')
+
+
+@pytest.mark.parametrize('fragment_id,user_facts', [
+    ('user-fact-999', ''),
+    ('user-fact', ''),
+    ('user-fact-999', '信息化处负责。'),
+    (123, '信息化处负责。'),
+])
+def test_composer_rejects_nonexistent_user_fact_sources(fragment_id, user_facts):
+    terminal = _compose_review_paragraph(
+        {'text': '安全处负责并承诺终身免费维护。',
+         'fragmentIds': [fragment_id], 'missingItems': []}, userFacts=user_facts)
+    assert terminal['status'] == 'failed', terminal
+    assert terminal['error']['code'] == 'MATERIAL_COMPOSER_INVALID_RESULT'
+    assert not terminal.get('result')
+
+
+@pytest.mark.parametrize('fragment_id,quote', [
+    ('user-fact-1', '信息化处负责'),
+    ('user-fact', '信息化处负责。预算500万元。'),
+])
+def test_composer_preserves_valid_user_fact_sources(fragment_id, quote):
+    terminal = _compose_review_paragraph(
+        {'text': '信息化处负责。', 'fragmentIds': [fragment_id], 'missingItems': []},
+        userFacts='信息化处负责。预算500万元。')
+    assert terminal['status'] == 'completed', terminal
+    source = terminal['result']['paragraphs'][0]['sources'][0]
+    assert source['sourceType'] == 'user'
+    assert source['quote'] == quote
+
+
+@pytest.mark.parametrize('text,quote,unsupported', [
+    ('预算50万元。', '预算150万元。', '50万元'),
+    ('预算500万元。', '预算1500万元。', '500万元'),
+    ('交付时间为2030-12-31。', '交付时间为2026-10-01。', '2030-12-31'),
+    ('由安全处负责。', '由信息化处负责。', '安全处'),
+    ('张三担任项目经理。', '李四担任项目经理。', '张三'),
+    ('张三担任项目经理。', '王张三担任项目经理。', '张三'),
+    ('项目名称为智能办公平台。', '项目名称为财务平台。', '智能办公平台'),
+    ('承诺终身免费维护。', '提供一年维护服务。', '终身免费维护'),
+])
+def test_composer_flags_unsupported_key_fact_changes(text, quote, unsupported):
+    terminal = _compose_review_paragraph(
+        {'text': text, 'fragmentIds': ['user-fact-1'], 'missingItems': []}, userFacts=quote)
+    assert terminal['status'] == 'completed', terminal
+    warnings = terminal['result']['unverifiedItems']
+    assert any(unsupported in item for item in warnings), warnings
+
+
+@pytest.mark.parametrize('text,quote', [
+    ('预算500万元。', '预算500万元。'),
+    ('预算1,200万元。', '预算1,200 万元。'),
+    ('交付时间为2026-10-01。', '交付时间为2026年10月1日。'),
+    ('2026年10月交付。', '2026-10-01交付。'),
+    ('由信息化处负责。', '由信息化处负责。'),
+    ('张三担任项目经理。', '张三担任项目经理。'),
+    ('承诺一年免费维护。', '承诺一年免费维护。'),
+])
+def test_composer_keeps_supported_key_facts_without_warnings(text, quote):
+    terminal = _compose_review_paragraph(
+        {'text': text, 'fragmentIds': ['user-fact-1'], 'missingItems': []}, userFacts=quote)
+    assert terminal['status'] == 'completed', terminal
+    assert terminal['result']['unverifiedItems'] == []
+
+
+def test_composer_does_not_use_uncited_user_facts_to_verify_a_paragraph():
+    terminal = _compose_review_paragraph(
+        {'text': '信息化处负责，预算500万元。', 'fragmentIds': ['frag-5'], 'missingItems': []},
+        userFacts='另一个项目预算500万元。')
+    assert terminal['status'] == 'completed', terminal
+    assert any('500万元' in item for item in terminal['result']['unverifiedItems'])
+
+
+@pytest.mark.parametrize('case_id,documents,topic,values', [
+    ('same-name', [('预算.docx', '项目预算500万元。'), ('预算.docx', '项目预算600万元。')],
+     '项目预算', ['500万元', '600万元']),
+    ('later-milestone', [('A.docx', '初验时间为2026年6月。终验时间为2026年8月。'),
+                         ('B.docx', '初验时间为2026年6月。终验时间为2026年9月。')],
+     '终验时间', ['2026年8月', '2026年9月']),
+    ('different-milestone', [('A.docx', '初验时间为2026年6月。'), ('B.docx', '终验时间为2026年8月。')],
+     None, []),
+    ('later-phase', [('A.docx', '一期工程预算500万元。二期工程预算600万元。'),
+                    ('B.docx', '一期工程预算500万元。二期工程预算700万元。')],
+     '二期项目预算', ['600万元', '700万元']),
+    ('numeric-format', [('A.docx', '项目预算1,000 万元。'), ('B.docx', '项目预算1000万元。')],
+     None, []),
+    ('different-numeric-format', [('A.docx', '项目预算1,000 万元。'), ('B.docx', '项目预算1200万元。')],
+     '项目预算', ['1,000 万元', '1200万元']),
+])
+def test_conflict_endpoint_compares_each_fact_and_keeps_material_identity(case_id, documents, topic, values):
+    client = TestClient(app)
+    session_id = 'review-conflicts-' + case_id
+    mids = []
+    for file_name, text in documents:
+        xml = ('<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+               '<w:body><w:p><w:r><w:t>{0}</w:t></w:r></w:p></w:body></w:document>').format(text)
+        payload = upload_payload(build_docx(document_xml=xml.encode('utf-8')), file_name=file_name)
+        payload['documentSessionId'] = session_id
+        response = client.post('/word/materials', json=payload)
+        assert response.status_code == 200, response.text
+        mids.append(response.json()['data']['materialId'])
+    response = client.post('/word/material-composer/conflicts', json={'documentSessionId': session_id})
+    assert response.status_code == 200, response.text
+    conflicts = response.json()['data']['conflicts']
+    if topic is None:
+        assert conflicts == []
+    else:
+        assert len(conflicts) == 1, conflicts
+        assert conflicts[0]['topic'] == topic
+        assert [option['value'] for option in conflicts[0]['options']] == values
+        assert {option['sourceId'] for option in conflicts[0]['options']} == set(mids)
+
+
+@pytest.mark.parametrize('stale_field,stale_value', [
+    ('chosenValue', '700万元'),
+    ('sourceId', 'removed-material'),
+    ('topic', '终验时间'),
+    ('chosenCandidateId', 'opt-no-longer-present'),
+])
+def test_composer_rejects_conflict_choices_that_no_longer_match(stale_field, stale_value):
+    from app.core.errors import AdapterError
+    from app.services.word.material_composer import MaterialComposerJobs
+    from app.services.word.material_import import WordMaterialImportService
+    from app.services.long_task_coordinator import LongTaskCoordinator
+
+    materials = WordMaterialImportService()
+    xml = ('<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+           '<w:body><w:p><w:r><w:t>项目预算500万元。</w:t></w:r></w:p></w:body></w:document>')
+    materials.import_material(upload_payload(build_docx(document_xml=xml.encode('utf-8'))))
+    jobs = MaterialComposerJobs(materials, coordinator=LongTaskCoordinator())
+    choice = {'conflictId': 'conflict-1', 'topic': '项目预算',
+              'chosenCandidateId': 'opt-1-2', 'chosenValue': '600万元', 'sourceId': 'user'}
+    choice[stale_field] = stale_value
+    with patch('app.services.provider_client.ProviderClient.resolve_task_auth',
+               return_value={'providerBaseUrl': 'https://model.invalid', 'apiKey': 'test'}), \
+         patch('app.services.provider_client.ProviderClient.post_task') as provider:
+        with pytest.raises(AdapterError) as error:
+            jobs.start(dict(documentSessionId='doc-session-1', clientJobId='review-choice-0001',
+                            sectionTitle='预算', instruction='编写', userFacts='项目预算600万元。',
+                            conflictResolutions=[choice]), 'choice-trace')
+        assert error.value.code == 'REQUEST_VALIDATION_FAILED'
+        provider.assert_not_called()
+
+
+def test_composer_flags_result_that_ignores_a_valid_conflict_choice():
+    from app.services.word.material_composer import MaterialComposerJobs
+    from app.services.word.material_import import WordMaterialImportService
+    from app.services.long_task_coordinator import LongTaskCoordinator
+
+    materials = WordMaterialImportService()
+    xml = ('<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+           '<w:body><w:p><w:r><w:t>项目预算500万元。</w:t></w:r></w:p></w:body></w:document>')
+    material = materials.import_material(upload_payload(build_docx(document_xml=xml.encode('utf-8'))))
+    coordinator = LongTaskCoordinator()
+    jobs = MaterialComposerJobs(materials, coordinator=coordinator)
+    conflicts = jobs.detect_conflicts({'documentSessionId': 'doc-session-1', 'userFacts': '项目预算600万元。'})['conflicts']
+    choice = {'conflictId': conflicts[0]['conflictId'],
+              'chosenCandidateId': conflicts[0]['options'][1]['optionId'], 'chosenValue': '600万元'}
+    with patch('app.services.provider_client.ProviderClient.resolve_task_auth',
+               return_value={'providerBaseUrl': 'https://model.invalid', 'apiKey': 'test'}), \
+         patch('app.services.provider_client.ProviderClient.post_task', return_value={'answer': json.dumps({
+             'paragraphs': [{'text': '项目预算500万元。',
+                             'fragmentIds': [material['fragments'][0]['fragmentId']], 'missingItems': []}]})}):
+        job = jobs.start(dict(documentSessionId='doc-session-1', clientJobId='review-choice-0002',
+                              sectionTitle='预算', instruction='编写', userFacts='项目预算600万元。',
+                              conflictResolutions=[choice]), 'choice-trace')
+        terminal = coordinator.wait(job['jobId'], task_type='word.material_composer')
+    assert terminal['status'] == 'completed', terminal
+    assert terminal['result']['conflictResolutions'][0]['topic'] == '项目预算'
+    assert terminal['result']['conflictResolutions'][0]['chosenSource'] == '用户补充事实'
+    assert any('500万元' in item and '600万元' in item for item in terminal['result']['unverifiedItems'])

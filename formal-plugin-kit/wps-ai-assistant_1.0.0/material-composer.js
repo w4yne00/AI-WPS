@@ -1,6 +1,19 @@
 function createMaterialComposer(options) {
   var states = {};
   var schedule = options.schedule || function (fn, ms) { return setTimeout(fn, ms); };
+  function clone(value) { return JSON.parse(JSON.stringify(value)); }
+  function inputs(input) {
+    return { sectionTitle: input && input.sectionTitle || '', instruction: input && input.instruction || '', userFacts: input && input.userFacts || '' };
+  }
+  function updateInput(s, input) {
+    var next = inputs(input);
+    if (JSON.stringify(next) !== JSON.stringify(s.editingInput)) {
+      s.editingInput = next;
+      s.conflictRequestVersion += 1;
+      s.conflicts = [];
+      s.conflictResolutions = [];
+    }
+  }
   function formatCatalogLabel(summary) {
     if (!summary || !summary.totalDocuments) return '';
     var totalChars = typeof summary.totalCharacters === 'number' ? summary.totalCharacters.toLocaleString() : '0';
@@ -22,6 +35,9 @@ function createMaterialComposer(options) {
         jobId: data.jobId || '',
         clientJobId: data.clientJobId || '',
         input: data.input || {},
+        editingInput: inputs(data.editingInput || data.input),
+        submittedRequest: data.submittedRequest || null,
+        conflictRequestVersion: 0,
         conflicts: data.conflicts || [],
         conflictResolutions: data.conflictResolutions || [],
         status: (data.jobId || data.clientJobId) ? 'running' : 'idle',
@@ -45,12 +61,14 @@ function createMaterialComposer(options) {
       jobId: s.jobId,
       clientJobId: s.clientJobId,
       input: s.input,
+      editingInput: s.editingInput,
+      submittedRequest: s.submittedRequest,
       conflicts: s.conflicts,
       conflictResolutions: s.conflictResolutions
     }));
   }
   function show(s) {
-    if (options.getSessionId() === s.documentSessionId) options.render(Object.assign({}, s));
+    if (options.getSessionId() === s.documentSessionId) options.render(clone(s));
   }
   function validResult(r, id) {
     return r && r.taskType === 'word.material_composer' && r.documentSessionId === id && typeof r.plainText === 'string' && r.plainText.trim() && Array.isArray(r.missingItems) && (!r.unverifiedItems || Array.isArray(r.unverifiedItems)) && Array.isArray(r.paragraphs) && r.paragraphs.length > 0 && r.paragraphs.every(function (p) {
@@ -128,6 +146,8 @@ function createMaterialComposer(options) {
       var s = stateFor(reading.documentSessionId || options.getSessionId());
       if (s.busy || active(s)) return;
       s.catalogRequestVersion += 1;
+      s.conflictRequestVersion += 1;
+      s.submittedRequest = null;
       s.materialId = reading.materialId || '';
       if (!s.materialIds) s.materialIds = [];
       if (s.materialId && s.materialIds.indexOf(s.materialId) === -1) {
@@ -156,39 +176,51 @@ function createMaterialComposer(options) {
       persist(s);
       show(s);
     },
+    updateInput: function (input) {
+      var s = current();
+      updateInput(s, input);
+      persist(s);
+      show(s);
+    },
     checkConflicts: async function (input) {
       var s = current();
-      var sectionTitle = (input && input.sectionTitle) || (s.input && s.input.sectionTitle) || '';
-      var instruction = (input && input.instruction) || (s.input && s.input.instruction) || '';
-      var userFacts = (input && typeof input.userFacts === 'string') ? input.userFacts : ((s.input && s.input.userFacts) || '');
-      var mids = (s.materialIds && s.materialIds.length) ? s.materialIds : (s.materialId ? [s.materialId] : []);
-      var body = {
-        documentSessionId: s.documentSessionId,
-        sectionTitle: sectionTitle,
-        instruction: instruction,
-        userFacts: userFacts
-      };
-      if (mids.length) {
-        body.materialIds = mids;
-        body.materialId = mids[0];
-      } else if (s.materialId) {
-        body.materialId = s.materialId;
+      updateInput(s, input || s.editingInput);
+      var version = ++s.conflictRequestVersion;
+      s.conflicts = [];
+      s.conflictResolutions = [];
+      persist(s);
+      show(s);
+      var body = Object.assign({ documentSessionId: s.documentSessionId }, s.editingInput);
+      var mids = (s.materialIds && s.materialIds.length) ? s.materialIds.slice() : (s.materialId ? [s.materialId] : []);
+      if (mids.length) { body.materialIds = mids; body.materialId = mids[0]; }
+      var res;
+      try { res = await options.request('/word/material-composer/conflicts', body, { method: 'POST' }); }
+      catch (error) {
+        if (version !== s.conflictRequestVersion || options.getSessionId() !== s.documentSessionId) return null;
+        throw error;
       }
-      var res = await options.request('/word/material-composer/conflicts', body, { method: 'POST' });
-      var data = (res && res.data) || res || {};
-      s.conflicts = data.conflicts || [];
+      if (version !== s.conflictRequestVersion || options.getSessionId() !== s.documentSessionId) return null;
+      var data = res && res.success === true && res.data;
+      if (!data || !Array.isArray(data.conflicts)) throw new Error('事实冲突返回格式不正确，请重试。');
+      s.conflicts = data.conflicts;
       persist(s);
       show(s);
       return s.conflicts;
     },
-    resolveConflict: function (conflictId, candidateId, chosenValue) {
+    resolveConflict: function (conflictId, optionId) {
       var s = current();
-      if (!s.conflictResolutions) s.conflictResolutions = [];
+      var conflict = s.conflicts.filter(function (item) { return item.conflictId === conflictId; })[0];
+      var option = conflict && (conflict.options || []).filter(function (item) { return item.optionId === optionId; })[0];
+      if (!option) return;
       s.conflictResolutions = s.conflictResolutions.filter(function (r) { return r.conflictId !== conflictId; });
       s.conflictResolutions.push({
         conflictId: conflictId,
-        chosenCandidateId: candidateId,
-        chosenValue: chosenValue,
+        chosenCandidateId: option.optionId,
+        topic: conflict.topic,
+        chosenSource: option.sourceName,
+        sourceType: option.sourceType,
+        sourceId: option.sourceId,
+        chosenValue: option.value,
         resolution: 'use_candidate'
       });
       persist(s);
@@ -202,16 +234,20 @@ function createMaterialComposer(options) {
       var hasMaterial = Boolean(s.materialId || (s.materialIds && s.materialIds.length) || (s.catalogSummary && s.catalogSummary.totalDocuments));
       if (!hasMaterial || !s.documentSessionId || !selectedInput || typeof selectedInput.sectionTitle !== 'string' || typeof selectedInput.instruction !== 'string' || !selectedInput.sectionTitle.trim() || !selectedInput.instruction.trim()) { s.error = '请先导入资料，并填写章节标题和编写要求。'; show(s); return; }
       if (!retryingUncertain) {
+        updateInput(s, selectedInput);
+        if (s.conflicts.some(function (conflict) {
+          return !s.conflictResolutions.some(function (resolution) { return resolution.conflictId === conflict.conflictId; });
+        })) { s.error = '请先对已展示的事实差异手动选择采纳依据。'; show(s); return; }
         s.input = {
           sectionTitle: selectedInput.sectionTitle,
           instruction: selectedInput.instruction
         };
-        var uFacts = typeof selectedInput.userFacts === 'string' ? selectedInput.userFacts : ((s.input && s.input.userFacts) || '');
+        var uFacts = typeof selectedInput.userFacts === 'string' ? selectedInput.userFacts : '';
         if (uFacts) {
           s.input.userFacts = uFacts;
         }
         if (selectedInput.conflictResolutions && Array.isArray(selectedInput.conflictResolutions)) {
-          s.conflictResolutions = selectedInput.conflictResolutions;
+          s.conflictResolutions = clone(selectedInput.conflictResolutions);
         }
       }
       // Keep the idempotency key after an uncertain submission so a retry cannot create another job.
@@ -236,7 +272,9 @@ function createMaterialComposer(options) {
       } else if (s.materialId) {
         body.materialId = s.materialId;
       }
-      await execute(s, '/word/material-composer/jobs', body, 'POST');
+      if (!retryingUncertain || !s.submittedRequest) s.submittedRequest = clone(body);
+      persist(s);
+      await execute(s, '/word/material-composer/jobs', clone(s.submittedRequest), 'POST');
     },
     refresh: refresh,
     restore: async function () {
@@ -338,17 +376,19 @@ function renderMaterialComposer(root, view, onSelectChapter, onResolveConflict) 
     append(conflictSec, 'small', '资料之间及补充事实之间的差异由您手动选择，系统不按文件时间自动决定。');
     view.conflicts.forEach(function (conflict) {
       var card = append(conflictSec, 'div', '', 'material-composer-conflict-card');
-      append(card, 'strong', conflict.description || conflict.factType);
-      (conflict.candidates || []).forEach(function (cand) {
+      append(card, 'strong', conflict.topic);
+      append(card, 'p', conflict.difference);
+      (conflict.options || []).forEach(function (cand) {
         var isChosen = (view.conflictResolutions || []).some(function (cr) {
-          return cr.conflictId === conflict.id && cr.chosenCandidateId === cand.candidateId;
+          return cr.conflictId === conflict.conflictId && cr.chosenCandidateId === cand.optionId;
         });
         var label = '[' + (cand.sourceType === 'user' ? '用户补充事实' : cand.sourceName) + '] ' + cand.value;
         var btn = append(card, 'button', label, 'ghost-action material-composer-conflict-choice' + (isChosen ? ' active' : ''));
         btn.type = 'button';
-        if (typeof onResolveConflict === 'function') {
+        btn.disabled = view.busy || Boolean(view.jobId && (view.status === 'queued' || view.status === 'running'));
+        if (!btn.disabled && typeof onResolveConflict === 'function') {
           btn.addEventListener('click', function () {
-            onResolveConflict(conflict.id, cand.candidateId, cand.value);
+            onResolveConflict(conflict.conflictId, cand.optionId);
           });
         }
       });
@@ -372,7 +412,7 @@ function renderMaterialComposer(root, view, onSelectChapter, onResolveConflict) 
     paragraph.missingItems.forEach(function (item) { append(sources, 'p', '待补充：' + item, 'material-composer-missing'); });
     if (paragraph.unverifiedItems && paragraph.unverifiedItems.length) {
       paragraph.unverifiedItems.forEach(function (item) {
-        append(sources, 'p', '待核对（无依据）：' + item, 'material-composer-unverified');
+        append(sources, 'p', '待核对：' + item, 'material-composer-unverified');
       });
     }
   });
@@ -380,7 +420,7 @@ function renderMaterialComposer(root, view, onSelectChapter, onResolveConflict) 
   if (view.result.unverifiedItems && view.result.unverifiedItems.length) {
     var unverified = append(root, 'aside', '', 'material-composer-unverified');
     append(unverified, 'h4', '待核对关键事实（数字/日期/名称/责任/承诺）');
-    append(unverified, 'small', '已标出无原文依据内容；AI 核对不伪造出处，亦不宣称发现全部冲突，请逐项核对。');
+    append(unverified, 'small', '已标出未能与引文对齐的内容；AI 核对不伪造出处，亦不宣称发现全部冲突，请逐项核对。');
     view.result.unverifiedItems.forEach(function (item) { append(unverified, 'p', '待核对：' + String(item)); });
   }
 

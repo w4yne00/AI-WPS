@@ -244,7 +244,7 @@ test('chapter generation reuses existing catalog without re-uploading on subsequ
   });
   await h.api.start({ sectionTitle: '第一章', instruction: '编写一' });
   assert.equal(h.calls.length, 1);
-  assert.deepEqual(h.calls[0].body.materialIds, ['m1', 'm2']);
+  assert.deepEqual(Array.from(h.calls[0].body.materialIds), ['m1', 'm2']);
   h.response = { success: true, data: { jobId: 'job-a', status: 'completed', documentSessionId: 'doc-a', result: result('doc-a') } };
   await h.api.refresh();
   assert.equal(h.last().status, 'succeeded');
@@ -254,7 +254,7 @@ test('chapter generation reuses existing catalog without re-uploading on subsequ
   await h.api.start({ sectionTitle: '第二章', instruction: '编写二' });
   assert.equal(h.calls.length, 3); // 1: POST start 1, 2: GET refresh 1, 3: POST start 2
   assert.equal(h.calls[2].body.sectionTitle, '第二章');
-  assert.deepEqual(h.calls[2].body.materialIds, ['m1', 'm2']);
+  assert.deepEqual(Array.from(h.calls[2].body.materialIds), ['m1', 'm2']);
   assert.equal(h.last().status, 'running');
 });
 
@@ -377,12 +377,12 @@ test('detects conflicts, displays conflict candidates without timestamp bias, an
     data: {
       conflicts: [
         {
-          id: 'conflict-1',
-          factType: 'date',
-          description: '初验时间不一致',
-          candidates: [
-            { candidateId: 'c1', value: '2026-03-01', sourceName: '资料A.docx', sourceType: 'material' },
-            { candidateId: 'c2', value: '2026-04-01', sourceName: '用户补充事实', sourceType: 'user' }
+          conflictId: 'conflict-1',
+          topic: '初验时间',
+          difference: '初验时间不一致',
+          options: [
+            { optionId: 'c1', sourceId: 'm1', value: '2026-03-01', sourceName: '资料A.docx', sourceType: 'material' },
+            { optionId: 'c2', sourceId: 'user', value: '2026-04-01', sourceName: '用户补充事实', sourceType: 'user' }
           ]
         }
       ]
@@ -412,6 +412,9 @@ test('detects conflicts, displays conflict candidates without timestamp bias, an
   });
   assert.equal(h.calls[1].body.conflictResolutions.length, 1);
   assert.equal(h.calls[1].body.conflictResolutions[0].chosenValue, '2026-04-01');
+  assert.equal(h.calls[1].body.conflictResolutions[0].topic, '初验时间');
+  assert.equal(h.calls[1].body.conflictResolutions[0].chosenSource, '用户补充事实');
+  assert.equal(h.calls[1].body.conflictResolutions[0].sourceId, 'user');
 });
 
 test('render distinguishes user-supplied facts, unverified key facts, and missing items in sidebar and body', () => {
@@ -504,4 +507,113 @@ test('allows user confirmation to apply draft containing missing items', async (
   await h.api.apply({ sectionTitle: '第一章', selectionText: '选区内容', confirmedMissingItems: true });
   assert.equal(h.applied.length, 1);
   assert.ok(h.applied[0].text.includes('〔待补充：实施周期〕'));
+});
+
+function realConflict() {
+  return { conflictId:'conflict-1', topic:'项目预算', difference:'预算存在差异', options:[
+    {optionId:'opt-1', sourceId:'m1', sourceName:'资料.docx', sourceType:'material', value:'150万元', text:'预算为150万元'},
+    {optionId:'opt-2', sourceId:'user', sourceName:'用户补充事实', sourceType:'user', value:'50万元', text:'预算调整为50万元'}
+  ]};
+}
+test('renders real conflict response with difference, source choices and selection', () => {
+  const context={window:{}};
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../wps-ai-assistant_1.0.0/material-composer.js'),'utf8'),context);
+  const doc={createElement(tag){return {tagName:tag,children:[],textContent:'',appendChild(child){this.children.push(child);},addEventListener(type,fn){this[type]=fn;}};}};
+  const root=doc.createElement('div'); root.ownerDocument=doc;
+  const selected=[];
+  context.window.renderMaterialComposer(root,{status:'idle',conflicts:[realConflict()],conflictResolutions:[]},null,(...args)=>selected.push(args));
+  const card=root.children.find(x=>x.className==='material-composer-conflicts').children.find(x=>x.className==='material-composer-conflict-card');
+  assert.ok(card.children.some(x=>x.textContent.includes('预算存在差异')));
+  const choices=card.children.filter(x=>x.tagName==='button');
+  assert.equal(choices.length,2); assert.ok(choices[1].textContent.includes('用户补充事实')); choices[1].click();
+  assert.deepEqual(selected,[['conflict-1','opt-2']]);
+});
+test('uncertain retry preserves the entire submitted request after view and input edits', async () => {
+  const h=harness(); h.api.setMaterial({materialId:'m1'});
+  h.conflictResponse={success:true,data:{conflicts:[realConflict()]}};
+  const input={sectionTitle:'预算',instruction:'编写',userFacts:'预算为50万元'};
+  await h.api.checkConflicts(input); h.api.resolveConflict('conflict-1','opt-2');
+  h.error=true; await h.api.start(input);
+  const original=JSON.parse(JSON.stringify(h.calls[1].body));
+  h.last().input.userFacts='预算为500万元'; h.last().conflictResolutions[0].chosenValue='500万元';
+  h.api.updateInput({...input,userFacts:'预算为600万元'});
+  await h.api.start({...input,userFacts:'预算为600万元'});
+  assert.deepEqual(JSON.parse(JSON.stringify(h.calls[2].body)),original);
+});
+test('input edits and repeat conflict detection discard previous selections', async () => {
+  for(const field of ['userFacts','sectionTitle','instruction']) {
+    const h=harness(); h.api.setMaterial({materialId:'m1'});
+    h.conflictResponse={success:true,data:{conflicts:[realConflict()]}};
+    const input={sectionTitle:'预算',instruction:'编写',userFacts:'预算为50万元'};
+    await h.api.checkConflicts(input); h.api.resolveConflict('conflict-1','opt-2');
+    h.api.updateInput({...input,[field]:'新内容'});
+    assert.equal(h.last().conflicts.length,0); assert.equal(h.last().conflictResolutions.length,0);
+    await h.api.checkConflicts(input); h.api.resolveConflict('conflict-1','opt-2');
+    await h.api.checkConflicts(input); assert.equal(h.last().conflictResolutions.length,0);
+  }
+});
+test('late conflict detection cannot overwrite changed input or a new material import', async () => {
+  for(const change of ['edit','import']) {
+    const h=harness(); h.api.setMaterial({materialId:'m1'}); let finish;
+    h.conflictResponse=new Promise(resolve=>{finish=resolve;});
+    const input={sectionTitle:'预算',instruction:'编写',userFacts:'预算为50万元'};
+    const pending=h.api.checkConflicts(input);
+    if(change==='edit') h.api.updateInput({...input,userFacts:'预算为60万元'});
+    else h.api.setMaterial({materialId:'m2'});
+    finish({success:true,data:{conflicts:[realConflict()]}}); await pending;
+    assert.equal(h.last().conflicts.length,0);
+  }
+});
+
+test('displayed unresolved conflicts ask for a manual selection before generation', async () => {
+  const h=harness(); h.api.setMaterial({materialId:'m1'});
+  h.conflictResponse={success:true,data:{conflicts:[realConflict()]}};
+  const input={sectionTitle:'预算',instruction:'编写',userFacts:'预算为50万元'};
+  await h.api.checkConflicts(input); await h.api.start(input);
+  assert.equal(h.calls.filter(call=>call.url==='/word/material-composer/jobs').length,0);
+  assert.ok(h.last().error.includes('手动选择'));
+});
+
+test('late conflict response after a document switch cannot update the visible pane', async () => {
+  const h=harness(); h.api.setMaterial({materialId:'m1'}); let finish;
+  h.conflictResponse=new Promise(resolve=>{finish=resolve;});
+  const pending=h.api.checkConflicts({sectionTitle:'预算',instruction:'编写'});
+  h.session='doc-b'; await h.api.restore();
+  finish({success:true,data:{conflicts:[realConflict()]}});
+  assert.equal(await pending,null); assert.equal(h.last().documentSessionId,'doc-b');
+});
+test('restored uncertain retry retains original sources and choices after catalog changes', async () => {
+  const h=harness(); h.api.setMaterial({materialId:'m1'});
+  h.conflictResponse={success:true,data:{conflicts:[realConflict()]}};
+  const input={sectionTitle:'预算',instruction:'编写',userFacts:'预算为50万元'};
+  await h.api.checkConflicts(input); h.api.resolveConflict('conflict-1','opt-2');
+  h.error=true; await h.api.start(input);
+  const original=JSON.parse(JSON.stringify(h.calls[1].body));
+  const reopened=harness(h.saved);
+  reopened.catalogResponse={success:true,data:{totalDocuments:2,totalCharacters:900,documents:[{materialId:'m1'},{materialId:'m2'}],toc:[]}};
+  reopened.respond=()=>Promise.reject(Object.assign(Error('missing'),{httpStatus:404}));
+  await reopened.api.restore();
+  reopened.api.updateInput({...input,userFacts:'500万元'});
+  await reopened.api.start({...input,userFacts:'500万元'});
+  assert.deepEqual(JSON.parse(JSON.stringify(reopened.calls[2].body)),original);
+});
+
+test('late conflict failure after input edits is discarded instead of replacing the new input notice', async () => {
+  const h=harness(); h.api.setMaterial({materialId:'m1'}); let reject;
+  h.conflictResponse=new Promise((resolve,fail)=>{reject=fail;});
+  const input={sectionTitle:'预算',instruction:'编写',userFacts:'预算为50万元'};
+  const pending=h.api.checkConflicts(input);
+  h.api.updateInput({...input,userFacts:'预算为60万元'});
+  reject(Error('旧请求失败'));
+  assert.equal(await pending.catch(error=>error),null);
+});
+test('late conflict failure after a document switch is discarded while current failures still surface', async () => {
+  const h=harness(); h.api.setMaterial({materialId:'m1'}); let reject;
+  h.conflictResponse=new Promise((resolve,fail)=>{reject=fail;});
+  const pending=h.api.checkConflicts({sectionTitle:'预算',instruction:'编写'});
+  h.session='doc-b'; await h.api.restore();
+  reject(Error('文档A旧请求失败'));
+  assert.equal(await pending.catch(error=>error),null);
+  h.conflictResponse=Promise.reject(Error('当前请求失败'));
+  await assert.rejects(h.api.checkConflicts({sectionTitle:'预算',instruction:'编写'}),/当前请求失败/);
 });

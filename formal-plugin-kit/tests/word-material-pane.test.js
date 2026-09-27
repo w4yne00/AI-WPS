@@ -48,7 +48,8 @@ test('selecting a chapter reads only explicit selection and never modifies the d
   const select = load('useMaterialComposerSelection', {
     byId: id => nodes[id],
     getActiveDocument: () => doc,
-    getSelectionText: selected => { assert.equal(selected,doc); return '第二章 实施安排'; }
+    getSelectionText: selected => { assert.equal(selected,doc); return '第二章 实施安排'; },
+    handleMaterialComposerInputChange() {}
   });
   select();
   assert.equal(nodes['material-section-title'].value, '第二章 实施安排');
@@ -142,8 +143,10 @@ window.fetch=async function(url,options){
     data={materialId:'mat-browser',documentSessionId:body.documentSessionId,blocks:[],fragments:[],fileName:'资料.docx',catalogSummary:catalog};
   }
   if(p==='/word/materials/catalog')data=JSON.parse(localStorage.getItem('test-material-catalog')||'{"totalDocuments":0,"totalCharacters":0,"documents":[],"toc":[]}');
+  if(p==='/word/material-composer/conflicts')data={conflicts:[{conflictId:'conflict-1',topic:'项目预算',difference:'150万元与50万元存在差异',options:[{optionId:'opt-1',sourceId:'mat-browser',sourceName:'资料.docx',sourceType:'material',value:'150万元',text:'预算为150万元'},{optionId:'opt-2',sourceId:'user',sourceName:'用户补充事实',sourceType:'user',value:'50万元',text:'预算调整为50万元'}]}]};
   if(p==='/word/material-composer/jobs'){
     localStorage.setItem('test-job',JSON.stringify(body));
+    if(!window.lostJobResponse){window.lostJobResponse=true;throw new Error('response lost');}
     data={jobId:body.clientJobId,status:'queued',documentSessionId:body.documentSessionId};
   }else if(p.indexOf('/word/material-composer/jobs/')===0){
     var saved=JSON.parse(localStorage.getItem('test-job'));
@@ -162,12 +165,32 @@ window.fetch=async function(url,options){
     const errors = run('eval','JSON.stringify(window.paneErrors)');
     assert.ok(errors.includes('[]'),errors);
     run('eval',`(async()=>{var input=document.getElementById('material-import-file');var dt=new DataTransfer();dt.items.add(new File(['docx'],'资料.docx'));input.files=dt.files;input.dispatchEvent(new Event('change'));})();`);
+    run('scrollintoview','.material-composer-toc summary');
     run('click','.material-composer-toc summary');
     run('click','.material-composer-toc-chapter');
     assert.equal(run('eval',`document.getElementById('material-section-title').value`).trim(), '"实施安排"');
     run('fill','#material-instruction','简要说明责任和工期');
+    run('fill','#material-user-facts','预算调整为50万元');
+    run('scrollintoview','#btn-material-check-conflicts');
+    run('click','#btn-material-check-conflicts');
+    run('wait','--text','150万元与50万元存在差异');
+    run('scrollintoview','.material-composer-conflict-choice:last-child');
+    run('click','.material-composer-conflict-choice:last-child');
+    assert.equal(run('eval',`document.querySelectorAll('.material-composer-conflict-choice.active').length`).trim(),'1');
+    run('scrollintoview','#btn-material-generate');
+    run('click','#btn-material-generate');
+    run('wait','--text','response lost');
+    run('fill','#material-user-facts','预算调整为500万元');
+    assert.equal(run('eval',`document.querySelectorAll('.material-composer-conflict-choice').length`).trim(),'0');
+    run('scrollintoview','#btn-material-generate');
     run('click','#btn-material-generate');
     run('wait','--text','信息化处负责。');
+    const posts=JSON.parse(JSON.parse(run('eval',`JSON.stringify(requests.filter(r=>r.path==='/word/material-composer/jobs').map(r=>r.body))`)));
+    assert.equal(posts.length,2); assert.deepEqual(posts[1],posts[0]);
+    assert.equal(posts[1].userFacts,'预算调整为50万元');
+    assert.equal(posts[1].conflictResolutions[0].chosenCandidateId,'opt-2');
+    assert.equal(posts[1].conflictResolutions[0].chosenSource,'用户补充事实');
+    assert.equal(posts[1].conflictResolutions[0].topic,'项目预算');
     assert.ok(run('get','text','#material-composer-result').includes('资料.docx'));
     assert.equal(run('eval',`String(document.querySelectorAll('#material-composer-result .material-composer-sources').length)`).trim(),'"1"');
     assert.equal(run('eval',`document.documentElement.scrollWidth <= innerWidth && getComputedStyle(document.getElementById('word-result-section')).display === "none"`).trim(), 'true');
@@ -500,4 +523,38 @@ test('applyMaterialComposerResult reports failure and guides to manual copy when
   await applyFn();
   assert.ok(nodes['material-composer-status'].textContent.includes('写入失败'));
   assert.ok(nodes['material-composer-status'].textContent.includes('文档受保护'));
+});
+
+test('editing composer facts updates draft inputs without mutating the submitted view', () => {
+  const frozen={input:{sectionTitle:'预算',instruction:'编写',userFacts:'50万元'},conflictResolutions:[{chosenValue:'50万元'}]};
+  let edited;
+  const nodes={'material-section-title':{value:'预算'},'material-instruction':{value:'编写'},'material-user-facts':{value:'500万元'}};
+  const change=load('handleMaterialComposerInputChange',{byId:id=>nodes[id],lastMaterialComposerView:frozen,ensureMaterialComposer:()=>({updateInput:input=>{edited=input;}})});
+  change();
+  assert.equal(frozen.input.userFacts,'50万元'); assert.equal(edited.userFacts,'500万元');
+});
+
+test('late conflict failure cannot replace a new document or edited input notice in the pane', async () => {
+  for(const change of ['document','input']) {
+    const context={window:{}};
+    vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../wps-ai-assistant_1.0.0/material-composer.js'),'utf8'),context);
+    let session='doc-a', reject;
+    const saved=new Map();
+    const nodes={'material-section-title':{value:'预算'},'material-instruction':{value:'编写'},'material-user-facts':{value:'50万元'},'material-composer-status':{textContent:''}};
+    const composer=context.window.createMaterialComposer({
+      getSessionId:()=>session,
+      storage:{getItem:key=>saved.get(key),setItem:(key,value)=>saved.set(key,value)},
+      render(){},
+      request:()=>new Promise((resolve,fail)=>{reject=fail;})
+    });
+    composer.setMaterial({materialId:'m1'});
+    const check=load('checkMaterialComposerConflicts',{byId:id=>nodes[id],ensureMaterialComposer:()=>composer});
+    const pending=check();
+    if(change==='document') session='doc-b';
+    else composer.updateInput({sectionTitle:'预算',instruction:'编写',userFacts:'60万元'});
+    nodes['material-composer-status'].textContent='当前提示，请保留';
+    reject(Error('旧请求失败'));
+    await pending;
+    assert.equal(nodes['material-composer-status'].textContent,'当前提示，请保留');
+  }
 });

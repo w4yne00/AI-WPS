@@ -1917,10 +1917,10 @@
     window.renderMaterialComposer(byId("material-composer-result"), view, function (sectionTitle) {
       if (busy || view.documentSessionId !== getMaterialComposerSessionId()) return;
       byId("material-section-title").value = sectionTitle;
-      renderMaterialComposerView(view);
-    }, function (conflictId, candidateId, chosenValue) {
+      handleMaterialComposerInputChange();
+    }, function (conflictId, candidateId) {
       if (busy || view.documentSessionId !== getMaterialComposerSessionId()) return;
-      ensureMaterialComposer().resolveConflict(conflictId, candidateId, chosenValue);
+      ensureMaterialComposer().resolveConflict(conflictId, candidateId);
     });
   }
 
@@ -1944,7 +1944,7 @@
         } : null;
     }
     var userFactsEl = byId("material-user-facts");
-    var userFactsVal = userFactsEl && typeof userFactsEl.value === "string" ? userFactsEl.value.trim() : "";
+    var userFactsVal = userFactsEl && typeof userFactsEl.value === "string" ? userFactsEl.value : "";
     var composerInput = {
       sectionTitle: byId("material-section-title").value,
       instruction: byId("material-instruction").value
@@ -1957,6 +1957,14 @@
     });
   }
 
+  function handleMaterialComposerInputChange() {
+    ensureMaterialComposer().updateInput({
+      sectionTitle: byId("material-section-title").value,
+      instruction: byId("material-instruction").value,
+      userFacts: byId("material-user-facts") ? byId("material-user-facts").value : ""
+    });
+  }
+
   function checkMaterialComposerConflicts() {
     var userFactsEl = byId("material-user-facts");
     var userFactsVal = userFactsEl ? userFactsEl.value : "";
@@ -1966,7 +1974,8 @@
       instruction: byId("material-instruction").value,
       userFacts: userFactsVal
     }).then(function (conflicts) {
-      if (conflicts && conflicts.length > 0) {
+      if (!conflicts) return;
+      if (conflicts.length > 0) {
         byId("material-composer-status").textContent = "发现 " + conflicts.length + " 处事实差异，请在下方手动选择采纳依据。";
       } else {
         byId("material-composer-status").textContent = "未检测到明显事实冲突。";
@@ -1983,6 +1992,7 @@
       return;
     }
     byId("material-section-title").value = selected;
+    handleMaterialComposerInputChange();
     byId("material-composer-status").textContent = "已读取所选章节；该内容仅用于确定写作目标，不作为事实来源。";
   }
 
@@ -12815,26 +12825,12 @@
     if (btnMaterialApply) {
       btnMaterialApply.addEventListener("click", applyMaterialComposerResult);
     }
-    var materialSectionTitle = byId("material-section-title");
-    if (materialSectionTitle) {
-      ["input", "change"].forEach(function (ev) {
-        materialSectionTitle.addEventListener(ev, function () {
-          if (lastMaterialComposerView) {
-            renderMaterialComposerView(lastMaterialComposerView);
-          }
-        });
+    ["material-section-title", "material-instruction", "material-user-facts"].forEach(function (id) {
+      var input = byId(id);
+      if (input) ["input", "change"].forEach(function (ev) {
+        input.addEventListener(ev, handleMaterialComposerInputChange);
       });
-    }
-    var materialUserFacts = byId("material-user-facts");
-    if (materialUserFacts) {
-      ["input", "change"].forEach(function (ev) {
-        materialUserFacts.addEventListener(ev, function () {
-          if (lastMaterialComposerView && lastMaterialComposerView.input) {
-            lastMaterialComposerView.input.userFacts = materialUserFacts.value;
-          }
-        });
-      });
-    }
+    });
     var materialImportFile = byId("material-import-file");
     if (materialImportFile) {
       materialImportFile.addEventListener("change", handleMaterialImportFileChange);

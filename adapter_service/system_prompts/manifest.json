@@ -48,9 +48,9 @@
       "sha256": "bdeafe95523c36139f2359dfc6f028a57dd27fd05eb4f64210f9c833384a895b"
     },
     "word.material_composer": {
-      "version": "2026-09-26.1",
+      "version": "2026-09-27.1",
       "file": "word-material-composer.md",
-      "sha256": "b53a9b566accc0dd1265a3e9ace954da062cdbc5e474c12ba5a315a915bfc63c"
+      "sha256": "a892db540d7b89376248dbd89522b3f97d291a7f45f14e930edee57bac73a873"
     }
   },
   "stages": {
