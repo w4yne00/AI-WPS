@@ -38,12 +38,12 @@ from app.services.word.material_import import (
 )
 
 
-class ExcelMaterialStore:
+class PptMaterialStore:
     def __init__(
         self,
         base_dir: Optional[Path] = None,
         word_base_dir: Optional[Path] = None,
-        ppt_base_dir: Optional[Path] = None,
+        excel_base_dir: Optional[Path] = None,
         coordinator: Optional[LongTaskCoordinator] = None,
         word_store: Optional[WordMaterialStore] = None,
     ) -> None:
@@ -53,11 +53,11 @@ class ExcelMaterialStore:
             try:
                 paths = resolve_runtime_paths()
                 if paths.shared_state_enabled:
-                    self.base_dir = paths.state_dir / "excel_materials"
+                    self.base_dir = paths.state_dir / "ppt_materials"
                 else:
-                    self.base_dir = paths.run_dir / "excel_materials"
+                    self.base_dir = paths.run_dir / "ppt_materials"
             except Exception:
-                self.base_dir = Path("run/excel_materials").resolve()
+                self.base_dir = Path("run/ppt_materials").resolve()
         self.base_dir.mkdir(parents=True, exist_ok=True)
 
         if word_base_dir is not None:
@@ -72,17 +72,17 @@ class ExcelMaterialStore:
             except Exception:
                 self.word_base_dir = Path("run/word_materials").resolve()
 
-        if ppt_base_dir is not None:
-            self.ppt_base_dir = Path(ppt_base_dir)
+        if excel_base_dir is not None:
+            self.excel_base_dir = Path(excel_base_dir)
         else:
             try:
                 paths = resolve_runtime_paths()
                 if paths.shared_state_enabled:
-                    self.ppt_base_dir = paths.state_dir / "ppt_materials"
+                    self.excel_base_dir = paths.state_dir / "excel_materials"
                 else:
-                    self.ppt_base_dir = paths.run_dir / "ppt_materials"
+                    self.excel_base_dir = paths.run_dir / "excel_materials"
             except Exception:
-                self.ppt_base_dir = Path("run/ppt_materials").resolve()
+                self.excel_base_dir = Path("run/excel_materials").resolve()
 
         self.word_store = word_store
         if word_store is not None:
@@ -96,12 +96,12 @@ class ExcelMaterialStore:
             return
         if self.coordinator is not None and hasattr(self.coordinator, "has_active_task"):
             if self.coordinator.has_active_task(
-                task_type="excel.material_ledger",
+                task_type="ppt.material_outline",
                 document_session_id=session_id,
             ):
                 raise AdapterError(
                     "MATERIAL_COMPOSER_BUSY",
-                    "任务台账正在生成中，请等待完成或取消任务后再更新/移除资料。",
+                    "逐页大纲正在生成中，请等待完成或取消任务后再更新/移除资料。",
                     status_code=409,
                 )
 
@@ -158,8 +158,8 @@ class ExcelMaterialStore:
         with self._lock:
             roots = [
                 (self.word_base_dir, "word"),
-                (self.base_dir, "excel"),
-                (self.ppt_base_dir, "ppt"),
+                (self.excel_base_dir, "excel"),
+                (self.base_dir, "ppt"),
             ]
             for root, host in roots:
                 if not root or not root.exists():
@@ -207,13 +207,13 @@ class ExcelMaterialStore:
         if not source_session_id:
             raise AdapterError("REQUEST_VALIDATION_FAILED", "请指定来源资料会话编号。", status_code=422)
         if not target_session_id:
-            raise AdapterError("REQUEST_VALIDATION_FAILED", "请指定目标工作簿会话编号。", status_code=422)
+            raise AdapterError("REQUEST_VALIDATION_FAILED", "请指定目标演示文稿会话编号。", status_code=422)
 
         with self._lock, (self.word_store._lock if self.word_store is not None else nullcontext()):
             self._check_busy(target_session_id)
             source_dir = self._get_dir_for_session(source_session_id, self.word_base_dir)
             if not source_dir:
-                source_dir = self._get_dir_for_session(source_session_id, self.ppt_base_dir)
+                source_dir = self._get_dir_for_session(source_session_id, self.excel_base_dir)
             if not source_dir:
                 source_dir = self._get_dir_for_session(source_session_id, self.base_dir)
             if not source_dir or not source_dir.exists():
@@ -234,29 +234,32 @@ class ExcelMaterialStore:
             if existing_target:
                 target_dir = existing_target
                 target_dir_name = target_dir.name
-            if source_session_id == target_session_id or source_dir.resolve() == target_dir.resolve():
-                raise AdapterError("MATERIAL_SOURCE_EQUALS_TARGET", "不能复用当前工作簿自身的资料。", status_code=409)
-            if self.coordinator.has_active_task(task_type="word.material_composer", document_session_id=source_session_id):
-                raise AdapterError("MATERIAL_COMPOSER_BUSY", "来源资料正在生成任务，请稍后复用。", status_code=409)
-            self._check_busy(source_session_id)
-            final_target = target_dir
-            target_dir = Path(tempfile.mkdtemp(prefix=".clone-", dir=str(self.base_dir)))
-            backup = None
-            published = False
 
+            if source_dir.resolve() == target_dir.resolve():
+                raise AdapterError(
+                    "CANNOT_REUSE_SAME_DOCUMENT",
+                    "当前演示文稿已包含所选资料，无法重复复用自身。",
+                    status_code=409,
+                )
+
+            if self.coordinator is not None and hasattr(self.coordinator, "has_active_task"):
+                if self.coordinator.has_active_task(task_type="word.material_composer", document_session_id=source_session_id) or \
+                   self.coordinator.has_active_task(task_type="excel.material_ledger", document_session_id=source_session_id) or \
+                   self.coordinator.has_active_task(task_type="ppt.material_outline", document_session_id=source_session_id):
+                    raise AdapterError("MATERIAL_COMPOSER_BUSY", "来源资料正在生成任务，请稍后复用。", status_code=409)
+
+            temp_target_dir = Path(tempfile.mkdtemp(prefix=".clone-", dir=str(self.base_dir)))
             try:
-                # Copy files directory
                 source_files = source_dir / "files"
-                target_files = target_dir / "files"
+                target_files = temp_target_dir / "files"
                 target_files.mkdir(parents=True, exist_ok=True)
                 if source_files.exists():
                     for f in source_files.iterdir():
                         if f.is_file():
                             shutil.copy2(f, target_files / f.name)
 
-                # Copy materials directory
                 source_mats = source_dir / "materials"
-                target_mats = target_dir / "materials"
+                target_mats = temp_target_dir / "materials"
                 target_mats.mkdir(parents=True, exist_ok=True)
                 if source_mats.exists():
                     for f in source_mats.iterdir():
@@ -269,116 +272,58 @@ class ExcelMaterialStore:
                                 shutil.copy2(f, target_mats / f.name)
 
                 now_iso = _updated_at()
-                manifest["documentSessionId"] = target_session_id
-                manifest["documentIdentity"] = target_doc_identity
-                manifest["updatedAt"] = now_iso
-                (target_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+                new_manifest = dict(manifest)
+                new_manifest["documentSessionId"] = target_session_id
+                new_manifest["documentIdentity"] = target_doc_identity
+                new_manifest["clonedFromSessionId"] = source_session_id
+                new_manifest["updatedAt"] = now_iso
+                (temp_target_dir / "manifest.json").write_text(json.dumps(new_manifest, ensure_ascii=False, indent=2), encoding="utf-8")
 
-                # Copy and rebind catalog_cache.json
-                catalog: dict = {}
                 source_cache = source_dir / "catalog_cache.json"
+                catalog: dict = {}
                 if source_cache.exists():
                     try:
                         catalog = json.loads(source_cache.read_text(encoding="utf-8"))
                         catalog["documentSessionId"] = target_session_id
+                        catalog["documentIdentity"] = target_doc_identity
+                        catalog["updatedAt"] = now_iso
                     except Exception:
                         catalog = {}
                 if not catalog:
                     catalog = {
                         "documentSessionId": target_session_id,
-                        "totalDocuments": manifest.get("totalDocuments", 0),
-                        "totalCharacters": manifest.get("totalCharacters", 0),
-                        "totalTableCells": manifest.get("totalTableCells", 0),
+                        "documentIdentity": target_doc_identity,
+                        "totalDocuments": new_manifest.get("totalDocuments", 0),
+                        "totalCharacters": new_manifest.get("totalCharacters", 0),
+                        "totalTableCells": new_manifest.get("totalTableCells", 0),
                         "characterCountMethod": CHARACTER_COUNT_METHOD,
-                        "documents": manifest.get("documents", []),
+                        "documents": new_manifest.get("documents", []),
                         "toc": [],
                         "blocks": [],
                         "fragmentsList": [],
                         "fragments": {},
+                        "limits": {
+                            "documentLimit": MATERIAL_IMPORT_MAX_DOCUMENTS,
+                            "readableCharacterLimit": MATERIAL_IMPORT_MAX_READABLE_CHARACTERS,
+                            "tableColumnLimit": MATERIAL_IMPORT_MAX_TABLE_COLUMNS,
+                            "tableCellLimit": MATERIAL_IMPORT_MAX_TABLE_CELLS,
+                            "productConfirmed": False,
+                        },
+                        "updatedAt": now_iso,
                     }
-                (target_dir / "catalog_cache.json").write_text(json.dumps(catalog, ensure_ascii=False, indent=2), encoding="utf-8")
+                (temp_target_dir / "catalog_cache.json").write_text(json.dumps(catalog, ensure_ascii=False, indent=2), encoding="utf-8")
 
-                if final_target.exists():
-                    backup = self.base_dir / (".previous-" + secrets.token_hex(8))
-                    final_target.rename(backup)
-                try:
-                    target_dir.rename(final_target)
-                    self._update_session_index(target_session_id, target_dir_name)
-                    published = True
-                except Exception:
-                    if final_target.exists():
-                        shutil.rmtree(final_target)
-                    if backup is not None:
-                        backup.rename(final_target)
-                        backup = None
-                    raise
-            finally:
                 if target_dir.exists():
                     shutil.rmtree(target_dir)
-                if published and backup is not None and backup.exists():
-                    shutil.rmtree(backup)
+                temp_target_dir.rename(target_dir)
+            except Exception as e:
+                if temp_target_dir.exists():
+                    shutil.rmtree(temp_target_dir, ignore_errors=True)
+                raise AdapterError("MATERIAL_CLONE_FAILED", "复用资料失败，未能建立演示文稿资料副本。", status_code=500) from e
 
-            self._memory_catalogs[target_session_id] = catalog
-            return catalog
-
-    def get_catalog(self, session_id: str) -> dict:
-        with self._lock:
-            if session_id in self._memory_catalogs:
-                return self._memory_catalogs[session_id]
-            d = self._get_dir_for_session(session_id)
-            if not d:
-                return {
-                    "documentSessionId": session_id,
-                    "totalDocuments": 0,
-                    "totalCharacters": 0,
-                    "totalTableCells": 0,
-                    "characterCountMethod": CHARACTER_COUNT_METHOD,
-                    "documents": [],
-                    "toc": [],
-                    "blocks": [],
-                    "fragmentsList": [],
-                    "fragments": {},
-                }
-            cache_file = d / "catalog_cache.json"
-            if cache_file.exists():
-                try:
-                    cat = json.loads(cache_file.read_text(encoding="utf-8"))
-                    self._memory_catalogs[session_id] = cat
-                    return cat
-                except Exception:
-                    pass
-            m_file = d / "manifest.json"
-            if m_file.exists():
-                try:
-                    manifest = json.loads(m_file.read_text(encoding="utf-8"))
-                    cat = {
-                        "documentSessionId": session_id,
-                        "totalDocuments": manifest.get("totalDocuments", 0),
-                        "totalCharacters": manifest.get("totalCharacters", 0),
-                        "totalTableCells": manifest.get("totalTableCells", 0),
-                        "characterCountMethod": CHARACTER_COUNT_METHOD,
-                        "documents": manifest.get("documents", []),
-                        "toc": [],
-                        "blocks": [],
-                        "fragmentsList": [],
-                        "fragments": {},
-                    }
-                    self._memory_catalogs[session_id] = cat
-                    return cat
-                except Exception:
-                    pass
-            return {
-                "documentSessionId": session_id,
-                "totalDocuments": 0,
-                "totalCharacters": 0,
-                "totalTableCells": 0,
-                "characterCountMethod": CHARACTER_COUNT_METHOD,
-                "documents": [],
-                "toc": [],
-                "blocks": [],
-                "fragmentsList": [],
-                "fragments": {},
-            }
+            self._update_session_index(target_session_id, target_dir_name)
+            self._memory_catalogs.pop(target_session_id, None)
+            return self.get_catalog(target_session_id)
 
     def import_material(
         self,
@@ -387,6 +332,9 @@ class ExcelMaterialStore:
         file_name: str,
         content_base64: str,
     ) -> dict:
+        if not session_id:
+            raise AdapterError("REQUEST_VALIDATION_FAILED", "缺少有效演示文稿会话编号。", status_code=422)
+
         with self._lock:
             self._check_busy(session_id)
             content = _decode_upload(content_base64)
@@ -433,6 +381,7 @@ class ExcelMaterialStore:
                 "materialId": material_id,
                 "fileName": file_name,
                 "fileSha256": hashlib.sha256(content).hexdigest(),
+                "characterCount": char_count,
                 "readableCharacterCount": char_count,
                 "blocksCount": len(reading["blocks"]),
                 "fragmentsCount": len(reading["fragments"]),
@@ -443,13 +392,12 @@ class ExcelMaterialStore:
             catalog["documents"].append(doc_entry)
             catalog["totalDocuments"] = len(catalog["documents"])
             catalog["totalCharacters"] += char_count
-            catalog["totalTableCells"] += reading["limits"].get("extractedTableCells", 0)
+            catalog["totalTableCells"] = catalog.get("totalTableCells", 0) + reading["limits"].get("extractedTableCells", 0)
             catalog["blocks"].extend(reading["blocks"])
             catalog["fragmentsList"].extend(reading["fragments"])
             for frag in reading["fragments"]:
                 catalog["fragments"][str(frag["fragmentId"])] = frag
 
-            # Save on disk
             dir_name = self._resolve_dir_name(session_id, doc_identity)
             d = self._get_dir_for_session(session_id) or self.base_dir / dir_name
             dir_name = d.name
@@ -464,6 +412,7 @@ class ExcelMaterialStore:
             view = {
                 "materialId": material_id,
                 "fileName": file_name,
+                "characterCount": char_count,
                 "readableCharacterCount": char_count,
                 "blocks": reading["blocks"],
                 "fragments": reading["fragments"],
@@ -479,7 +428,7 @@ class ExcelMaterialStore:
                 "documentIdentity": doc_identity,
                 "totalDocuments": catalog["totalDocuments"],
                 "totalCharacters": catalog["totalCharacters"],
-                "totalTableCells": catalog["totalTableCells"],
+                "totalTableCells": catalog.get("totalTableCells", 0),
                 "updatedAt": now_iso,
                 "documents": catalog["documents"],
             }
@@ -496,6 +445,11 @@ class ExcelMaterialStore:
         file_name: str,
         content_base64: str,
     ) -> dict:
+        if not session_id:
+            raise AdapterError("REQUEST_VALIDATION_FAILED", "缺少有效演示文稿会话编号。", status_code=422)
+        if not material_id:
+            raise AdapterError("REQUEST_VALIDATION_FAILED", "缺少资料编号。", status_code=422)
+
         with self._lock:
             self._check_busy(session_id)
             content = _decode_upload(content_base64)
@@ -543,13 +497,13 @@ class ExcelMaterialStore:
             old_cells = old_doc.get("tableCellsCount", old_doc.get("extractedTableCells", 0))
             old_doc["fileName"] = file_name
             old_doc["fileSha256"] = hashlib.sha256(content).hexdigest()
+            old_doc["characterCount"] = char_count
             old_doc["readableCharacterCount"] = char_count
             old_doc["blocksCount"] = len(reading["blocks"])
             old_doc["fragmentsCount"] = len(reading["fragments"])
             old_doc["tableCellsCount"] = reading["limits"].get("extractedTableCells", 0)
             old_doc["updatedAt"] = now_iso
 
-            # Rebuild blocks and fragments
             catalog["blocks"] = [b for b in catalog.get("blocks", []) if b.get("materialId") != material_id] + reading["blocks"]
             catalog["fragmentsList"] = [f for f in catalog.get("fragmentsList", []) if f.get("materialId") != material_id] + reading["fragments"]
             catalog["fragments"] = {k: v for k, v in catalog.get("fragments", {}).items() if v.get("materialId") != material_id}
@@ -559,7 +513,6 @@ class ExcelMaterialStore:
             catalog["totalCharacters"] = new_total
             catalog["totalDocuments"] = len(catalog["documents"])
 
-            # Write to disk
             d = self._get_dir_for_session(session_id)
             if not d:
                 d = self.base_dir / self._resolve_dir_name(session_id)
@@ -573,6 +526,7 @@ class ExcelMaterialStore:
             view = {
                 "materialId": material_id,
                 "fileName": file_name,
+                "characterCount": char_count,
                 "readableCharacterCount": char_count,
                 "blocks": reading["blocks"],
                 "fragments": reading["fragments"],
@@ -602,6 +556,11 @@ class ExcelMaterialStore:
             return view
 
     def delete_material(self, session_id: str, material_id: str) -> dict:
+        if not session_id:
+            raise AdapterError("REQUEST_VALIDATION_FAILED", "缺少有效演示文稿会话编号。", status_code=422)
+        if not material_id:
+            raise AdapterError("REQUEST_VALIDATION_FAILED", "缺少资料编号。", status_code=422)
+
         with self._lock:
             self._check_busy(session_id)
             catalog = self.get_catalog(session_id)
@@ -639,10 +598,31 @@ class ExcelMaterialStore:
 
             self._memory_catalogs[session_id] = catalog
             return {
+                "deleted": True,
+                "materialId": material_id,
                 "totalDocuments": catalog["totalDocuments"],
                 "totalCharacters": catalog["totalCharacters"],
                 "catalogSummary": catalog,
             }
+
+    def get_catalog(self, session_id: str) -> dict:
+        if not session_id:
+            return self._empty_catalog("")
+        with self._lock:
+            if session_id in self._memory_catalogs:
+                return self._memory_catalogs[session_id]
+            session_dir = self._get_dir_for_session(session_id)
+            if not session_dir:
+                return self._empty_catalog(session_id)
+            cat_file = session_dir / "catalog_cache.json"
+            if cat_file.exists():
+                try:
+                    cat = json.loads(cat_file.read_text(encoding="utf-8"))
+                    self._memory_catalogs[session_id] = cat
+                    return cat
+                except Exception:
+                    pass
+            return self._empty_catalog(session_id)
 
     def bind_document(
         self,
@@ -650,18 +630,22 @@ class ExcelMaterialStore:
         new_session_id: str,
         new_doc_identity: str,
     ) -> dict:
+        if not old_session_id or not new_session_id:
+            raise AdapterError("REQUEST_VALIDATION_FAILED", "会话编号无效。", status_code=422)
+
         with self._lock:
             self._check_busy(old_session_id)
             self._check_busy(new_session_id)
             old_dir = self._get_dir_for_session(old_session_id)
             if not old_dir or not old_dir.exists():
                 raise AdapterError("MATERIAL_NOT_FOUND", "原会话不存在资料集，无法迁移。", status_code=404)
+
             new_dir_name = self._resolve_dir_name(new_session_id, new_doc_identity)
             new_dir = self.base_dir / new_dir_name
             if new_dir.exists() and new_dir != old_dir:
                 m_file = new_dir / "manifest.json"
                 if m_file.exists():
-                    raise AdapterError("DOCUMENT_IDENTITY_CONFLICT", "目标工作簿已存在资料集，无法迁移覆盖。", status_code=409)
+                    raise AdapterError("DOCUMENT_IDENTITY_CONFLICT", "目标演示文稿已存在资料集，无法迁移覆盖。", status_code=409)
             if new_dir != old_dir:
                 old_dir.rename(new_dir)
 
@@ -678,21 +662,37 @@ class ExcelMaterialStore:
             if c_file.exists():
                 catalog = json.loads(c_file.read_text(encoding="utf-8"))
                 catalog["documentSessionId"] = new_session_id
+                catalog["documentIdentity"] = new_doc_identity
+                catalog["updatedAt"] = now_iso
                 c_file.write_text(json.dumps(catalog, ensure_ascii=False, indent=2), encoding="utf-8")
 
-            for mat_file in (new_dir / "materials").glob("*.json"):
-                try:
-                    view = json.loads(mat_file.read_text(encoding="utf-8"))
-                    view["documentSessionId"] = new_session_id
-                    mat_file.write_text(json.dumps(view, ensure_ascii=False, indent=2), encoding="utf-8")
-                except Exception:
-                    pass
-
             self._update_session_index(new_session_id, new_dir_name)
-            self._memory_catalogs[new_session_id] = catalog
             self._memory_catalogs.pop(old_session_id, None)
-            return {
-                "totalDocuments": manifest.get("totalDocuments", 0),
-                "totalCharacters": manifest.get("totalCharacters", 0),
-                "catalogSummary": catalog,
-            }
+            self._memory_catalogs.pop(new_session_id, None)
+            return self.get_catalog(new_session_id)
+
+    def _empty_catalog(self, session_id: str) -> dict:
+        return {
+            "documentSessionId": session_id,
+            "documentIdentity": "",
+            "totalDocuments": 0,
+            "totalCharacters": 0,
+            "totalTableCells": 0,
+            "characterCountMethod": CHARACTER_COUNT_METHOD,
+            "documents": [],
+            "toc": [],
+            "blocks": [],
+            "fragmentsList": [],
+            "fragments": {},
+            "limits": {
+                "documentLimit": MATERIAL_IMPORT_MAX_DOCUMENTS,
+                "readableCharacterLimit": MATERIAL_IMPORT_MAX_READABLE_CHARACTERS,
+                "tableColumnLimit": MATERIAL_IMPORT_MAX_TABLE_COLUMNS,
+                "tableCellLimit": MATERIAL_IMPORT_MAX_TABLE_CELLS,
+                "productConfirmed": False,
+            },
+            "updatedAt": _updated_at(),
+        }
+
+
+ppt_material_store = PptMaterialStore()
