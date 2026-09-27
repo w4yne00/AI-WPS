@@ -51,6 +51,11 @@
       "version": "2026-09-27.1",
       "file": "word-material-composer.md",
       "sha256": "a892db540d7b89376248dbd89522b3f97d291a7f45f14e930edee57bac73a873"
+    },
+    "excel.material_ledger": {
+      "version": "2026-09-27.1",
+      "file": "excel-material-ledger.md",
+      "sha256": "8df7f228e21060c24e5563158350db4c1b82530c25ac2ac7c4fd86a36c134a5d"
     }
   },
   "stages": {
