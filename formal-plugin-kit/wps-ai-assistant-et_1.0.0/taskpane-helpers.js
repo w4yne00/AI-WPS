@@ -5557,9 +5557,51 @@
     return html;
   }
 
+  function readSelectionHeaders(appOrRange) {
+    if (!appOrRange) {
+      return [];
+    }
+    var range = appOrRange;
+    if (appOrRange.Selection) {
+      range = appOrRange.Selection;
+    } else if (appOrRange.ActiveCell && !appOrRange.Columns && !appOrRange.Cells) {
+      range = appOrRange.Selection || appOrRange.ActiveCell;
+    }
+    if (!range) {
+      return [];
+    }
+    var headers = [];
+    var columns = range.Columns;
+    var columnCount = columns ? Number(columns.Count || columns.count || 1) : 1;
+    var cells = range.Cells || range;
+    var col;
+    var cell;
+    var text;
+
+    for (col = 1; col <= columnCount; col += 1) {
+      try {
+        if (typeof cells.Item === "function") {
+          cell = cells.Item(1, col);
+        } else if (cells.item) {
+          cell = cells.item(1, col);
+        } else {
+          cell = cells;
+        }
+        text = cell ? String(cell.Text != null ? cell.Text : (cell.Value2 != null ? cell.Value2 : (cell.Value != null ? cell.Value : ""))).trim() : "";
+      } catch (e) {
+        text = "";
+      }
+      if (text) {
+        headers.push(text);
+      }
+    }
+    return headers;
+  }
+
   return {
     normalizeText: normalizeText,
     escapeHtml: escapeHtml,
+    readSelectionHeaders: readSelectionHeaders,
     renderMarkdown: renderMarkdown,
     buildExcelAnalysisMarkdown: buildExcelAnalysisMarkdown,
     presentExcelAnalysisResultView: presentExcelAnalysisResultView,

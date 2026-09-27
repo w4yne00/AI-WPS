@@ -6,6 +6,7 @@
           <button id="btnAiExcelAnalysis" label="智能分析" size="large" getImage="GetImage" onAction="OnAction" />
           <button id="btnAiExcelFormulaAssistant" label="公式助手" size="large" getImage="GetImage" onAction="OnAction" />
           <button id="btnAiExcelSmartFill" label="智能填写" size="large" getImage="GetImage" onAction="OnAction" />
+          <button id="btnAiExcelLedger" label="任务台账" size="large" getImage="GetImage" onAction="OnAction" />
           <button id="btnAiSettings" label="设置" size="large" getImage="GetImage" onAction="OnAction" />
         </group>
       </tab>

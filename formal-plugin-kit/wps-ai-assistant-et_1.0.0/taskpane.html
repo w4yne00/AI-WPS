@@ -76,11 +76,49 @@
             <p id="smart-fill-validation-line" class="field-hint" aria-live="polite"></p>
           </div>
 
+          <div id="excel-ledger-options" class="mode-block ledger-options" hidden>
+            <div class="ledger-source-strip" style="display: flex; justify-content: space-between; align-items: center;">
+              <span id="ledger-material-count-label" class="field-hint">未添加资料</span>
+              <div class="ledger-source-actions">
+                <button id="btn-import-ledger-material" class="ghost-action" type="button">导入资料</button>
+                <input id="excel-ledger-file-input" type="file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" style="display:none;" />
+              </div>
+            </div>
+            <div id="ledger-reusable-section" class="ledger-reusable-section" style="margin-top: 8px;">
+              <label class="field" for="ledger-reusable-select">
+                <span>复用其他文档资料</span>
+                <select id="ledger-reusable-select">
+                  <option value="">-- 选择可复用资料 --</option>
+                </select>
+              </label>
+            </div>
+            <div class="ledger-headers-section" style="margin-top: 8px;">
+              <div class="ledger-headers-head" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                <span class="field-label" style="font-size: 13px; font-weight: 600;">台账表头列</span>
+                <button id="btn-read-selection-headers" class="text-action" type="button">从选区读取表头</button>
+              </div>
+              <div id="ledger-tag-chips" class="tag-input-container"></div>
+              <div class="tag-input-row" style="display: flex; gap: 6px; margin-top: 6px;">
+                <input id="ledger-new-tag-input" type="text" placeholder="输入列名并回车" style="flex: 1;" />
+                <button id="btn-add-ledger-tag" class="ghost-action" type="button">添加</button>
+              </div>
+            </div>
+            <label class="field" for="excel-ledger-instruction" style="margin-top: 8px;">
+              <span>提取要求</span>
+              <textarea id="excel-ledger-instruction" rows="3" placeholder="例如：提取所有任务计划、责任人和交付成果。"></textarea>
+            </label>
+            <label class="field" for="excel-ledger-user-facts" style="margin-top: 6px;">
+              <span>补充事实</span>
+              <textarea id="excel-ledger-user-facts" rows="2" placeholder="选填。补充资料未提及的最新背景或变更说明。"></textarea>
+            </label>
+          </div>
+
           <div class="button-cluster action-bar">
             <button id="btn-run-primary" type="button">生成分析报告</button>
             <button id="btn-cancel-excel-analysis-job" class="secondary-action" type="button" hidden>取消排队任务</button>
             <button id="btn-cancel-excel-formula-job" class="secondary-action" type="button" hidden>取消排队任务</button>
             <button id="btn-cancel-excel-smart-fill-job" class="secondary-action" type="button" hidden>取消任务</button>
+            <button id="btn-cancel-excel-ledger-job" class="secondary-action" type="button" hidden>取消台账任务</button>
             <button id="btn-resubmit-interrupted-job" class="secondary-action" type="button" hidden>重新提交分析</button>
             <button id="btn-resubmit-interrupted-formula-job" class="secondary-action" type="button" hidden>重新提交公式需求</button>
             <button id="btn-resubmit-interrupted-smart-fill-job" class="secondary-action" type="button" hidden>重新提交智能填写</button>
@@ -104,6 +142,25 @@
             </div>
           </div>
           <div id="result-output" class="markdown-output">等待运行。</div>
+          <div id="excel-ledger-result" class="excel-ledger-result" hidden>
+            <div class="ledger-result-toolbar" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+              <span id="ledger-result-meta" class="field-hint"></span>
+              <button id="btn-copy-ledger-tsv" class="ghost-action" type="button">复制表格 (TSV)</button>
+            </div>
+            <div class="ledger-table-scroll">
+              <table id="ledger-preview-table" class="ledger-table">
+                <thead></thead>
+                <tbody></tbody>
+              </table>
+            </div>
+            <div id="ledger-source-drawer" class="ledger-source-drawer" hidden>
+              <div class="drawer-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                <h4 id="drawer-title" style="margin: 0; font-size: 13px;">来源出处与证据</h4>
+                <button id="btn-close-drawer" class="icon-button" type="button" style="border:none; background:none; cursor:pointer; font-size:16px;">×</button>
+              </div>
+              <div id="drawer-content" class="drawer-content"></div>
+            </div>
+          </div>
           <details id="excel-formula-alternative" class="formula-alternative" hidden>
             <summary>备选公式（与主公式确有差异时显示）</summary>
             <pre><code id="excel-formula-alternative-code"></code></pre>
@@ -404,6 +461,7 @@
       </section>
     </div>
     <script src="./taskpane-helpers.js?v=0.23.1-alpha"></script>
+    <script src="./material-ledger.js?v=0.23.1-alpha"></script>
     <script src="./taskpane.js?v=0.23.1-alpha"></script>
   </body>
 </html>

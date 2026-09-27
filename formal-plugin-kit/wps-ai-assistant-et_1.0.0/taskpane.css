@@ -1885,6 +1885,141 @@ body[data-task-mode="excelSmartFill"] .icon-button {
   text-align: left;
 }
 
+/* Excel Material Ledger Styles */
+.ledger-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tag-input-container {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-height: 32px;
+  padding: 4px;
+  background: var(--surface-subtle, #f8fafc);
+  border: 1px solid var(--hairline, #e2e8f0);
+  border-radius: var(--radius-control, 4px);
+}
+
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #eef2f5;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 12px;
+  color: #24292f;
+}
+
+.tag-chip-remove {
+  background: none;
+  border: none;
+  padding: 0 2px;
+  font-size: 13px;
+  line-height: 1;
+  color: #666;
+  cursor: pointer;
+}
+
+.tag-chip-remove:hover {
+  color: #cf222e;
+}
+
+.excel-ledger-result {
+  margin-top: 10px;
+}
+
+.ledger-table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--hairline, #e2e8f0);
+  border-radius: var(--radius-control, 4px);
+  margin-top: 6px;
+}
+
+.ledger-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.ledger-table th,
+.ledger-table td {
+  border: 1px solid var(--hairline, #e2e8f0);
+  padding: 6px 8px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.ledger-table th {
+  background: var(--surface-subtle, #f8fafc);
+  font-weight: 600;
+  position: sticky;
+  top: 0;
+}
+
+.ledger-table tr.ledger-duplicate-row {
+  background: #fffbe6;
+}
+
+.ledger-table tr:hover {
+  background: #f1f5f9;
+  cursor: pointer;
+}
+
+.excel-ledger-missing-cell {
+  color: #8c8c8c;
+  font-style: italic;
+}
+
+.excel-ledger-duplicate-badge {
+  display: inline-block;
+  background: #faad14;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 4px;
+  border-radius: 3px;
+  margin-right: 4px;
+  cursor: help;
+}
+
+.ledger-source-drawer {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--hairline, #e2e8f0);
+  border-radius: var(--radius-card, 6px);
+  background: var(--surface-subtle, #f8fafc);
+}
+
+.citation-card {
+  margin-top: 8px;
+  padding: 8px;
+  background: #fff;
+  border: 1px solid var(--hairline, #e2e8f0);
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.citation-card .citation-source {
+  font-weight: 600;
+  color: #1f2328;
+  margin-bottom: 4px;
+}
+
+.citation-card .citation-quote {
+  color: #57606a;
+  border-left: 2px solid #0969da;
+  padding-left: 6px;
+  margin: 0;
+  font-size: 11px;
+}
+
 /* Shared restrained settings and interaction treatment. */
 .model-interface-card,
 .workflow-settings-card,
