@@ -2020,6 +2020,92 @@ body[data-task-mode="excelSmartFill"] .icon-button {
   font-size: 11px;
 }
 
+.ledger-write-section {
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid var(--hairline, #e2e8f0);
+  border-radius: var(--radius-card, 6px);
+  background: var(--surface-subtle, #f8fafc);
+}
+
+.ledger-write-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.ledger-write-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1f2328;
+}
+
+.ledger-include-headers-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: #57606a;
+  cursor: pointer;
+}
+
+.ledger-target-panel {
+  padding: 8px 10px;
+  background: #fff;
+  border: 1px solid var(--hairline, #e2e8f0);
+  border-radius: 4px;
+  margin-bottom: 10px;
+}
+
+.ledger-target-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+}
+
+.ledger-target-summary {
+  color: #1f2328;
+  font-weight: 500;
+}
+
+.ledger-target-validation {
+  margin-top: 4px;
+  font-size: 11px;
+}
+
+.ledger-target-validation.is-valid {
+  color: #1a7f37;
+}
+
+.ledger-target-validation.is-invalid {
+  color: #cf222e;
+}
+
+.ledger-write-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ledger-write-button {
+  width: 100%;
+}
+
+.ledger-write-status {
+  font-size: 11px;
+  text-align: center;
+}
+
+.ledger-write-status.is-success {
+  color: #1a7f37;
+}
+
+.ledger-write-status.is-error {
+  color: #cf222e;
+}
+
 /* Shared restrained settings and interaction treatment. */
 .model-interface-card,
 .workflow-settings-card,

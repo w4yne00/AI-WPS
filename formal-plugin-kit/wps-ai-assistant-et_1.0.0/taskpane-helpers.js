@@ -5598,10 +5598,344 @@
     return headers;
   }
 
+  function excelColNumberToLetters(colNum) {
+    var letters = "";
+    var temp = Number(colNum);
+    while (temp > 0) {
+      var rem = (temp - 1) % 26;
+      letters = String.fromCharCode(65 + rem) + letters;
+      temp = Math.floor((temp - 1) / 26);
+    }
+    return letters || "A";
+  }
+
+  function formatExcelA1Address(startRow, startCol, endRow, endCol) {
+    var startLetters = excelColNumberToLetters(startCol);
+    var endLetters = excelColNumberToLetters(endCol);
+    if (startRow === endRow && startCol === endCol) {
+      return startLetters + startRow;
+    }
+    return startLetters + startRow + ":" + endLetters + endRow;
+  }
+
+  function resolveExcelLedgerTargetRange(app, rowCount, colCount, options) {
+    if (!app) {
+      throw new Error("WPS 表格应用对象不可用。");
+    }
+    var rowsNeeded = Number(rowCount);
+    var colsNeeded = Number(colCount);
+    if (!rowsNeeded || rowsNeeded <= 0 || !colsNeeded || colsNeeded <= 0) {
+      throw new Error("台账所需行列数必须大于 0。");
+    }
+    var selection = app.Selection;
+    if (!selection) {
+      throw new Error("无法读取当前选区，请在工作表中选中目标区域或起始单元格。");
+    }
+    var startRow = Number(selection.Row || (selection.Cells && selection.Cells.Row) || 1);
+    var startCol = Number(selection.Column || (selection.Cells && selection.Cells.Column) || 1);
+    var selRows = Number((selection.Rows && (selection.Rows.Count != null ? selection.Rows.Count : selection.Rows.count)) || 1);
+    var selCols = Number((selection.Columns && (selection.Columns.Count != null ? selection.Columns.Count : selection.Columns.count)) || 1);
+
+    if (selRows > 1 || selCols > 1) {
+      if (selRows < rowsNeeded || selCols < colsNeeded) {
+        throw new Error("当前选区尺寸不足以容纳 " + rowsNeeded + " 行 " + colsNeeded + " 列台账，请扩大选区或仅选中起始单元格。");
+      }
+    }
+
+    var endRow = startRow + rowsNeeded - 1;
+    var endCol = startCol + colsNeeded - 1;
+    var activeSheet = app.ActiveSheet;
+    var sheetName = activeSheet && activeSheet.Name ? activeSheet.Name : "Sheet1";
+    var targetAddress = formatExcelA1Address(startRow, startCol, endRow, endCol);
+
+    return {
+      startRow: startRow,
+      startCol: startCol,
+      endRow: endRow,
+      endCol: endCol,
+      rowCount: rowsNeeded,
+      colCount: colsNeeded,
+      targetAddress: targetAddress,
+      sheetName: sheetName,
+      selectionRowCount: selRows,
+      selectionColCount: selCols,
+      workbookSessionId: getDocumentSessionId(app.ActiveWorkbook),
+      workbookName: app.ActiveWorkbook && app.ActiveWorkbook.Name
+    };
+  }
+
+  function validateExcelLedgerTargetBlank(app, targetRangeInfo, options) {
+    if (!app) {
+      throw new Error("WPS 表格应用对象不可用。");
+    }
+    var info = targetRangeInfo;
+    if (!info || !info.startRow || !info.startCol || !info.endRow || !info.endCol) {
+      throw new Error("目标区域定义不完整。");
+    }
+    var opts = options || {};
+
+    if (opts.documentSessionId) {
+      var currentSessionId = "";
+      var wb = app.ActiveWorkbook || (app.Application && app.Application.ActiveWorkbook) || app;
+      var sessionFromHelper = typeof getDocumentSessionId === "function" ? getDocumentSessionId(wb) : "";
+      if (opts.documentSessionId === sessionFromHelper) {
+        currentSessionId = sessionFromHelper;
+      } else if (wb && wb.wps_doc_session_id) {
+        currentSessionId = wb.wps_doc_session_id;
+      } else {
+        currentSessionId = sessionFromHelper;
+      }
+      if (currentSessionId && currentSessionId !== opts.documentSessionId) {
+        throw new Error("当前活动工作簿与台账生成工作簿不一致，已拒绝跨工作簿写入。");
+      }
+    }
+
+    var sheet = app.ActiveSheet;
+    if (!sheet) {
+      throw new Error("当前活动工作表不可用。");
+    }
+    if (info.sheetName && sheet.Name && sheet.Name !== info.sheetName) {
+      throw new Error("当前活动工作表（" + sheet.Name + "）与目标工作表（" + info.sheetName + "）不一致，已中止写入。");
+    }
+
+    var cells = [];
+    var r;
+    var c;
+    for (r = info.startRow; r <= info.endRow; r += 1) {
+      for (c = info.startCol; c <= info.endCol; c += 1) {
+        var cell = null;
+        if (sheet.Cells && typeof sheet.Cells.Item === "function") {
+          cell = sheet.Cells.Item(r, c);
+        } else if (typeof sheet.Cells === "function") {
+          cell = sheet.Cells(r, c);
+        } else if (sheet.Range && typeof sheet.Range === "function") {
+          cell = sheet.Range(r, c);
+        }
+        if (!cell) {
+          throw new Error("无法读取单元格 (" + r + ", " + c + ")，已停止写入。");
+        }
+        var cellAddress = formatExcelA1Address(r, c, r, c);
+
+        if (sheet.ProtectContents && cell.Locked) {
+          throw new Error("目标区域工作表受保护且单元格被锁定（" + cellAddress + "），已停止写入。");
+        }
+
+        var isMerged = Boolean(cell.MergeCells || cell.mergeCells);
+        if (isMerged) {
+          throw new Error("目标区域包含合并单元格（" + cellAddress + "），已停止写入。请选择完全空白且未合并的区域。");
+        }
+
+        var isRowHidden = cell.EntireRow && Boolean(cell.EntireRow.Hidden);
+        var isColHidden = cell.EntireColumn && Boolean(cell.EntireColumn.Hidden);
+        if (isRowHidden || isColHidden) {
+          throw new Error("目标区域包含隐藏行或隐藏列（" + cellAddress + "），已停止写入。");
+        }
+
+        var hasFormula = Boolean(cell.HasFormula || cell.Formula || cell.formula);
+        if (hasFormula) {
+          throw new Error("目标区域包含公式（" + cellAddress + "），已拒绝覆盖已有数据。");
+        }
+
+        var val = cell.Value2 !== undefined ? cell.Value2 : (cell.Value !== undefined ? cell.Value : null);
+        if (val !== null && val !== "" && typeof val !== "undefined") {
+          throw new Error("目标区域包含已有数据（" + cellAddress + " 包含内容），已拒绝覆盖。请选择完全空白的区域。");
+        }
+
+        cells.push({
+          row: r,
+          col: c,
+          address: cellAddress,
+          cell: cell
+        });
+      }
+    }
+
+    return {
+      valid: true,
+      targetAddress: info.targetAddress,
+      sheetName: info.sheetName,
+      cells: cells
+    };
+  }
+
+  function sanitizeExcelLedgerCellValue(val) {
+    if (val === null || typeof val === "undefined") {
+      return "";
+    }
+    if (typeof val === "number") {
+      return val;
+    }
+    var str = String(val);
+    if (!str) {
+      return "";
+    }
+    if (/^[=+\-@]/.test(str)) {
+      return "'" + str;
+    }
+    return str;
+  }
+
+  function excelLedgerCellValueMatches(cell, expected) {
+    var raw = readSmartFillPropertyState(cell, ["Value2", "Value"], false);
+    var formula = readSmartFillBooleanState(cell, ["HasFormula", "hasFormula"]);
+    if (!raw.known || (!raw.present && expected !== "") || !formula.known || formula.value === true) {
+      return false;
+    }
+    if (!formula.present) {
+      var formulaText = readSmartFillPropertyState(cell, ["Formula", "formula"], false);
+      if (!formulaText.known || String(formulaText.value || "").charAt(0) === "=") {
+        return false;
+      }
+    }
+    if (expected === "") {
+      return raw.value === null || raw.value === "" || typeof raw.value === "undefined";
+    }
+    return raw.value === expected || (typeof expected === "string" && /^'[=+\-@]/.test(expected) && raw.value === expected.slice(1));
+  }
+
+  function writeExcelMaterialLedger(app, result, options) {
+    if (!app) {
+      throw new Error("WPS 表格应用对象不可用。");
+    }
+    var res = result || {};
+    var rows = Array.isArray(res.rows) ? res.rows : [];
+    var headers = Array.isArray(res.headers) ? res.headers : [];
+    if (!rows.length || !headers.length) {
+      throw new Error("台账结果为空，无法执行写入。");
+    }
+    var opts = options || {};
+    var includeHeaders = opts.includeHeaders !== false;
+    var rowCount = rows.length + (includeHeaders ? 1 : 0);
+    var colCount = headers.length;
+
+    var rangeInfo = resolveExcelLedgerTargetRange(app, rowCount, colCount, opts);
+    if (opts.targetRangeInfo) {
+      var confirmed = opts.targetRangeInfo;
+      var targetFields = ["workbookSessionId", "sheetName", "startRow", "startCol", "endRow", "endCol", "selectionRowCount", "selectionColCount"];
+      if (targetFields.some(function (key) { return rangeInfo[key] !== confirmed[key]; })) {
+        throw new Error("目标工作簿、工作表或选区已变化，请重新检测目标并确认写入。");
+      }
+    }
+    var inspection = validateExcelLedgerTargetBlank(app, rangeInfo, opts);
+
+    var cellMap = {};
+    inspection.cells.forEach(function (c) {
+      cellMap[c.row + "," + c.col] = c;
+    });
+
+    var writePlans = [];
+    var curRow = rangeInfo.startRow;
+    var cIdx;
+    var rIdx;
+
+    if (includeHeaders) {
+      for (cIdx = 0; cIdx < headers.length; cIdx += 1) {
+        var hCol = rangeInfo.startCol + cIdx;
+        var hItem = cellMap[curRow + "," + hCol];
+        writePlans.push({
+          row: curRow,
+          col: hCol,
+          address: hItem ? hItem.address : formatExcelA1Address(curRow, hCol, curRow, hCol),
+          cell: hItem ? hItem.cell : null,
+          rawValue: headers[cIdx],
+          sanitizedValue: sanitizeExcelLedgerCellValue(headers[cIdx])
+        });
+      }
+      curRow += 1;
+    }
+
+    for (rIdx = 0; rIdx < rows.length; rIdx += 1) {
+      var rowData = rows[rIdx] || {};
+      var vals = rowData.values || {};
+      var missing = Array.isArray(rowData.missingFields) ? rowData.missingFields : [];
+
+      for (cIdx = 0; cIdx < headers.length; cIdx += 1) {
+        var colName = headers[cIdx];
+        var cellVal = vals[colName];
+        if (missing.indexOf(colName) >= 0 || cellVal === null || typeof cellVal === "undefined") {
+          cellVal = "";
+        }
+        var targetCol = rangeInfo.startCol + cIdx;
+        var cellItem = cellMap[curRow + "," + targetCol];
+        writePlans.push({
+          row: curRow,
+          col: targetCol,
+          address: cellItem ? cellItem.address : formatExcelA1Address(curRow, targetCol, curRow, targetCol),
+          cell: cellItem ? cellItem.cell : null,
+          rawValue: cellVal,
+          sanitizedValue: sanitizeExcelLedgerCellValue(cellVal)
+        });
+      }
+      curRow += 1;
+    }
+
+    var writtenList = [];
+    try {
+      writePlans.forEach(function (plan) {
+        if (!plan.cell) {
+          throw new Error("单元格不可用：" + plan.address);
+        }
+        var entry = {
+          cell: plan.cell,
+          address: plan.address,
+          previousValue: ""
+        };
+        writtenList.push(entry);
+        plan.cell.Value2 = plan.sanitizedValue;
+        if (!excelLedgerCellValueMatches(plan.cell, plan.sanitizedValue)) {
+          throw new Error("写回后未能核对目标地址 " + plan.address + "。");
+        }
+      });
+    } catch (writeErr) {
+      var rollbackFailures = [];
+      writtenList.slice().reverse().forEach(function (entry) {
+        try {
+          if (excelLedgerCellValueMatches(entry.cell, "")) {
+            return;
+          }
+          entry.cell.Value2 = "";
+          if (!excelLedgerCellValueMatches(entry.cell, "")) {
+            rollbackFailures.push(entry.address);
+          }
+        } catch (rbErr) {
+          rollbackFailures.push(entry.address);
+        }
+      });
+
+      var compErr;
+      if (rollbackFailures.length > 0) {
+        compErr = new Error("台账写入失败，且部分单元格无法自动恢复空白，需要人工核对：" + rollbackFailures.join("、"));
+        compErr.code = "COMPENSATION_FAILED";
+        compErr.rollbackFailures = rollbackFailures;
+        compErr.cause = writeErr;
+        throw compErr;
+      } else {
+        compErr = new Error("台账写入失败，已成功将已写入单元格恢复为空白。" + (writeErr && writeErr.message ? " " + writeErr.message : ""));
+        compErr.code = "COMPENSATION_SUCCEEDED";
+        compErr.rollbackFailures = [];
+        compErr.cause = writeErr;
+        throw compErr;
+      }
+    }
+
+    return {
+      success: true,
+      writtenCount: writePlans.length,
+      targetAddress: rangeInfo.targetAddress,
+      sheetName: rangeInfo.sheetName,
+      includeHeaders: includeHeaders
+    };
+  }
+
   return {
     normalizeText: normalizeText,
     escapeHtml: escapeHtml,
     readSelectionHeaders: readSelectionHeaders,
+    resolveExcelLedgerTargetRange: resolveExcelLedgerTargetRange,
+    validateExcelLedgerTargetBlank: validateExcelLedgerTargetBlank,
+    sanitizeExcelLedgerCellValue: sanitizeExcelLedgerCellValue,
+    writeExcelMaterialLedger: writeExcelMaterialLedger,
+
     renderMarkdown: renderMarkdown,
     buildExcelAnalysisMarkdown: buildExcelAnalysisMarkdown,
     presentExcelAnalysisResultView: presentExcelAnalysisResultView,

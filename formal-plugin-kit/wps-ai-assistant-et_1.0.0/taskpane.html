@@ -163,6 +163,26 @@
               </div>
               <div id="drawer-content" class="drawer-content"></div>
             </div>
+            <div id="ledger-write-section" class="ledger-write-section" hidden>
+              <div class="ledger-write-header">
+                <span class="ledger-write-title">写入工作表</span>
+                <label class="ledger-include-headers-label">
+                  <input type="checkbox" id="ledger-include-headers-toggle" checked />
+                  <span>包含表头行</span>
+                </label>
+              </div>
+              <div class="ledger-target-panel">
+                <div class="ledger-target-info">
+                  <span id="ledger-target-summary" class="ledger-target-summary">目标位置：未检测到选区</span>
+                  <button id="btn-refresh-ledger-target" class="ghost-action text-action" type="button" title="重新检测当前选区空白状态">检测选区</button>
+                </div>
+                <div id="ledger-target-validation" class="ledger-target-validation"></div>
+              </div>
+              <div class="ledger-write-actions">
+                <button id="btn-write-ledger" class="primary-button ledger-write-button" type="button" disabled>确认写入工作表</button>
+                <div id="ledger-write-status" class="ledger-write-status" aria-live="polite"></div>
+              </div>
+            </div>
           </div>
           <details id="excel-formula-alternative" class="formula-alternative" hidden>
             <summary>备选公式（与主公式确有差异时显示）</summary>
