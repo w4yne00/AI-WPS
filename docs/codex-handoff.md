@@ -1,5 +1,34 @@
 # Codex Handoff - AI-WPS
 
+## Issue #236：Excel：从资料生成任务台账预览（2026-09-27）
+
+- **功能目标**：在 Excel 宿主中，根据用户自定义或选区提取的表头列名，从导入或复用的 DOCX 资料中抽取 1 行 1 任务的任务台账预览，核对出处、标出缺项，并标记疑似重复行（不合并），且在预览阶段严格保持 0 单元格写入。
+- **资料管理与跨文档复用 (`ExcelMaterialStore`)**：
+  - 在 `excel_materials/<会话目录>/` 下持久化原始 DOCX 副本（`files/{materialId}.docx`）、单份抽取详情（`materials/{materialId}.json`）、资料清单（`manifest.json`）与目录缓存（`catalog_cache.json`）；
+  - 支持单文档独立资料上传、更新与删除，以及跨文档资料集深拷贝克隆（`POST /excel/materials/clone-source`）；克隆后目标文档享有完全独立副本，源文档资料变更不影响目标文档；
+  - 提供可复用资料源发现接口 `GET /excel/materials/reusable-sources`，自动汇总已有文档的资料包及字数统计。
+- **任务协调与模型提示 (`ExcelMaterialLedgerCoordinator` & `excel-material-ledger.md`)**：
+  - 基于提示词规范 `system_prompts/excel-material-ledger.md`，输出严格 JSON 台账结构（`taskItems`、`headers`、`citations`、`missingFields`、`isDuplicate`、`duplicateOfIndex`、`duplicateReason`）；
+  - 严格防御模型幻觉：仅允许从真实出处抽取，无出处内容明确标为缺项，杜绝虚构或伪造；
+  - 疑似重复保留原则：即便语义高度相似，只要原资料作为不同事项提及，均分别保留为独立行，仅标记 `isDuplicate: true` 并指明疑似重复的行索引与比对原因，严禁静默合一行；
+  - 支持长任务生命周期与排队互斥：若当前会话资料正在变更或台账正在生成，返回 409 `MATERIAL_COMPOSER_BUSY`；支持实时取消（释放协调器槽位与并发锁）。
+- **双运行时对等与接口门禁**：
+  - FastAPI 与 Standalone Adapter 对等实现全套接口：
+    - 资料管理：`GET /excel/materials/reusable-sources`、`POST /excel/materials/clone-source`、`GET /excel/materials/catalog`、`POST /excel/materials`、`PUT /excel/materials/{id}`、`DELETE /excel/materials/{id}`、`POST /excel/materials/bind-document`；
+    - 台账任务：`POST /excel/material-ledger/jobs`、`GET /excel/material-ledger/jobs/{job_id}`、`POST /excel/material-ledger/jobs/{job_id}/cancel`；
+  - 全部 POST 入口前置 64 KiB 请求体大小门禁；
+  - 模型接入继承现有 direct_model / workflow 统一配置体系，`TASK_API_KEY_DEFS` 增加 `excel.material_ledger`。
+- **正式插件窗格与纯预览只读保证 (`formal-plugin-kit/wps-ai-assistant-et_1.0.0`)**：
+  - Ribbon XML 与 JS 新增「任务台账」按钮（`btnAiExcelLedger`），映射至 `excelLedger` 模式；
+  - 表头列管理：推荐表头（`工作事项`、`责任部门`、`完成时间`、`交付物验收`）标签芯片化展示，支持动态增删，支持「从选区读取表头」（`helpers.readSelectionHeaders`）；
+  - 资料管理与复用：展示资料份数与总字数，支持文件导入与下拉复用其他文档资料；
+  - 只读预览表格：渲染动态表头与台账数据行；空缺字段显式呈现灰色斜体 `〔缺项〕`；疑似重复行高亮呈现警示徽标 `[疑似重复]` 并悬浮查看原因；点击任意行或出处按钮呼出侧边抽屉展开 DOCX 文件名、章节与物理原文引用；提供一键「复制表格 (TSV)」；
+  - **纯预览不变式**：整个生成与预览交互生命周期内，WPS 工作表单元格写操作严格为 0。
+- **全量验证结论**：
+  - 后端测试：Python 3.8.20 下 `adapter_service/tests/test_excel_*.py` 与 `test_word_material_*.py` 共 242 项测试全部通过；
+  - 插件契约测试：`formal-plugin-kit/tests/` 全量 385 项测试 100% 通过（含 7 项 `excel-material-ledger.test.js`、`layout-smoke.test.js`、`taskpane-experience-contract.test.js`）；
+  - 语法与静态检查：`compileall` 0 错误，`git diff --check` 0 警告。
+
 ## PR #246 审查修复（2026-09-27）
 
 - 删除回包直接刷新目录；更新、删除及导入的迟到成功或失败只影响发起会话。所有在途资料变更结束后重新读取服务端目录；核查中或查询失败时暂停草稿写回，预览、复制和明确的操作错误仍保留。
