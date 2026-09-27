@@ -63,6 +63,7 @@
           }
         }
         var catalogSummary = (saved && saved.catalogSummary) || { totalDocuments: 0, totalCharacters: 0, documents: [] };
+        var interruptedWrite = saved && (saved.writeStatus === "writing" || saved.writeStatus === "interrupted");
         states[sessionId] = {
           documentSessionId: sessionId,
           headers: (saved && Array.isArray(saved.headers) && saved.headers.length) ? saved.headers.slice() : DEFAULT_LEDGER_HEADERS.slice(),
@@ -87,9 +88,9 @@
           includeHeaders: (saved && typeof saved.includeHeaders === "boolean") ? saved.includeHeaders : true,
           targetRangeInfo: null,
           writing: false,
-          writeStatus: "",
-          writeError: "",
-          writeReport: null,
+          writeStatus: interruptedWrite ? "interrupted" : (saved && saved.writeReport && saved.writeReport.success ? "success" : ""),
+          writeError: interruptedWrite ? "上次写入的完成状态未能确认，请先核对工作表，再重新生成台账。" : "",
+          writeReport: (saved && saved.writeReport) || null,
           partialWriteAddresses: []
         };
       }
@@ -100,7 +101,7 @@
       return stateFor(getSessionId());
     }
 
-    function persist(s) {
+    function persist(s, requireSaved) {
       try {
         storage.setItem("excel.material-ledger:" + s.documentSessionId, JSON.stringify({
           headers: s.headers,
@@ -115,9 +116,12 @@
           phase: s.phase,
           error: s.error,
           pendingRequest: s.pendingRequest,
-          includeHeaders: s.includeHeaders
+          includeHeaders: s.includeHeaders,
+          writeReport: s.writeReport,
+          writeStatus: s.writeStatus
         }));
       } catch (e) {
+        if (requireSaved) throw e;
         // Storage might fail in sandboxed iframe
       }
     }
@@ -388,6 +392,7 @@
       s.phase = job.phase || job.status;
       s.busy = job.status === "running" || job.status === "queued";
       if (job.status === "completed") {
+        resetLedgerWriteState(s);
         s.result = job.result;
         s.error = "";
       } else if (job.status === "failed") {
@@ -434,6 +439,7 @@
       s.phase = "preparing";
       s.error = "";
       s.result = null;
+      resetLedgerWriteState(s);
       s.busy = true;
       persist(s);
       notify(s);
@@ -553,9 +559,24 @@
       notify(s);
     }
 
+    function resetLedgerWriteState(s) {
+      s.targetRangeInfo = null;
+      s.writing = false;
+      s.writeStatus = "";
+      s.writeError = "";
+      s.writeReport = null;
+      s.partialWriteAddresses = [];
+    }
+
     function setIncludeHeaders(val) {
       var s = current();
+      if ((s.writeReport && s.writeReport.success) || s.writeStatus === "interrupted") {
+        notify(s);
+        return s.includeHeaders;
+      }
       s.includeHeaders = Boolean(val);
+      s.targetRangeInfo = null;
+      s.writeStatus = "";
       persist(s);
       notify(s);
       return s.includeHeaders;
@@ -563,6 +584,14 @@
 
     function inspectTargetRange(app) {
       var s = current();
+      if (s.writeStatus === "interrupted") {
+        notify(s);
+        return { valid: false, error: s.writeError };
+      }
+      if (s.writeReport && s.writeReport.success) {
+        notify(s);
+        return { valid: false, error: "本次台账已完成写入，请生成新台账。" };
+      }
       var h = opts.helpers || (typeof window !== "undefined" && window.WpsAiAssistantHelpers) || (typeof globalThis !== "undefined" && globalThis.WpsAiAssistantHelpers) || {};
       if (!s.result || !Array.isArray(s.result.rows) || !s.result.rows.length) {
         s.targetRangeInfo = null;
@@ -600,8 +629,17 @@
       if (s.status !== "completed" || !s.result || !Array.isArray(s.result.rows) || !s.result.rows.length) {
         throw new Error("没有可写入的已完成台账");
       }
+      if (s.writeReport && s.writeReport.success) {
+        return s.writeReport;
+      }
+      if (s.writeStatus === "interrupted") {
+        throw new Error(s.writeError);
+      }
       if (s.writing) {
         return s.writeReport;
+      }
+      if (!s.targetRangeInfo) {
+        throw new Error("请先检测并确认目标区域。");
       }
       var h = opts.helpers || (typeof window !== "undefined" && window.WpsAiAssistantHelpers) || (typeof globalThis !== "undefined" && globalThis.WpsAiAssistantHelpers) || {};
       s.writing = true;
@@ -611,15 +649,26 @@
         if (typeof h.writeExcelMaterialLedger !== "function") {
           throw new Error("写入辅助函数不可用");
         }
+        try {
+          persist(s, true);
+        } catch (storageErr) {
+          throw new Error("无法保存台账写入状态，本次未执行写入，请检查窗格存储后重试。");
+        }
         var report = h.writeExcelMaterialLedger(app, s.result, {
           includeHeaders: s.includeHeaders,
-          documentSessionId: s.documentSessionId
+          documentSessionId: s.documentSessionId,
+          targetRangeInfo: s.targetRangeInfo
         });
         s.writing = false;
         s.writeStatus = "success";
         s.writeError = "";
         s.partialWriteAddresses = [];
         s.writeReport = report;
+        try {
+          persist(s, true);
+        } catch (storageErr) {
+          report.persistenceWarning = "完成状态未能保存；重开窗格后请先核对工作表，再重新生成台账。";
+        }
         notify(s);
         return report;
       } catch (err) {
@@ -627,6 +676,11 @@
         s.writeStatus = "error";
         s.writeError = (err && err.message) || "写入失败，请检查工作表";
         s.partialWriteAddresses = (err && err.rollbackFailures) || [];
+        try {
+          persist(s, true);
+        } catch (storageErr) {
+          s.writeError += " 写入状态未能保存，重开窗格后需先核对工作表。";
+        }
         notify(s);
         throw err;
       }

@@ -100,6 +100,8 @@ $$N = R + (\text{includeHeaders} ? 1 : 0)$$
    }
    ```
 
+   实际接口 `inspectTargetRange(app)` 保存 `targetRangeInfo`，除目标矩形和工作表名外，保存 `workbookSessionId`、`workbookName`、`selectionRowCount`、`selectionColCount`。`writeToSheet(app)` 必须先有该检测结果，并将其传给 `writeExcelMaterialLedger(app, result, { targetRangeInfo, documentSessionId, includeHeaders })`；执行前逐项比较当前身份、位置及选区尺寸，变化时拒绝写入，不能自动改用当前选区。
+
 ---
 
 ## 4. 数据映射与防注入规范
@@ -269,6 +271,10 @@ catch (error) {
      - 按钮进入 disabled 并提示“正在写入工作表...”；
      - 重新执行一次原子空白预检，随后执行写入管道；
      - 成功后：展示成功反馈“✓ 已成功新增 N 条记录至 <工作表名>!<地址>”，更新按钮为“已完成写入”，不重复执行。
+
+   完成报告与当前结果一同保存；检测选区、表头切换和重开窗格均不能重新开放同一结果的写入。新生成结果清除旧检测和完成报告，需重新检测并确认目标。
+
+   物理写入前必须成功保存处理中状态；保存失败时不写入。完成报告若未能保存，当前窗格明确提示，重开后恢复为待核对状态并暂停写入，用户核对工作表后重新生成。该状态只用于现有台账结果的写入恢复。
 
 ---
 

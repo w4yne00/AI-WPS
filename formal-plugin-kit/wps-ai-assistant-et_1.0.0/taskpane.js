@@ -3562,9 +3562,10 @@
       var writeStatusEl = byId("ledger-write-status");
       if (writeStatusEl) {
         if (view.writeStatus === "success" && view.writeReport) {
-          writeStatusEl.textContent = "成功写入 " + view.writeReport.writtenCount + " 个单元格至 " + view.writeReport.targetAddress;
+          writeStatusEl.textContent = "成功写入 " + view.writeReport.writtenCount + " 个单元格至 " + view.writeReport.targetAddress +
+            (view.writeReport.persistenceWarning ? "；" + view.writeReport.persistenceWarning : "");
           writeStatusEl.className = "ledger-write-status is-success";
-        } else if (view.writeStatus === "error" && view.writeError) {
+        } else if ((view.writeStatus === "error" || view.writeStatus === "interrupted") && view.writeError) {
           writeStatusEl.textContent = view.writeError;
           writeStatusEl.className = "ledger-write-status is-error";
         } else {
@@ -8667,7 +8668,7 @@
         var s = ctrl.getState();
         if (!s || !s.targetRangeInfo) return;
         var app = typeof getEtApplication === "function" ? getEtApplication() : (window.Application || null);
-        var wbName = (app && app.ActiveWorkbook && app.ActiveWorkbook.Name) || "当前工作簿";
+        var wbName = s.targetRangeInfo.workbookName || "当前工作簿";
         var sheetName = s.targetRangeInfo.sheetName || "当前工作表";
         var address = s.targetRangeInfo.targetAddress;
         var rowCount = s.targetRangeInfo.rowCount;

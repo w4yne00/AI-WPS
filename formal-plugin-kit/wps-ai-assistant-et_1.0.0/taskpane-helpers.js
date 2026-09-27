@@ -5656,7 +5656,11 @@
       rowCount: rowsNeeded,
       colCount: colsNeeded,
       targetAddress: targetAddress,
-      sheetName: sheetName
+      sheetName: sheetName,
+      selectionRowCount: selRows,
+      selectionColCount: selCols,
+      workbookSessionId: getDocumentSessionId(app.ActiveWorkbook),
+      workbookName: app.ActiveWorkbook && app.ActiveWorkbook.Name
     };
   }
 
@@ -5771,6 +5775,24 @@
     return str;
   }
 
+  function excelLedgerCellValueMatches(cell, expected) {
+    var raw = readSmartFillPropertyState(cell, ["Value2", "Value"], false);
+    var formula = readSmartFillBooleanState(cell, ["HasFormula", "hasFormula"]);
+    if (!raw.known || (!raw.present && expected !== "") || !formula.known || formula.value === true) {
+      return false;
+    }
+    if (!formula.present) {
+      var formulaText = readSmartFillPropertyState(cell, ["Formula", "formula"], false);
+      if (!formulaText.known || String(formulaText.value || "").charAt(0) === "=") {
+        return false;
+      }
+    }
+    if (expected === "") {
+      return raw.value === null || raw.value === "" || typeof raw.value === "undefined";
+    }
+    return raw.value === expected || (typeof expected === "string" && /^'[=+\-@]/.test(expected) && raw.value === expected.slice(1));
+  }
+
   function writeExcelMaterialLedger(app, result, options) {
     if (!app) {
       throw new Error("WPS 表格应用对象不可用。");
@@ -5787,6 +5809,13 @@
     var colCount = headers.length;
 
     var rangeInfo = resolveExcelLedgerTargetRange(app, rowCount, colCount, opts);
+    if (opts.targetRangeInfo) {
+      var confirmed = opts.targetRangeInfo;
+      var targetFields = ["workbookSessionId", "sheetName", "startRow", "startCol", "endRow", "endCol", "selectionRowCount", "selectionColCount"];
+      if (targetFields.some(function (key) { return rangeInfo[key] !== confirmed[key]; })) {
+        throw new Error("目标工作簿、工作表或选区已变化，请重新检测目标并确认写入。");
+      }
+    }
     var inspection = validateExcelLedgerTargetBlank(app, rangeInfo, opts);
 
     var cellMap = {};
@@ -5851,16 +5880,21 @@
           address: plan.address,
           previousValue: ""
         };
-        plan.cell.Value2 = plan.sanitizedValue;
         writtenList.push(entry);
+        plan.cell.Value2 = plan.sanitizedValue;
+        if (!excelLedgerCellValueMatches(plan.cell, plan.sanitizedValue)) {
+          throw new Error("写回后未能核对目标地址 " + plan.address + "。");
+        }
       });
     } catch (writeErr) {
       var rollbackFailures = [];
       writtenList.slice().reverse().forEach(function (entry) {
         try {
+          if (excelLedgerCellValueMatches(entry.cell, "")) {
+            return;
+          }
           entry.cell.Value2 = "";
-          var afterVal = entry.cell.Value2;
-          if (afterVal !== null && afterVal !== "" && typeof afterVal !== "undefined") {
+          if (!excelLedgerCellValueMatches(entry.cell, "")) {
             rollbackFailures.push(entry.address);
           }
         } catch (rbErr) {

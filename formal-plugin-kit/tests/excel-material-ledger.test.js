@@ -914,6 +914,7 @@ test('ledger controller writeToSheet writes to sheet and updates writeStatus to 
   });
 
   const app = createMockGridApp({ selectionRow: 2, selectionCol: 1, selectionRowCount: 1, selectionColCount: 1 });
+  h.api.inspectTargetRange(app);
   const report = await h.api.writeToSheet(app);
   assert.strictEqual(report.success, true);
   assert.strictEqual(h.api.getState().writeStatus, 'success');
@@ -943,12 +944,235 @@ test('ledger controller writeToSheet updates writeStatus to error on write failu
     }
   });
 
+  h.api.inspectTargetRange(app);
   await assert.rejects(async () => {
     await h.api.writeToSheet(app);
   }, /写入失败/);
 
   assert.strictEqual(h.api.getState().writeStatus, 'error');
   assert.ok(h.api.getState().writeError.includes('写入失败'));
+});
+
+test('ledger review rejects selection, sheet and workbook changes after target confirmation', async () => {
+  for (const change of [
+    app => { app.Selection.Row = 10; },
+    app => { app.ActiveSheet.Name = 'Sheet2'; },
+    app => { app.Selection.Rows.Count = 3; },
+    app => { app.ActiveWorkbook.FullName = '/test/another.xlsx'; }
+  ]) {
+    const h = createTestHarness();
+    h.context.window.WpsAiAssistantHelpers = helpers;
+    h.api.setResult({ headers: ['工作事项'], rows: [{ values: { '工作事项': '任务1' } }] });
+    const app = createMockGridApp();
+    assert.equal(h.api.inspectTargetRange(app).valid, true);
+    change(app);
+    await assert.rejects(h.api.writeToSheet(app), /目标.*变化|工作簿.*不一致/);
+    assert.equal(app.getCellValue(2, 1), null);
+    assert.equal(app.getCellValue(10, 1), null);
+  }
+});
+
+test('ledger review requires inspecting a target before writing', async () => {
+  const h = createTestHarness();
+  h.context.window.WpsAiAssistantHelpers = helpers;
+  h.api.setResult({ headers: ['工作事项'], rows: [{ values: { '工作事项': '任务1' } }] });
+  const app = createMockGridApp();
+  await assert.rejects(h.api.writeToSheet(app), /检测.*目标/);
+  assert.equal(app.getCellValue(2, 1), null);
+});
+
+test('ledger review rechecks blank cells after target confirmation', async () => {
+  const h = createTestHarness();
+  h.context.window.WpsAiAssistantHelpers = helpers;
+  h.api.setResult({ headers: ['工作事项'], rows: [{ values: { '工作事项': '任务1' } }] });
+  const app = createMockGridApp();
+  assert.equal(h.api.inspectTargetRange(app).valid, true);
+  app.ActiveSheet.Cells.Item(3, 1).Value2 = '已有数据';
+  await assert.rejects(h.api.writeToSheet(app), /已有数据/);
+  assert.equal(app.getCellValue(2, 1), null);
+  assert.equal(app.getCellValue(3, 1), '已有数据');
+});
+
+test('ledger review restores a cell whose setter changes its value before throwing', () => {
+  const app = createMockGridApp();
+  const cell = app.ActiveSheet.Cells.Item(3, 1);
+  const original = Object.getOwnPropertyDescriptor(cell, 'Value2');
+  Object.defineProperty(cell, 'Value2', {
+    get: original.get,
+    set(value) {
+      original.set.call(cell, value);
+      if (value !== '') throw new Error('host changed value before failure');
+    }
+  });
+  assert.throws(() => helpers.writeExcelMaterialLedger(app, {
+    headers: ['工作事项'], rows: [{ values: { '工作事项': '任务1' } }]
+  }), err => err.code === 'COMPENSATION_SUCCEEDED');
+  assert.equal(app.getCellValue(2, 1), '');
+  assert.equal(app.getCellValue(3, 1), '');
+});
+
+test('ledger review reports the failed write cell when it cannot restore the changed value', () => {
+  const app = createMockGridApp();
+  const cell = app.ActiveSheet.Cells.Item(3, 1);
+  const original = Object.getOwnPropertyDescriptor(cell, 'Value2');
+  Object.defineProperty(cell, 'Value2', {
+    get: original.get,
+    set(value) {
+      if (value !== '') original.set.call(cell, value);
+      throw new Error('host cannot restore cell');
+    }
+  });
+  assert.throws(() => helpers.writeExcelMaterialLedger(app, {
+    headers: ['工作事项'], rows: [{ values: { '工作事项': '任务1' } }]
+  }), err => {
+    assert.equal(err.code, 'COMPENSATION_FAILED');
+    assert.deepEqual(err.rollbackFailures, ['A3']);
+    return true;
+  });
+  assert.equal(app.getCellValue(2, 1), '');
+  assert.equal(app.getCellValue(3, 1), '任务1');
+});
+
+for (const mode of ['ignored', 'converted', 'formula', 'unreadable']) {
+  test(`ledger review rejects ${mode} host writes and restores the target`, () => {
+    const app = createMockGridApp();
+    const cell = app.ActiveSheet.Cells.Item(3, 1);
+    const original = Object.getOwnPropertyDescriptor(cell, 'Value2');
+    let unreadable = false;
+    Object.defineProperty(cell, 'Value2', {
+      get() {
+        if (unreadable) throw new Error('host read failed');
+        return original.get.call(cell);
+      },
+      set(value) {
+        unreadable = mode === 'unreadable' && value !== '';
+        cell.HasFormula = mode === 'formula' && value !== '';
+        if (mode !== 'ignored') original.set.call(cell, mode === 'converted' && value !== '' ? 123 : value);
+      }
+    });
+    assert.throws(() => helpers.writeExcelMaterialLedger(app, {
+      headers: ['编号'], rows: [{ values: { '编号': '00123' } }]
+    }), err => {
+      assert.equal(err.code, 'COMPENSATION_SUCCEEDED');
+      assert.match(err.cause.message, /核对.*A3/);
+      return true;
+    });
+    assert.equal(app.getCellValue(2, 1), '');
+    assert.ok(app.getCellValue(3, 1) === '' || app.getCellValue(3, 1) === null);
+    assert.equal(cell.HasFormula, false);
+  });
+}
+
+test('ledger review accepts a host removing the text escape quote without creating a formula', () => {
+  const app = createMockGridApp();
+  const cell = app.ActiveSheet.Cells.Item(3, 1);
+  const original = Object.getOwnPropertyDescriptor(cell, 'Value2');
+  Object.defineProperty(cell, 'Value2', {
+    get: original.get,
+    set(value) {
+      const stored = value.startsWith("'") ? value.slice(1) : value;
+      original.set.call(cell, stored);
+      cell.Formula = stored;
+    }
+  });
+  const report = helpers.writeExcelMaterialLedger(app, {
+    headers: ['工作事项'], rows: [{ values: { '工作事项': '=SUM(A1:A10)' } }]
+  });
+  assert.equal(report.success, true);
+  assert.equal(app.getCellValue(3, 1), '=SUM(A1:A10)');
+  assert.equal(cell.HasFormula, false);
+});
+
+test('ledger review cannot reopen a completed result by inspecting another target or toggling headers', async () => {
+  const h = createTestHarness();
+  h.context.window.WpsAiAssistantHelpers = helpers;
+  h.api.setResult({ headers: ['工作事项'], rows: [{ values: { '工作事项': '任务1' } }] });
+  const app = createMockGridApp();
+  h.api.inspectTargetRange(app);
+  await h.api.writeToSheet(app);
+  app.Selection.Row = 10;
+  h.api.setIncludeHeaders(false);
+  h.api.inspectTargetRange(app);
+  assert.equal(h.api.getState().writeStatus, 'success');
+  const report = await h.api.writeToSheet(app);
+  assert.equal(report.targetAddress, 'A2:A3');
+  assert.equal(app.getCellValue(10, 1), null);
+});
+
+test('ledger review preserves completed write state after reopening the pane', async () => {
+  const storage = new Map();
+  const h = createTestHarness(storage);
+  h.context.window.WpsAiAssistantHelpers = helpers;
+  h.api.setResult({ headers: ['工作事项'], rows: [{ values: { '工作事项': '任务1' } }] });
+  const app = createMockGridApp();
+  h.api.inspectTargetRange(app);
+  await h.api.writeToSheet(app);
+  const restored = createTestHarness(storage);
+  restored.context.window.WpsAiAssistantHelpers = helpers;
+  app.Selection.Row = 10;
+  restored.api.inspectTargetRange(app);
+  assert.equal(restored.api.getState().writeStatus, 'success');
+  const report = await restored.api.writeToSheet(app);
+  assert.equal(report.targetAddress, 'A2:A3');
+  assert.equal(app.getCellValue(10, 1), null);
+});
+
+test('ledger review opens writing again for a newly generated result with a newly inspected target', async () => {
+  const h = createTestHarness();
+  h.context.window.WpsAiAssistantHelpers = helpers;
+  h.api.setResult({ headers: ['工作事项'], rows: [{ values: { '工作事项': '任务1' } }] });
+  const app = createMockGridApp();
+  h.api.inspectTargetRange(app);
+  await h.api.writeToSheet(app);
+  h.api.setResult({ headers: ['工作事项'], rows: [{ values: { '工作事项': '任务2' } }] });
+  assert.equal(h.api.getState().targetRangeInfo, null);
+  assert.equal(h.api.getState().writeReport, null);
+  app.Selection.Row = 10;
+  await assert.rejects(h.api.writeToSheet(app), /检测.*目标/);
+  assert.equal(h.api.inspectTargetRange(app).valid, true);
+  await h.api.writeToSheet(app);
+  assert.equal(app.getCellValue(11, 1), '任务2');
+  assert.equal(app.getCellValue(3, 1), '任务1');
+});
+
+test('ledger review blocks writing when the pending write state cannot be saved', async () => {
+  const h = createTestHarness();
+  h.context.window.WpsAiAssistantHelpers = helpers;
+  h.api.setResult({ headers: ['工作事项'], rows: [{ values: { '工作事项': '任务1' } }] });
+  const app = createMockGridApp();
+  h.api.inspectTargetRange(app);
+  h.storage.set = () => { throw new Error('QuotaExceededError'); };
+  await assert.rejects(h.api.writeToSheet(app), /保存.*未.*写入/);
+  assert.equal(app.getCellValue(2, 1), null);
+});
+
+test('ledger review pauses restored writing when the completion report could not be saved', async () => {
+  const storage = new Map();
+  const h = createTestHarness(storage);
+  h.context.window.WpsAiAssistantHelpers = helpers;
+  h.api.setResult({ headers: ['工作事项'], rows: [{ values: { '工作事项': '任务1' } }] });
+  const app = createMockGridApp();
+  h.api.inspectTargetRange(app);
+  const save = storage.set.bind(storage);
+  storage.set = (key, value) => {
+    if (JSON.parse(value).writeReport?.success) throw new Error('QuotaExceededError');
+    return save(key, value);
+  };
+  const report = await h.api.writeToSheet(app);
+  assert.equal(report.success, true);
+  assert.match(report.persistenceWarning, /完成状态.*保存/);
+  const restored = createTestHarness(storage);
+  restored.context.window.WpsAiAssistantHelpers = helpers;
+  app.Selection.Row = 10;
+  assert.equal(restored.api.inspectTargetRange(app).valid, false);
+  await assert.rejects(restored.api.writeToSheet(app), /上次.*核对/);
+  assert.equal(app.getCellValue(10, 1), null);
+  await restored.api.restore();
+  const reopened = createTestHarness(storage);
+  reopened.context.window.WpsAiAssistantHelpers = helpers;
+  assert.equal(reopened.api.inspectTargetRange(app).valid, false);
+  await assert.rejects(reopened.api.writeToSheet(app), /上次.*核对/);
+  assert.equal(app.getCellValue(10, 1), null);
 });
 
 test('ledger controller writeToSheet rejects when result is not completed', async () => {
@@ -1069,7 +1293,8 @@ test('real ledger pane writes ledger to worksheet cells upon confirmation and pr
 window.paneErrors=[];window.addEventListener('error',e=>paneErrors.push(e.message));
 window.confirmResult = false;
 window.confirmCalls = 0;
-window.confirm = function(msg) { window.confirmCalls++; return window.confirmResult; };
+window.confirmMessages = [];
+window.confirm = function(msg) { window.confirmCalls++; window.confirmMessages.push(msg); return window.confirmResult; };
 window.requests=[];window.cellWrites=0;
 var cellStore = {};
 function getCell(r, c) {
@@ -1141,9 +1366,21 @@ window.fetch=async function(url,options){
     assert.equal(run('eval', 'window.confirmCalls').trim(), '1');
     assert.equal(run('eval', 'window.cellWrites').trim(), '0');
     run('eval', 'window.confirmResult = true');
+    run('eval', "Application.Selection.Row = 10; Application.ActiveSheet.Name = 'Sheet2'");
+    run('click', '#btn-write-ledger');
+    run('wait', '--text', '目标工作簿、工作表或选区已变化');
+    assert.equal(run('eval', 'window.cellWrites').trim(), '0');
+    assert.equal(run('eval', "window.confirmMessages[1].includes('Sheet1') && window.confirmMessages[1].includes('A2:B3')").trim(), 'true');
+    run('click', '#btn-refresh-ledger-target');
+    run('wait', '--text', '可安全写入');
     run('click', '#btn-write-ledger');
     run('wait', '--text', '成功写入');
-    assert.equal(run('eval', 'window.confirmCalls').trim(), '2');
+    assert.equal(run('eval', 'window.confirmCalls').trim(), '3');
+    assert.equal(run('eval', 'window.cellWrites').trim(), '4');
+    assert.equal(run('eval', "getCell(2, 1).Value2 === '' && getCell(10, 1).Value2 === '工作事项' && getCell(11, 1).Value2 === '设备采购'").trim(), 'true');
+    run('eval', 'Application.Selection.Row = 20');
+    run('click', '#btn-refresh-ledger-target');
+    assert.equal(run('eval', "document.getElementById('btn-write-ledger').disabled").trim(), 'true');
     assert.equal(run('eval', 'window.cellWrites').trim(), '4');
     assert.equal(run('eval', 'JSON.stringify(window.paneErrors)').trim(), '"[]"');
   } finally {
