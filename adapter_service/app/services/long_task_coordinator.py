@@ -360,6 +360,27 @@ class LongTaskCoordinator:
         status_code = (safe_error_statuses or {}).get(code, 502)
         raise AdapterError(code, message, status_code=status_code)
 
+    def has_active_task(
+        self,
+        task_type: Optional[str] = None,
+        document_session_id: Optional[str] = None,
+    ) -> bool:
+        """Check if any non-terminal job matches task_type and document_session_id."""
+        now_mono = self._monotonic()
+        with self._lock:
+            self._cleanup_locked(now_mono)
+            for (jt_type, _), job in self._jobs.items():
+                if task_type and jt_type != task_type:
+                    continue
+                if job["status"] in TERMINAL_STATUSES or job.get("_authInvalidated"):
+                    continue
+                if document_session_id is not None:
+                    job_sid = job.get("_publicMetadata", {}).get("documentSessionId")
+                    if job_sid != document_session_id:
+                        continue
+                return True
+            return False
+
     def _append_event_locked(
         self,
         job: Dict,

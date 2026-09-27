@@ -14,6 +14,7 @@ from xml.etree import ElementTree
 
 from app.core.errors import AdapterError
 from app.core.runtime_paths import resolve_runtime_paths
+from app.services.long_task_coordinator import get_long_task_coordinator, LongTaskCoordinator
 from app.services.ppt.docx_security import (
     DOCX_MAX_PACKAGE_BYTES,
     DocxSecurityError,
@@ -333,11 +334,32 @@ class WordMaterialStore:
 
 
 class WordMaterialImportService:
-    def __init__(self, state_dir: Optional[Path] = None) -> None:
+    def __init__(
+        self,
+        state_dir: Optional[Path] = None,
+        coordinator: Optional[LongTaskCoordinator] = None,
+    ) -> None:
         self._materials = {}
         self._session_catalogs = {}
         self._import_lock = threading.Lock()
         self._store = WordMaterialStore(base_dir=state_dir)
+        self._coordinator = (
+            coordinator if coordinator is not None else get_long_task_coordinator()
+        )
+
+    def _check_composer_busy(self, session_id: Optional[str]) -> None:
+        if not session_id:
+            return
+        if self._coordinator is not None and hasattr(self._coordinator, "has_active_task"):
+            if self._coordinator.has_active_task(
+                task_type="word.material_composer",
+                document_session_id=session_id,
+            ):
+                raise AdapterError(
+                    "MATERIAL_COMPOSER_BUSY",
+                    "章节草稿正在生成中，请等待完成或取消任务后再更新/移除资料。",
+                    status_code=409,
+                )
 
     def clear(self, session_id: Optional[str] = None) -> None:
         with self._import_lock:
@@ -355,12 +377,13 @@ class WordMaterialImportService:
 
     def _import_material(self, request: dict) -> dict:
         payload = request or {}
-        file_name = str(payload.get("fileName") or payload.get("file_name") or "")
-        content = _decode_upload(payload.get("contentBase64") or payload.get("content_base64"))
-        _reject_wrong_type(file_name, str(payload.get("mimeType") or payload.get("mime_type") or ""))
         session_id = str(
             payload.get("documentSessionId") or payload.get("document_session_id") or ""
         ).strip()
+        self._check_composer_busy(session_id)
+        file_name = str(payload.get("fileName") or payload.get("file_name") or "")
+        content = _decode_upload(payload.get("contentBase64") or payload.get("content_base64"))
+        _reject_wrong_type(file_name, str(payload.get("mimeType") or payload.get("mime_type") or ""))
         doc_identity = str(
             payload.get("documentIdentity") or payload.get("document_identity") or ""
         ).strip()
@@ -576,9 +599,10 @@ class WordMaterialImportService:
             payload = request or {}
             old_sid = str(payload.get("oldDocumentSessionId") or payload.get("old_document_session_id") or "").strip()
             new_sid = str(payload.get("newDocumentSessionId") or payload.get("new_document_session_id") or "").strip()
-            new_ident = str(payload.get("newDocumentIdentity") or payload.get("new_document_identity") or "").strip()
             if not old_sid or not new_sid:
                 raise AdapterError("REQUEST_VALIDATION_FAILED", "迁移需提供旧文档会话编号与新文档会话编号。", status_code=422)
+            self._check_composer_busy(old_sid)
+            self._check_composer_busy(new_sid)
             summary = self._store.bind_document(old_sid, new_sid, new_ident)
             if old_sid in self._session_catalogs:
                 cat = self._session_catalogs.pop(old_sid)
@@ -617,6 +641,7 @@ class WordMaterialImportService:
                 status_code=404,
             )
         session_id = req_session_id or mat_session_id
+        self._check_composer_busy(session_id)
         doc_identity = str(
             payload.get("documentIdentity")
             or payload.get("document_identity")
@@ -826,6 +851,7 @@ class WordMaterialImportService:
                 status_code=404,
             )
         session_id = req_session_id or mat_session_id
+        self._check_composer_busy(session_id)
         session_cat = self.get_session_catalog(session_id) if session_id else None
 
         if session_cat and not any(d.get("materialId") == material_id for d in session_cat.get("documents", [])):

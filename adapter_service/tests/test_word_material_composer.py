@@ -1051,3 +1051,93 @@ def test_composer_flags_result_that_ignores_a_valid_conflict_choice():
     assert terminal['result']['conflictResolutions'][0]['topic'] == '项目预算'
     assert terminal['result']['conflictResolutions'][0]['chosenSource'] == '用户补充事实'
     assert any('500万元' in item and '600万元' in item for item in terminal['result']['unverifiedItems'])
+
+
+def test_material_composer_concurrency_mutex_and_basis_snapshot(tmp_path):
+    import threading
+    from app.core.errors import AdapterError
+    from app.services.long_task_coordinator import LongTaskCoordinator
+    from app.services.word.material_composer import MaterialComposerJobs
+    from app.services.word.material_import import WordMaterialImportService
+
+    state_dir = tmp_path / "state"
+    coordinator = LongTaskCoordinator()
+    materials = WordMaterialImportService(state_dir=state_dir, coordinator=coordinator)
+    session_id = "doc-session-mutex-1"
+
+    xml = ('<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+           '<w:body><w:p><w:pPr><w:outlineLvl w:val="0"/></w:pPr><w:r><w:t>第一章 概述</w:t></w:r></w:p>'
+           '<w:p><w:r><w:t>项目预算500万元。</w:t></w:r></w:p></w:body></w:document>')
+    payload = upload_payload(build_docx(document_xml=xml.encode('utf-8')), file_name="资料1.docx")
+    payload["documentSessionId"] = session_id
+    mat1 = materials.import_material(payload)
+    mid = mat1["materialId"]
+
+    jobs = MaterialComposerJobs(materials, coordinator=coordinator)
+
+    task_started = threading.Event()
+    can_finish = threading.Event()
+
+    def slow_post_task(*args, **kwargs):
+        task_started.set()
+        can_finish.wait(timeout=5)
+        frag_id = mat1["fragments"][0]["fragmentId"]
+        return {"answer": json.dumps({"paragraphs": [{"text": "项目预算500万元。", "fragmentIds": [frag_id], "missingItems": []}]})}
+
+    with patch('app.services.provider_client.ProviderClient.resolve_task_auth',
+               return_value={'providerBaseUrl': 'https://model.invalid', 'apiKey': 'test'}), \
+         patch('app.services.provider_client.ProviderClient.post_task', side_effect=slow_post_task):
+        job = jobs.start(
+            dict(documentSessionId=session_id, clientJobId='mutex-job-0001',
+                 sectionTitle='概述', instruction='编写'),
+            'mutex-trace'
+        )
+        assert task_started.wait(timeout=2)
+
+        # While running: import_material should raise 409 MATERIAL_COMPOSER_BUSY
+        imp_pl = upload_payload(build_docx(), file_name="新资料.docx")
+        imp_pl["documentSessionId"] = session_id
+        with pytest.raises(AdapterError) as exc_imp:
+            materials.import_material(imp_pl)
+        assert exc_imp.value.code == "MATERIAL_COMPOSER_BUSY"
+        assert exc_imp.value.status_code == 409
+
+        # While running: update_material should raise 409
+        upd_pl = upload_payload(build_docx(), file_name="更新.docx")
+        upd_pl["documentSessionId"] = session_id
+        with pytest.raises(AdapterError) as exc_upd:
+            materials.update_material(mid, upd_pl)
+        assert exc_upd.value.code == "MATERIAL_COMPOSER_BUSY"
+        assert exc_upd.value.status_code == 409
+
+        # While running: delete_material should raise 409
+        with pytest.raises(AdapterError) as exc_del:
+            materials.delete_material(mid, document_session_id=session_id)
+        assert exc_del.value.code == "MATERIAL_COMPOSER_BUSY"
+        assert exc_del.value.status_code == 409
+
+        # A different session is NOT blocked
+        other_payload = upload_payload(build_docx(), file_name="其他.docx")
+        other_payload["documentSessionId"] = "other-session"
+        other_mat = materials.import_material(other_payload)
+        assert other_mat["materialId"]
+
+        # Let the task finish
+        can_finish.set()
+        terminal = coordinator.wait(job['jobId'], task_type='word.material_composer')
+        assert terminal['status'] == 'completed', terminal
+
+    # Check basisMaterials and generatedAt in result
+    result = terminal['result']
+    assert 'basisMaterials' in result
+    assert len(result['basisMaterials']) == 1
+    assert result['basisMaterials'][0]['materialId'] == mid
+    assert result['basisMaterials'][0]['fileName'] == "资料1.docx"
+    assert 'updatedAt' in result['basisMaterials'][0]
+    assert 'generatedAt' in result
+
+    # After completion: update and delete are no longer blocked
+    upd_after = upload_payload(build_docx(document_xml=xml.encode('utf-8')), file_name="资料1_v2.docx")
+    upd_after["documentSessionId"] = session_id
+    upd_res = materials.update_material(mid, upd_after)
+    assert upd_res["materialId"] == mid

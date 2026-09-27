@@ -3,6 +3,7 @@ import json
 import re
 import threading
 from copy import deepcopy
+from datetime import datetime, timezone
 
 from app.core.errors import AdapterError
 from app.services.long_task_coordinator import get_long_task_coordinator, PRIORITY_INTERACTIVE
@@ -590,6 +591,15 @@ class MaterialComposerJobs:
         except (KeyError, TypeError, ValueError, IndexError) as exc:
             raise AdapterError('MATERIAL_COMPOSER_INVALID_RESULT', '模型结果缺少有效出处或缺项说明，已拒绝展示。', status_code=502) from exc
 
+        now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        basis_materials = []
+        for doc in catalog.get('documents', []):
+            basis_materials.append({
+                'materialId': doc.get('materialId'),
+                'fileName': doc.get('fileName'),
+                'updatedAt': doc.get('updatedAt') or doc.get('importedAt') or now_iso,
+            })
+
         return {
             'plainText': '\n\n'.join(p['text'] for p in result),
             'paragraphs': result,
@@ -598,5 +608,7 @@ class MaterialComposerJobs:
             'conflictResolutions': request.get('conflictResolutions', []),
             'userFacts': user_facts_raw,
             'taskType': TASK_TYPE,
-            'documentSessionId': request['documentSessionId']
+            'documentSessionId': request['documentSessionId'],
+            'basisMaterials': basis_materials,
+            'generatedAt': now_iso,
         }
