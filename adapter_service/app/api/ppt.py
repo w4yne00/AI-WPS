@@ -20,6 +20,7 @@ from app.services.ppt.structure_review import PptStructureReviewer
 from app.services.ppt.structure_review_jobs import PptStructureReviewJobStore
 from app.services.ppt.material_store import PptMaterialStore
 from app.services.ppt.material_outline import PptMaterialOutlineCoordinator
+from app.services.ppt.template_page import PptTemplatePageCoordinator
 
 
 router = APIRouter()
@@ -33,6 +34,7 @@ ppt_material_store = PptMaterialStore(
     excel_store=excel_material_store,
 )
 ppt_material_outline = PptMaterialOutlineCoordinator(store=ppt_material_store)
+ppt_template_page = PptTemplatePageCoordinator(store=ppt_material_store)
 
 
 def close_ppt_resources() -> None:
@@ -350,3 +352,34 @@ def cancel_ppt_material_outline_job(job_id: str, request: dict) -> dict:
     session_id = str(request.get("documentSessionId") or "").strip()
     job = ppt_material_outline.cancel_job(job_id, document_session_id=session_id)
     return _outline_envelope(job, trace_id=job.get("traceId", job_id), message=job.get("status", "cancelled"))
+
+
+def _template_page_envelope(data: dict, trace_id: str = "", message: str = "completed") -> dict:
+    return {
+        "success": True,
+        "traceId": trace_id or str(data.get("jobId", "")),
+        "taskType": "ppt.template_page",
+        "message": message,
+        "data": data,
+        "errors": [],
+    }
+
+
+@router.post("/ppt/template-page/jobs")
+def start_ppt_template_page_job(request: dict) -> dict:
+    trace_id = new_trace_id("ppt-template-page")
+    job = ppt_template_page.submit_job(request, trace_id=trace_id)
+    return _template_page_envelope(job, trace_id=job.get("traceId", trace_id), message=job.get("status", "accepted"))
+
+
+@router.get("/ppt/template-page/jobs/{job_id}")
+def get_ppt_template_page_job(job_id: str, documentSessionId: str = "") -> dict:
+    job = ppt_template_page.get_job(job_id, document_session_id=documentSessionId)
+    return _template_page_envelope(job, trace_id=job.get("traceId", job_id), message=job.get("status", "completed"))
+
+
+@router.post("/ppt/template-page/jobs/{job_id}/cancel")
+def cancel_ppt_template_page_job(job_id: str, request: dict) -> dict:
+    session_id = str(request.get("documentSessionId") or "").strip()
+    job = ppt_template_page.cancel_job(job_id, document_session_id=session_id)
+    return _template_page_envelope(job, trace_id=job.get("traceId", job_id), message=job.get("status", "cancelled"))

@@ -217,13 +217,21 @@ class MaterialComposerBodyLimitMiddleware(FullDocumentReviewBodyLimitMiddleware)
                     path.startswith("/ppt/material-outline/jobs/")
                     and path.endswith("/cancel")
                 )
+                or path == "/ppt/template-page/jobs"
+                or (
+                    path.startswith("/ppt/template-page/jobs/")
+                    and path.endswith("/cancel")
+                )
             )
         )
 
     async def _reject(self, scope, send, received: int, started_at: float) -> None:
         trace_id = WritingPolicyImportBodyLimitMiddleware._trace_id(scope)
         path = str(scope.get("path", ""))
-        if path.startswith("/ppt/"):
+        if path.startswith("/ppt/template-page"):
+            task_type = "ppt.template_page"
+            message = "模板正文页请求超过 64 KiB 限制。"
+        elif path.startswith("/ppt/"):
             task_type = "ppt.material_outline"
             message = "根据资料生成逐页大纲请求超过 64 KiB 限制。"
         elif path.startswith("/excel/"):
@@ -620,6 +628,8 @@ def _task_type_from_path(path: str) -> str:
         return "ppt.material_outline"
     if path == "/ppt/materials" or path.startswith("/ppt/materials/"):
         return "ppt.material_outline"
+    if path.startswith("/ppt/template-page/"):
+        return "ppt.template_page"
     if path.startswith("/ppt/structure-review/jobs/"):
         return "ppt.structure_review"
     return {
@@ -654,6 +664,7 @@ def _task_type_from_path(path: str) -> str:
         "/ppt/materials/import": "ppt.material_outline",
         "/ppt/materials/catalog": "ppt.material_outline",
         "/ppt/materials/bind-document": "ppt.material_outline",
+        "/ppt/template-page/jobs": "ppt.template_page",
     }.get(path, "adapter.validation")
 
 

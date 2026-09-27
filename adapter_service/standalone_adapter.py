@@ -75,6 +75,7 @@ from app.services.ppt.structure_review import PptStructureReviewer
 from app.services.ppt.structure_review_jobs import PptStructureReviewJobStore
 from app.services.ppt.material_store import PptMaterialStore
 from app.services.ppt.material_outline import PptMaterialOutlineCoordinator
+from app.services.ppt.template_page import PptTemplatePageCoordinator
 from app.services.word.document_reviewer import WordDocumentReviewer
 from app.services.word.document_review_jobs import DocumentReviewJobStore
 from app.services.word.deterministic_format_review import (
@@ -215,6 +216,7 @@ PPT_MATERIAL_STORE = PptMaterialStore(
     excel_store=EXCEL_MATERIAL_STORE,
 )
 PPT_MATERIAL_OUTLINE_COORDINATOR = PptMaterialOutlineCoordinator(store=PPT_MATERIAL_STORE)
+PPT_TEMPLATE_PAGE_COORDINATOR = PptTemplatePageCoordinator(store=PPT_MATERIAL_STORE)
 
 
 def close_ppt_resources():
@@ -2493,6 +2495,30 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
 
+        if path.startswith("/ppt/template-page/jobs/"):
+            job_id = unquote(path[len("/ppt/template-page/jobs/") :]).strip("/")
+            session = parse_qs(parsed.query).get("documentSessionId", [""])[0]
+            trace_id = new_trace_id("standalone-ppt-template-page-job")
+            try:
+                job = PPT_TEMPLATE_PAGE_COORDINATOR.query_job(job_id, session)
+            except AdapterError as error:
+                self._write(
+                    error.status_code,
+                    envelope(
+                        trace_id,
+                        "ppt.template_page",
+                        success=False,
+                        message=error.message,
+                        errors=[{"code": error.code, "message": error.message}],
+                    ),
+                )
+                return
+            self._write(
+                200,
+                envelope(job.get("traceId", job_id), "ppt.template_page", job, message=job["status"]),
+            )
+            return
+
         self._write(
             404,
             envelope("standalone-not-found", "adapter.error", success=False, message="Not found", errors=[{"code": "NOT_FOUND", "message": path}]),
@@ -2587,6 +2613,11 @@ class Handler(BaseHTTPRequestHandler):
                 or path == "/ppt/materials/bind-document"
                 or (
                     path.startswith("/ppt/material-outline/jobs/")
+                    and path.endswith("/cancel")
+                )
+                or path == "/ppt/template-page/jobs"
+                or (
+                    path.startswith("/ppt/template-page/jobs/")
                     and path.endswith("/cancel")
                 )
             ) and length > MATERIAL_COMPOSER_REQUEST_MAX_BYTES:
@@ -3569,6 +3600,20 @@ class Handler(BaseHTTPRequestHandler):
                 self._write(error.status_code, envelope(trace_id, "ppt.material_outline", success=False, message=error.message, errors=[{"code": error.code, "message": error.message}]))
                 return
             self._write(200, envelope(job.get("traceId", trace_id), "ppt.material_outline", job, message=job.get("status", "accepted")))
+            return
+
+        if path == "/ppt/template-page/jobs" or (path.startswith("/ppt/template-page/jobs/") and path.endswith("/cancel")):
+            trace_id = new_trace_id("standalone-ppt-template-page")
+            try:
+                if path.endswith("/cancel"):
+                    job_id = unquote(path[len("/ppt/template-page/jobs/"):-len("/cancel")]).strip("/")
+                    job = PPT_TEMPLATE_PAGE_COORDINATOR.cancel_job(job_id, payload.get("documentSessionId", ""))
+                else:
+                    job = PPT_TEMPLATE_PAGE_COORDINATOR.submit_job(payload, trace_id=trace_id)
+            except AdapterError as error:
+                self._write(error.status_code, envelope(trace_id, "ppt.template_page", success=False, message=error.message, errors=[{"code": error.code, "message": error.message}]))
+                return
+            self._write(200, envelope(job.get("traceId", trace_id), "ppt.template_page", job, message=job.get("status", "accepted")))
             return
 
         if path == "/ppt/materials/import":

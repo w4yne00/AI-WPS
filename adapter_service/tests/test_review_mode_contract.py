@@ -31,6 +31,7 @@ class ReviewModeContractTests(unittest.TestCase):
                 "ppt.slide_assistant",
                 "ppt.structure_review",
                 "ppt.material_outline",
+                "ppt.template_page",
             ],
         )
         self.assertEqual(status["word.smart_write"]["apiKeyRef"], "word_smart_write")
@@ -93,6 +94,7 @@ class ReviewModeContractTests(unittest.TestCase):
                 "ppt.slide_assistant",
                 "ppt.structure_review",
                 "ppt.material_outline",
+                "ppt.template_page",
             ],
         )
 

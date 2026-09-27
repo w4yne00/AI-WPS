@@ -422,7 +422,7 @@ class DirectServicesApiTests(unittest.TestCase):
                 selections = get_task_model_selections()
                 self.assertTrue(selections["success"])
                 self.assertEqual(
-                    len(selections["data"]["taskModelSelections"]), 12
+                    len(selections["data"]["taskModelSelections"]), 13
                 )
 
                 # 9. Update task model selection

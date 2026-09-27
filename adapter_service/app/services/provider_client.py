@@ -2790,6 +2790,7 @@ class ProviderClient:
             ("ppt.slide_assistant", "智能总结"),
             ("ppt.structure_review", "结构审查"),
             ("ppt.material_outline", "逐页大纲"),
+            ("ppt.template_page", "模板正文页"),
         ]
         status = {}
         for task_type, label in tasks:

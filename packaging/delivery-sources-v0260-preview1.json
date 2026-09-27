@@ -188,6 +188,21 @@
       "type": "file",
       "source": "formal-plugin-kit/wps-ai-assistant-wpp_1.0.0/material-outline.js",
       "target": "packages/wps-ai-assistant-wpp_1.0.0/material-outline.js"
+    },
+    {
+      "type": "file",
+      "source": "adapter_service/app/services/ppt/template_page.py",
+      "target": "packages/adapter-start-kit/adapter_service/app/services/ppt/template_page.py"
+    },
+    {
+      "type": "file",
+      "source": "adapter_service/system_prompts/ppt-template-page.md",
+      "target": "packages/adapter-start-kit/adapter_service/system_prompts/ppt-template-page.md"
+    },
+    {
+      "type": "file",
+      "source": "formal-plugin-kit/wps-ai-assistant-wpp_1.0.0/template-body-page.js",
+      "target": "packages/wps-ai-assistant-wpp_1.0.0/template-body-page.js"
     }
   ]
 }

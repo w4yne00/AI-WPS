@@ -1,5 +1,43 @@
 # Codex Handoff - AI-WPS
 
+## PR #250 审查修复（2026-09-27）
+
+- 补齐正文页控制器确认接口，使用真实已确认大纲及确认时间；候选仅含正文页。预览展示转义后的资料原文、出处与缺项，核对后单独点击追加，生成不自动弹出写入确认。
+- 保存生成所属演示文稿会话与大纲快照，写入前拒绝跨文稿或已失效结果；取消以服务器确认为准，迟到响应不能恢复取消任务或覆盖新任务。
+- 固定版式缺失或宿主不支持 `AddSlide` 时明确拒绝，不使用通用版式兜底。标题、正文、讲稿均须定位、赋值并回读；仅新增第 N+1 页。
+- 补偿核查实际页数。删除失败返回 `ROLLBACK_FAILED` 并标明残页；写入前保存待核查状态，重开仍阻止重复追加。用户在 WPS 人工清理本次新增页后，通过“核查恢复”验证原页数并解除阻止。
+- 后端使用现有 `LongTaskCoordinator` 异步队列、取消与任务编号去重，提交立即返回；资料和模型配置按提交时快照执行，不截断超预算资料。
+- 前后端均按每行32字符计入显式换行，最多4条、260字符、8行；写入边界独立重算容量。
+- 自检：现有 Python 3.8 环境后端全量 `1675 passed / 54 skipped / 0 failed`；正式插件含浏览器 DOM 回归 `492 passed / 0 failed`；原型 `12 passed` 且构建成功；104个生产及交付 Python 文件兼容检查、差异检查通过，后端全量覆盖 Preview 交付审计。
+- 真实模型质量、真实 WPS 固定模板排版与可编辑性、麒麟真机验收仍未完成；浏览器 DOM 及模拟宿主回归不能替代这些验收。
+
+## Issue #239：PPT：用固定模板生成并追加一张正文页（2026-09-27）
+
+- **目标与核心机制**：基于用户已确认的逐页大纲（Issue #238），选取单个指定正文页（`pageRole == "content"`），结合底层资料原文提取内容，经受控模型提示词（`ppt.template_page`）生成严格适配固定模板排版容量的单页正文结构，并在用户二次确认后追加插入到当前演示文稿末尾（`Count + 1`），严禁修改既有 1..N 页。
+- **模板与排版容量防御（Fail-Closed Invariant）**：
+  - 固定匹配《企业 AI 安全运营就绪度参考架构》模板正文版式（版式名称为“标题和内容”，Shape 1 为标题占位符，Shape 2 为正文要点占位符）；
+  - 严格容量防御门禁（`evaluateTemplatePageCapacity`）：要点条目数 $\le 4$、总字符数 $\le 260$ 字符、折算单栏折行行数 $\le 8$ 行；
+  - 发生容量超限时硬阻断（Fail-Closed），在任务窗格展示醒目红色超限提示并禁用“追加至演示文稿”按钮，杜绝溢出重叠与截断破坏排版。
+- **只追加不篡改不变量与逆向补偿回滚（Reverse Compensation Rollback）**：
+  - `appendTemplateBodySlide`：严格检查演示文稿初始页数（`initialSlideCount`），新幻灯片仅允许使用 `Slides.Add(initialSlideCount + 1, layout)` 插入到末尾；既有第 1 到 N 页零读取修改、零属性变更；
+  - 若在版式匹配、占位符定位、标题填入、要点逐条写入或演讲者备注（`NotesPage`）填入过程中发生任何异常，立即触发逆向补偿（调用 `newSlide.Delete()` 并恢复初始页数），抛出明确错误状态码 `ROLLBACK_COMPENSATED`，杜绝半成品残留幻灯片；
+  - 写入成功后置位 `writtenToSlide = true`，严格防重复写入二次点击。
+- **大纲门禁与正文页候选选择器（Outline Gate & Selector）**：
+  - 前端控制器 `template-body-page.js` 严格依赖 `outlineController.hasConfirmedOutline()` 作为前置门禁；若大纲未确认或因资料变更/编辑降级为 `needs_reconfirmation`，正文页生成卡片立即折叠并提示先确认大纲；
+  - 候选下拉框（`#ppt-template-page-select`）仅筛选大纲中角色为 `content`（正文页）的页面，自动排除封面（cover）、目录（agenda）、过渡页（transition）、总结（summary）与封底（backcover）；切换大纲重新渲染候选。
+- **双运行时接口与 64 KiB 请求体门禁**：
+  - 注册 `TaskType.PPT_TEMPLATE_PAGE`（`ppt.template_page`）系统提示词，更新 Prompt Manifest、任务清单至 13 项；
+  - FastAPI 与 Standalone Adapter 对等暴露 `/ppt/template-page/jobs`、`/ppt/template-page/jobs/{job_id}` 与 `/ppt/template-page/jobs/{job_id}/cancel`；
+  - 请求体大小统一受 64 KiB 门禁保护；模型长任务状态、取消与依据追踪完备对齐。
+- **任务窗格用户交互与显式二次确认**：
+  - 任务窗格集成 `#ppt-template-page-card`，包含正文页候选下拉框、生成按钮、排版容量超限警告框、正文及演讲者备注只读预览卡片，以及追加幻灯片按钮；
+  - 追加幻灯片前弹出显式原生确认弹窗（`window.confirm`），明确提示即将追加至末尾的页码、标题与要点数量，用户取消则零写入。
+- **全量验证结论**：
+  - 正式插件全量契约测试：`formal-plugin-kit/tests/` 共 472 项测试全部通过（`472 passed / 0 failed`，含 Issue #239 的容量核验、逆向补偿、防重写入、DOM 结构与无违禁 WPS 令牌检查）；
+  - Preview 交付集成回归：`adapter_service/tests/test_v0260_preview1_delivery.py` 41 项测试全量通过（`41 passed / 0 failed`）；
+  - 后端 PPT 全量回归：`adapter_service/tests/test_ppt_*.py` 共 164 项测试全部通过（`164 passed / 0 failed`）；
+  - Python 3.8 兼容扫描：103 个生产与交付 Python 文件通过（`python38_compatibility_scan=passed`）；`git diff --check` 0 格式警告。
+
 ## PR #249 审查修复（2026-09-27）
 
 - 资料大纲按当前演示文稿识别会话，未保存同名演示文稿按实例分开；首次保存与另存为确认后迁移资料和本地大纲，失败保留原归属。尚无服务器资料时保留填写参数，不覆盖新会话已有草稿。
