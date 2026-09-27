@@ -4,7 +4,7 @@
 
 **Goal:** 在 Excel 宿主中实现从 DOCX 资料生成任务台账预览的功能，支持主动导入或跨文档复用资料并保持工作簿独立副本，按自定义或选区表头提取一行一项可独立跟踪的工作，留空并提示缺项，提示疑似重复不擅自合并，侧栏展示出处，预览阶段严格不修改任何单元格。
 
-**Architecture:** 
+**Architecture:**
 1. 后端构建 `ExcelMaterialStore`，在 `$AI_WPS_STATE_DIR/excel_materials/` 建立当前工作簿的独立持久化资料目录，并提供全局资料源发现（`reusable-sources`）与原子克隆（`clone-from-source`），实现单向解耦。
 2. 建立 `excel.material_ledger` 长任务处理器，基于提示词约束和片段提取器，按自定义表头提取结构化台账，严谨校验片段出处、缺项与疑似重复。
 3. 双运行时（FastAPI 与 Standalone）对等暴露资料管理与台账生成、轮询和取消接口。

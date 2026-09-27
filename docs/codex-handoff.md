@@ -1,33 +1,21 @@
 # Codex Handoff - AI-WPS
 
+## PR #247 审查修复（2026-09-27）
+
+- 注册 `excel.material_ledger` 模型任务，使用已有 `ProviderClient.post_task` 支持直连与工作流；按提交时的模型配置快照调用，传递取消信号并检查完整输入预算。新增本地 HTTP 服务测试覆盖真实调用路径，模拟结果不作为真实模型质量证据。
+- 正式 Excel 窗格读取所选 DOCX 的实际文件名和内容；导入、更新、移除后重新查询发起工作簿目录。预览按结果中的 `headers/values/sources` 展示数据、缺项、疑似重复、文件名、章节与原文；复制使用同一结果快照，全程不写单元格。
+- 窗格进入时查询可复用来源并排除当前工作簿；提供资料更新、移除及事实差异选择。输入或资料变化后重新核对选择，后端只接受当前候选；用户补充事实仅允许实际存在的编号，空出处或伪造编号拒绝显示。
+- 更新资料继续使用现存片段最大编号，避免覆盖其他资料出处；表格容量重新计算，资料版本时间严格递增。克隆先完成临时副本再替换目标，拒绝自身复用，复制失败保留原目标；从 Word 复用时与来源存储写入共用锁。
+- 同一工作簿的资料变更与生成共用锁并检查活跃任务；同一任务编号可恢复，不同编号拒绝重复生成。前端轮询绑定提交会话，迟到响应不能覆盖其他工作簿或恢复已取消结果；取消失败明确提示，任务丢失提示重新提交，不无限轮询。不确定提交重试保持原任务编号与原请求。
+- Preview 交付清单补齐台账模块与提示词，任务清单更新为 11 项；保留既有交付审计与发布边界。本次不生成正式交付归档。
+- 自检：Docker Python 3.8 全量 `1631 passed / 55 skipped`，正式插件含真实 Chrome 台账窗格 `397 passed`，原型 `12 passed` 且构建成功；89 个生产及交付 Python 文件兼容扫描和差异检查通过。Preview 交付程序集的通用及 Preview 审计由全量交付测试覆盖。真实模型质量、真实 WPS 与麒麟真机验证仍待完成；麒麟文档记录的虚拟环境解释器本次核查已不存在。
+
 ## Issue #236：Excel：从资料生成任务台账预览（2026-09-27）
 
-- **功能目标**：在 Excel 宿主中，根据用户自定义或选区提取的表头列名，从导入或复用的 DOCX 资料中抽取 1 行 1 任务的任务台账预览，核对出处、标出缺项，并标记疑似重复行（不合并），且在预览阶段严格保持 0 单元格写入。
-- **资料管理与跨文档复用 (`ExcelMaterialStore`)**：
-  - 在 `excel_materials/<会话目录>/` 下持久化原始 DOCX 副本（`files/{materialId}.docx`）、单份抽取详情（`materials/{materialId}.json`）、资料清单（`manifest.json`）与目录缓存（`catalog_cache.json`）；
-  - 支持单文档独立资料上传、更新与删除，以及跨文档资料集深拷贝克隆（`POST /excel/materials/clone-source`）；克隆后目标文档享有完全独立副本，源文档资料变更不影响目标文档；
-  - 提供可复用资料源发现接口 `GET /excel/materials/reusable-sources`，自动汇总已有文档的资料包及字数统计。
-- **任务协调与模型提示 (`ExcelMaterialLedgerCoordinator` & `excel-material-ledger.md`)**：
-  - 基于提示词规范 `system_prompts/excel-material-ledger.md`，输出严格 JSON 台账结构（`taskItems`、`headers`、`citations`、`missingFields`、`isDuplicate`、`duplicateOfIndex`、`duplicateReason`）；
-  - 严格防御模型幻觉：仅允许从真实出处抽取，无出处内容明确标为缺项，杜绝虚构或伪造；
-  - 疑似重复保留原则：即便语义高度相似，只要原资料作为不同事项提及，均分别保留为独立行，仅标记 `isDuplicate: true` 并指明疑似重复的行索引与比对原因，严禁静默合一行；
-  - 支持长任务生命周期与排队互斥：若当前会话资料正在变更或台账正在生成，返回 409 `MATERIAL_COMPOSER_BUSY`；支持实时取消（释放协调器槽位与并发锁）。
-- **双运行时对等与接口门禁**：
-  - FastAPI 与 Standalone Adapter 对等实现全套接口：
-    - 资料管理：`GET /excel/materials/reusable-sources`、`POST /excel/materials/clone-source`、`GET /excel/materials/catalog`、`POST /excel/materials`、`PUT /excel/materials/{id}`、`DELETE /excel/materials/{id}`、`POST /excel/materials/bind-document`；
-    - 台账任务：`POST /excel/material-ledger/jobs`、`GET /excel/material-ledger/jobs/{job_id}`、`POST /excel/material-ledger/jobs/{job_id}/cancel`；
-  - 全部 POST 入口前置 64 KiB 请求体大小门禁；
-  - 模型接入继承现有 direct_model / workflow 统一配置体系，`TASK_API_KEY_DEFS` 增加 `excel.material_ledger`。
-- **正式插件窗格与纯预览只读保证 (`formal-plugin-kit/wps-ai-assistant-et_1.0.0`)**：
-  - Ribbon XML 与 JS 新增「任务台账」按钮（`btnAiExcelLedger`），映射至 `excelLedger` 模式；
-  - 表头列管理：推荐表头（`工作事项`、`责任部门`、`完成时间`、`交付物验收`）标签芯片化展示，支持动态增删，支持「从选区读取表头」（`helpers.readSelectionHeaders`）；
-  - 资料管理与复用：展示资料份数与总字数，支持文件导入与下拉复用其他文档资料；
-  - 只读预览表格：渲染动态表头与台账数据行；空缺字段显式呈现灰色斜体 `〔缺项〕`；疑似重复行高亮呈现警示徽标 `[疑似重复]` 并悬浮查看原因；点击任意行或出处按钮呼出侧边抽屉展开 DOCX 文件名、章节与物理原文引用；提供一键「复制表格 (TSV)」；
-  - **纯预览不变式**：整个生成与预览交互生命周期内，WPS 工作表单元格写操作严格为 0。
-- **全量验证结论**：
-  - 后端测试：Python 3.8.20 下 `adapter_service/tests/test_excel_*.py` 与 `test_word_material_*.py` 共 242 项测试全部通过；
-  - 插件契约测试：`formal-plugin-kit/tests/` 全量 385 项测试 100% 通过（含 7 项 `excel-material-ledger.test.js`、`layout-smoke.test.js`、`taskpane-experience-contract.test.js`）；
-  - 语法与静态检查：`compileall` 0 错误，`git diff --check` 0 警告。
+- 目标：在 Excel 主动导入或复用独立 DOCX 资料集，按自定义表头生成一行一项工作的只读台账，核对缺项、疑似重复与原始出处。写入由后续 Issue #237 承载。
+- 资料接口：`GET /materials/reusable-sources`、`POST /excel/materials/clone-from-source`、`POST /excel/materials/import`、`GET /excel/materials/catalog`、`PUT/DELETE /excel/materials/{material_id}`、`POST /excel/materials/bind-document`。
+- 任务接口：`GET/POST /excel/material-ledger/conflicts`、`POST /excel/material-ledger/jobs`、`GET /excel/material-ledger/jobs/{job_id}`、`POST /excel/material-ledger/jobs/{job_id}/cancel`。状态与取消请求携带 `documentSessionId`；任务请求沿用 64 KiB 上限。
+- 结果协议：`schemaVersion: excel.material_ledger.v1`、`headers`、`rows`；每行使用 `values/missingFields/isDuplicate/duplicateOfIndex/duplicateReason/fragmentIds/sources`，来源包含 `fileName/chapter/text`。结果保存 `basisMaterials` 与 `generatedAt`；资料更新或移除后预览提示重新生成。
 
 ## PR #246 审查修复（2026-09-27）
 

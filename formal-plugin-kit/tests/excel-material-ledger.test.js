@@ -20,6 +20,7 @@ function createTestHarness(sharedStorage) {
     Object,
     setTimeout,
     clearTimeout,
+    btoa: value => Buffer.from(value, "binary").toString("base64"),
   };
   const scriptContent = fs.readFileSync(path.join(root, 'material-ledger.js'), 'utf8');
   vm.runInNewContext(scriptContent, context);
@@ -31,6 +32,7 @@ function createTestHarness(sharedStorage) {
     views: [],
     copied: [],
     writeSpyCalls: [],
+    scheduled: [],
     response: {
       success: true,
       data: {
@@ -84,7 +86,7 @@ function createTestHarness(sharedStorage) {
     getSessionId: () => h.session,
     render: (v) => h.views.push(v),
     copyText: (t) => h.copied.push(t),
-    schedule: (fn, ms) => setTimeout(fn, ms || 0),
+    schedule: fn => h.scheduled.push(fn),
     request: async (url, body, opts) => {
       h.calls.push({ url, body, method: opts && opts.method });
       if (h.requestHandler) {
@@ -319,4 +321,239 @@ test('7. Document isolation: switching document sessions preserves independent s
   await h.api.restore();
   assert.ok(!h.last().headers.includes('Doc1特有字段'));
   assert.deepEqual(Array.from(h.last().headers), ['工作事项', '责任部门', '完成时间', '交付物验收']);
+});
+
+test('file chooser uploads the actual filename and DOCX bytes', async () => {
+  const h = createTestHarness();
+  await h.api.importMaterial({ name: '方案.docx', arrayBuffer: async () => Uint8Array.from([1, 2, 3]).buffer });
+  const call = h.calls.find(c => c.url === '/excel/materials/import');
+  assert.equal(call.body.fileName, '方案.docx');
+  assert.equal(call.body.contentBase64, 'AQID');
+});
+
+test('restore discovers reusable sources and excludes the current workbook', async () => {
+  const h = createTestHarness();
+  h.reusableSourcesResponse = { data: { sources: [
+    { sourceSessionId: h.session, displayName: '当前工作簿' },
+    { sourceSessionId: 'word-source', displayName: '方案.docx' }
+  ] } };
+  await h.api.restore();
+  assert.deepEqual(Array.from(h.last().reusableSources, x => x.sourceSessionId), ['word-source']);
+});
+
+test('completion after switching workbooks stays with the submitted workbook', async () => {
+  const h = createTestHarness();
+  const result = { headers: ['工作事项'], rows: [{ values: { '工作事项': 'A任务' }, sources: [] }] };
+  h.requestHandler = async url => url.endsWith('/jobs')
+    ? { data: { jobId: 'job-A', status: 'running' } }
+    : { data: { status: 'completed', result } };
+  h.session = 'A';
+  await h.api.generate();
+  h.session = 'B';
+  await h.scheduled.shift()();
+  assert.equal(h.api.getState().result, null);
+  h.session = 'A';
+  assert.equal(h.api.getState().result.rows[0].values['工作事项'], 'A任务');
+});
+
+test('a missing recovered task stops polling and allows resubmission', async () => {
+  const saved = new Map([['excel.material-ledger:sess-excel-doc-1', JSON.stringify({ jobId: 'lost' })]]);
+  const h = createTestHarness(saved);
+  h.requestHandler = async url => {
+    if (url.includes('/jobs/')) throw Object.assign(new Error('任务不存在'), { status: 404, adapterCode: 'MATERIAL_LEDGER_JOB_NOT_FOUND' });
+    return { data: { totalDocuments: 0, documents: [] } };
+  };
+  await h.api.restore();
+  await h.scheduled.shift()();
+  assert.equal(h.api.getState().status, 'interrupted');
+  assert.equal(h.api.getState().jobId, '');
+  assert.equal(h.scheduled.length, 0);
+  assert.ok(h.api.getState().error);
+});
+
+test('an uncertain submission retries the original job and request', async () => {
+  const h = createTestHarness();
+  const submitted = [];
+  h.requestHandler = async (url, body) => {
+    if (url.endsWith('/jobs')) {
+      submitted.push(JSON.parse(JSON.stringify(body)));
+      throw new Error('Failed to fetch');
+    }
+    return { data: { conflicts: [] } };
+  };
+  await h.api.generate();
+  h.api.setInstruction('编辑后的要求');
+  await h.api.generate();
+  assert.equal(submitted.length, 2);
+  assert.deepEqual(submitted[1], submitted[0]);
+});
+
+function ledgerPaneHarness() {
+  const source = fs.readFileSync(path.join(root, 'taskpane.js'), 'utf8');
+  function node() { return { hidden: true, disabled: false, value: '', textContent: '', innerHTML: '', children: [],
+    appendChild(child) { this.children.push(child); }, addEventListener() {} }; }
+  const nodes = new Map();
+  const byId = id => { if (!nodes.has(id)) nodes.set(id, node()); return nodes.get(id); };
+  const head = node(), body = node();
+  byId('ledger-preview-table').querySelector = selector => selector === 'thead' ? head : body;
+  const context = { state: { currentMode: 'excelLedger' }, byId, helpers, document: { createElement: node }, setStatus() {}, ensureMaterialLedger() {} };
+  const start = source.indexOf('function renderMaterialLedgerView(');
+  const end = source.indexOf('\n  function ', start + 1);
+  const render = vm.runInNewContext('(' + source.slice(start, end) + ')', context);
+  return { render, byId, head, body };
+}
+
+test('the actual pane displays backend values and source quotes using result headers', () => {
+  const pane = ledgerPaneHarness();
+  pane.render({ headers: ['后续编辑的新列'], reusableSources: [], activeDrawerRowIndex: 0,
+    result: { headers: ['工作事项'], rows: [{ values: { '工作事项': '网络改造' }, missingFields: [],
+      sources: [{ fileName: '方案.docx', chapter: '第一章', text: '原文网络改造' }] }] } });
+  assert.match(pane.head.innerHTML, /工作事项/);
+  assert.match(pane.body.children[0].innerHTML, /网络改造/);
+  assert.match(pane.body.children[0].innerHTML, /查看出处/);
+  assert.match(pane.byId('drawer-content').children[0].innerHTML, /第一章/);
+  assert.match(pane.byId('drawer-content').children[0].innerHTML, /原文网络改造/);
+});
+
+test('the actual pane exposes update, remove and conflict choices', () => {
+  const pane = ledgerPaneHarness();
+  pane.render({ headers: ['工作事项'], catalogSummary: { documents: [{ materialId: 'm1', fileName: '方案.docx' }] },
+    reusableSources: [], conflicts: [{ conflictId: 'c1', topic: '预算', difference: '预算存在差异',
+      options: [{ optionId: 'o1', value: '100万元', sourceName: '方案.docx' }] }], conflictResolutions: [] });
+  const materials = pane.byId('ledger-material-list').innerHTML;
+  assert.match(materials, /方案.docx/);
+  assert.match(materials, /更新/);
+  assert.match(materials, /移除/);
+  assert.match(pane.byId('ledger-conflicts').innerHTML, /100万元/);
+});
+
+test('a selected conflict survives rechecking unchanged candidates and enables generation', async () => {
+  const h = createTestHarness();
+  h.conflictsResponse = { data: { conflicts: [{ conflictId: 'c1', topic: '预算',
+    options: [{ optionId: 'o1', sourceName: '方案.docx', value: '100万元' }] }] } };
+  await h.api.generate();
+  assert.equal(h.calls.filter(c => c.url.endsWith('/jobs')).length, 0);
+  h.api.setConflictResolutions([{ conflictId: 'c1', chosenCandidateId: 'o1', chosenValue: '100万元' }]);
+  await h.api.generate();
+  assert.equal(h.calls.filter(c => c.url.endsWith('/jobs')).length, 1);
+});
+
+test('a failed cancellation does not claim the running task was cancelled', async () => {
+  const h = createTestHarness();
+  await h.api.generate();
+  h.requestHandler = async () => { throw new Error('connection lost'); };
+  await h.api.cancel();
+  assert.equal(h.api.getState().status, 'running');
+  assert.equal(h.api.getState().busy, true);
+  assert.match(h.api.getState().error, /取消失败/);
+});
+
+test('a delayed file read keeps its original workbook for upload and catalog reload', async () => {
+  const h = createTestHarness();
+  let finishRead;
+  h.session = 'A';
+  const upload = h.api.importMaterial({ name: 'A.docx', arrayBuffer: () => new Promise(resolve => { finishRead = resolve; }) });
+  h.session = 'B';
+  finishRead(Uint8Array.from([1]).buffer);
+  await upload;
+  const call = h.calls.find(c => c.url === '/excel/materials/import');
+  assert.equal(call.body.documentSessionId, 'A');
+  assert.ok(h.calls.some(c => c.url === '/excel/materials/catalog?documentSessionId=A'));
+  assert.equal(h.api.getState().catalogSummary.totalDocuments, 0);
+});
+
+test('real ledger pane uploads files, previews backend rows and manages independent materials without cell writes', t => {
+  const { execFileSync } = require('node:child_process');
+  const os = require('node:os');
+  try { execFileSync('agent-browser', ['--version'], { stdio: 'ignore' }); }
+  catch (_) { t.skip('agent-browser unavailable'); return; }
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'excel-ledger-pane-'));
+  const run = (...args) => execFileSync('agent-browser', ['--session', 'excel-ledger-pane', ...args], {
+    encoding: 'utf8', env: { ...process.env, AGENT_BROWSER_SOCKET_DIR: temp }
+  });
+  const mock = `
+window.paneErrors=[];window.addEventListener('error',e=>paneErrors.push(e.message));
+window.confirm=()=>true;window.requests=[];window.cellWrites=0;
+var cell={Text:'工作事项'};['Value','Value2','Formula'].forEach(key=>Object.defineProperty(cell,key,{get:()=>'',set:()=>window.cellWrites++}));
+var sheet={Name:'Sheet1',Range:()=>cell,Cells:{Item:()=>cell}};
+window.Application={Selection:{Rows:{Count:1},Columns:{Count:1},Cells:{Item:()=>cell}},ActiveSheet:sheet,
+ActiveWorkbook:{Name:'台账.xlsx',FullName:'/test/excel-ledger-browser.xlsx',ActiveSheet:sheet,Worksheets:{Item:()=>sheet}}};
+window.catalog={totalDocuments:0,totalCharacters:0,documents:[]};
+window.fetch=async function(url,options){
+  var p=new URL(url).pathname, method=(options&&options.method)||'GET', body=options&&options.body?JSON.parse(options.body):null;
+  requests.push({path:p,method:method,body:body});var data={};
+  if(p==='/health')data={status:'ok',modelTasksAllowed:true,configurationMutationsAllowed:true};
+  if(p==='/materials/reusable-sources')data={sources:[{sourceSessionId:'word-source',displayName:'原方案.docx',totalDocuments:1}]};
+  if(p==='/excel/materials/catalog')data=catalog;
+  if(p==='/excel/materials/import'||(p==='/excel/materials/m1'&&method==='PUT')){
+    catalog={totalDocuments:1,totalCharacters:3,documents:[{materialId:'m1',fileName:body.fileName,updatedAt:'v1'}]};
+    data={materialId:'m1',fileName:body.fileName};
+  }
+  if(p==='/excel/materials/m1'&&method==='DELETE'){catalog={totalDocuments:0,totalCharacters:0,documents:[]};data={catalogSummary:catalog};}
+  if(p==='/excel/material-ledger/conflicts')data={conflicts:[]};
+  if(p==='/excel/material-ledger/jobs')data={jobId:body.clientJobId,status:'completed',result:{
+    headers:['工作事项','责任部门'],basisMaterials:[{materialId:'m1',updatedAt:'v1'}],rows:[
+      {values:{'工作事项':'网络改造','责任部门':''},missingFields:['责任部门'],isDuplicate:true,duplicateOfIndex:0,duplicateReason:'重复提及',
+       sources:[{fileName:'方案.docx',chapter:'第一章',text:'开展网络改造'}]}
+    ]}};
+  return {ok:true,status:200,json:async()=>({success:true,data:data})};
+};`;
+  let html = fs.readFileSync(path.join(root, 'taskpane.html'), 'utf8');
+  html = html.replace('</head>', '<script>' + mock + '</script></head>');
+  html = html.replace(/<script src="\.\/([^"?]+)[^"]*"><\/script>/g,
+    (_, name) => '<script>' + fs.readFileSync(path.join(root, name), 'utf8') + '</script>');
+  html = html.replace(/<link rel="stylesheet"[^>]+>/, '<style>' + fs.readFileSync(path.join(root, 'taskpane.css'), 'utf8') + '</style>');
+  const page = path.join(temp, 'pane.html');
+  fs.writeFileSync(page, html);
+  const upload = name => run('eval', `(function(){var input=document.getElementById('excel-ledger-file-input'),dt=new DataTransfer();dt.items.add(new File([new Uint8Array([1,2,3])],${JSON.stringify(name)}));input.files=dt.files;input.dispatchEvent(new Event('change'));})()`);
+  try {
+    run('open', require('node:url').pathToFileURL(page).href + '?mode=excelLedger');
+    run('set', 'viewport', '320', '900');
+    run('wait', '--fn', "document.querySelector('#ledger-reusable-select').options.length===2");
+    upload('方案.docx');
+    run('wait', '--text', '方案.docx');
+    assert.match(run('eval', "JSON.stringify(requests.find(r=>r.path==='/excel/materials/import').body)"), /AQID/);
+    run('scrollintoview', '#btn-run-primary');
+    run('click', '#btn-run-primary');
+    run('wait', '--text', '网络改造');
+    assert.match(run('get', 'text', '#ledger-preview-table'), /〔缺项〕/);
+    assert.match(run('get', 'text', '#ledger-preview-table'), /疑似重复/);
+    run('scrollintoview', '.btn-view-citation');
+    run('click', '.btn-view-citation');
+    run('wait', '--text', '开展网络改造');
+    assert.match(run('get', 'text', '#drawer-content'), /第一章/);
+    run('click', '#btn-close-drawer');
+    run('eval', "document.querySelector('[data-ledger-update]').click()");
+    upload('更新版.docx');
+    run('wait', '--text', '更新版.docx');
+    assert.equal(run('eval', "requests.filter(r=>r.method==='PUT').length").trim(), '1');
+    run('eval', "document.querySelector('[data-ledger-remove]').click()");
+    run('wait', '--fn', "document.querySelector('#ledger-material-list').textContent===''");
+    assert.equal(run('eval', "requests.filter(r=>r.method==='DELETE').length").trim(), '1');
+    assert.equal(run('eval', 'window.cellWrites').trim(), '0');
+    assert.equal(run('eval', 'JSON.stringify(window.paneErrors)').trim(), '"[]"');
+  } finally {
+    try { run('close'); } catch (_) {}
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test('a late poll response cannot restore a cancelled job result', async () => {
+  const h = createTestHarness();
+  let finishPoll;
+  h.requestHandler = async url => {
+    if (url.endsWith('/jobs')) return { data: { jobId: 'late-job', status: 'running' } };
+    if (url.endsWith('/cancel')) return { data: { jobId: 'late-job', status: 'cancelled' } };
+    return new Promise(resolve => { finishPoll = resolve; });
+  };
+  // No conflicts in this fixture; keep the actual controller request pipeline.
+  const handler = h.requestHandler;
+  h.requestHandler = (url, ...args) => url.includes('/conflicts') ? { data: { conflicts: [] } } : handler(url, ...args);
+  await h.api.generate();
+  const poll = h.scheduled.shift()();
+  await h.api.cancel();
+  finishPoll({ data: { status: 'completed', result: { rows: [{ values: { '工作事项': '过期任务' } }] } } });
+  await poll;
+  assert.equal(h.api.getState().status, 'cancelled');
+  assert.equal(h.api.getState().result, null);
 });

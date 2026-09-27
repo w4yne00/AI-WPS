@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
+from app.api.word import material_import_service as word_material_import_service
 from app.core.logging import get_logger
 from app.core.models import (
     ExcelAnalysisRequest,
@@ -27,7 +28,7 @@ excel_formula_assistant = ExcelFormulaAssistant()
 excel_formula_assistant_jobs = ExcelFormulaAssistantJobStore(excel_formula_assistant)
 excel_smart_fill = ExcelSmartFill()
 excel_smart_fill_jobs = ExcelSmartFillJobStore(excel_smart_fill)
-excel_material_store = ExcelMaterialStore()
+excel_material_store = ExcelMaterialStore(word_store=word_material_import_service._store)
 excel_material_ledger = ExcelMaterialLedgerCoordinator(store=excel_material_store)
 logger = get_logger(__name__)
 

@@ -408,7 +408,8 @@
     var modes = {
       "excel.analysis": "excelAnalysis",
       "excel.formula_assistant": "excelFormulaAssistant",
-      "excel.smart_fill": "excelSmartFill"
+      "excel.smart_fill": "excelSmartFill",
+      "excel.material_ledger": "excelLedger"
     };
     return state.currentMode === modes[taskType] && getCurrentExcelDocumentSession() === documentSessionId;
   }
@@ -439,6 +440,10 @@
   }
 
   function syncActiveTaskBusyUi(docSessionId) {
+    if (state.currentMode === "excelLedger" && materialLedger) {
+      renderMaterialLedgerView(materialLedger.getState());
+      return;
+    }
     var app = typeof getEtApplication === "function" ? getEtApplication() : null;
     var workbook = typeof getActiveWorkbook === "function" ? getActiveWorkbook(app) : null;
     var session = docSessionId || (workbook && helpers.getDocumentSessionId ? helpers.getDocumentSessionId(workbook) : "") || state.documentSessionId || "default";
@@ -1369,7 +1374,7 @@
     } else if (state.currentMode === "excelLedger") {
       var ledgerCtrl = ensureMaterialLedger();
       if (ledgerCtrl && typeof ledgerCtrl.restore === "function") {
-        ledgerCtrl.restore();
+        ledgerCtrl.restore().catch(function () {});
       }
     }
     if (typeof syncActiveTaskBusyUi === "function") {
@@ -1393,11 +1398,11 @@
     }
 
     var scopeStrip = byId("scope-strip");
-    if (state.currentMode === "excelSmartFill") {
+    if (state.currentMode === "excelSmartFill" || state.currentMode === "excelLedger") {
       if (scopeStrip) {
         scopeStrip.hidden = true;
       }
-      renderSmartFillCaptureState();
+      if (state.currentMode === "excelSmartFill") renderSmartFillCaptureState();
       return;
     }
     if (scopeStrip) {
@@ -2901,6 +2906,7 @@
   }
 
   function getCurrentWorkflowTaskType() {
+    if (state.currentMode === "excelLedger") return EXCEL_LEDGER_WORKFLOW_TASK_TYPE;
     if (state.currentMode === "excelFormulaAssistant") {
       return EXCEL_FORMULA_WORKFLOW_TASK_TYPE;
     }
@@ -3286,6 +3292,7 @@
   }
 
   var materialLedger = null;
+  var ledgerUploadTarget = null;
 
   function ensureMaterialLedger() {
     if (!materialLedger && typeof window.createMaterialLedger === "function") {
@@ -3332,6 +3339,40 @@
       reusableSelect.value = currentVal;
     }
 
+    var materialList = byId("ledger-material-list");
+    if (materialList) {
+      materialList.innerHTML = ((view.catalogSummary && view.catalogSummary.documents) || []).map(function (material) {
+        var id = helpers.escapeHtml(material.materialId);
+        return '<div class="ledger-material-item"><span>' + helpers.escapeHtml(material.fileName) +
+          '（' + Number(material.readableCharacterCount || 0) + ' 字）</span>' +
+          '<button type="button" class="text-action" data-ledger-update="' + id + '"' + (view.busy ? ' disabled' : '') + '>更新</button>' +
+          '<button type="button" class="text-action" data-ledger-remove="' + id + '"' + (view.busy ? ' disabled' : '') + '>移除</button></div>';
+      }).join("");
+    }
+    var conflictBox = byId("ledger-conflicts");
+    if (conflictBox) {
+      conflictBox.hidden = !(view.conflicts && view.conflicts.length);
+      conflictBox.innerHTML = (view.conflicts || []).map(function (conflict) {
+        var chosen = (view.conflictResolutions || []).filter(function (choice) { return choice.conflictId === conflict.conflictId; })[0];
+        return '<fieldset><legend>' + helpers.escapeHtml(conflict.topic || conflict.difference) + '</legend>' +
+          conflict.options.map(function (option) {
+            return '<label class="field-hint"><input type="radio" name="ledger-' + helpers.escapeHtml(conflict.conflictId) +
+              '" data-ledger-conflict="' + helpers.escapeHtml(conflict.conflictId) + '" value="' + helpers.escapeHtml(option.optionId) + '"' +
+              (chosen && chosen.chosenCandidateId === option.optionId ? ' checked' : '') + (view.busy ? ' disabled' : '') + '>' +
+              helpers.escapeHtml(option.sourceName + '：' + option.value) + '</label>';
+          }).join("") + '</fieldset>';
+      }).join("");
+    }
+    var basisWarning = byId("ledger-basis-warning");
+    if (basisWarning) {
+      var changed = view.result && (view.result.basisMaterials || []).some(function (basis) {
+        var current = ((view.catalogSummary && view.catalogSummary.documents) || []).filter(function (material) { return material.materialId === basis.materialId; })[0];
+        return !current || current.updatedAt !== basis.updatedAt;
+      });
+      basisWarning.hidden = !changed;
+      basisWarning.textContent = changed ? "依据资料已更新或移除，请重新生成并核对台账。" : "";
+    }
+
     var tagContainer = byId("ledger-tag-chips");
     if (tagContainer) {
       tagContainer.innerHTML = "";
@@ -3367,21 +3408,21 @@
       }
     }
 
-    var isRunning = Boolean(view.jobId) && ["queued", "preparing", "provider_processing", "parsing", "running"].indexOf(view.phase || view.status) >= 0;
+    var isRunning = Boolean(view.jobId) && (view.status === "queued" || view.status === "running");
     var cancelBtn = byId("btn-cancel-excel-ledger-job");
     if (cancelBtn) {
       cancelBtn.hidden = !isRunning;
     }
     var runBtn = byId("btn-run-primary");
     if (runBtn) {
-      runBtn.disabled = isRunning;
+      runBtn.disabled = Boolean(view.busy) || isRunning;
       runBtn.textContent = isRunning ? (view.phaseLabel || "提取中...") : "生成任务台账";
     }
 
-    if (view.phaseLabel) {
-      setStatus(view.phaseLabel);
-    } else if (view.error) {
+    if (view.error) {
       setStatus(view.error);
+    } else if (view.phaseLabel) {
+      setStatus(view.phaseLabel);
     }
 
     var ledgerResultBox = byId("excel-ledger-result");
@@ -3395,13 +3436,14 @@
         metaSpan.textContent = "共提取 " + view.result.rows.length + " 项任务台账";
       }
 
+      var resultHeaders = view.result.headers || [];
       var table = byId("ledger-preview-table");
       if (table) {
         var thead = table.querySelector("thead");
         var tbody = table.querySelector("tbody");
         if (thead) {
           var headerHtml = "<tr>";
-          (view.headers || []).forEach(function (h) {
+          resultHeaders.forEach(function (h) {
             headerHtml += "<th>" + (helpers.escapeHtml ? helpers.escapeHtml(h) : h) + "</th>";
           });
           headerHtml += "<th>操作/出处</th></tr>";
@@ -3415,9 +3457,9 @@
               tr.className = "ledger-duplicate-row";
             }
             var rowHtml = "";
-            (view.headers || []).forEach(function (h) {
+            resultHeaders.forEach(function (h) {
               var isMissing = Boolean(row.missingFields && row.missingFields.indexOf(h) >= 0);
-              var val = (row.data && row.data[h]) || "";
+              var val = (row.values && row.values[h]) || "";
               if (isMissing || !val) {
                 rowHtml += '<td class="excel-ledger-missing-cell">〔缺项〕</td>';
               } else {
@@ -3429,8 +3471,8 @@
             if (row.isDuplicate) {
               actionHtml += '<span class="excel-ledger-duplicate-badge" title="疑似与第 ' + ((row.duplicateOfIndex || 0) + 1) + ' 行重复: ' + (helpers.escapeHtml ? helpers.escapeHtml(row.duplicateReason || "") : (row.duplicateReason || "")) + '">[疑似重复]</span>';
             }
-            if (row.citations && row.citations.length) {
-              actionHtml += '<button type="button" class="text-action btn-view-citation" data-row-index="' + rIdx + '">查看出处 (' + row.citations.length + ')</button>';
+            if (row.sources && row.sources.length) {
+              actionHtml += '<button type="button" class="text-action btn-view-citation" data-row-index="' + rIdx + '">查看出处 (' + row.sources.length + ')</button>';
             } else {
               actionHtml += '<span class="field-hint">无出处</span>';
             }
@@ -3454,12 +3496,12 @@
           var drawerContent = byId("drawer-content");
           if (drawerContent) {
             drawerContent.innerHTML = "";
-            if (selectedRow.citations && selectedRow.citations.length) {
-              selectedRow.citations.forEach(function (cite) {
+            if (selectedRow.sources && selectedRow.sources.length) {
+              selectedRow.sources.forEach(function (cite) {
                 var card = document.createElement("div");
                 card.className = "citation-card";
-                card.innerHTML = '<div class="citation-source">' + (helpers.escapeHtml ? helpers.escapeHtml(cite.fileName || "未知资料") : (cite.fileName || "未知资料")) + ' - ' + (helpers.escapeHtml ? helpers.escapeHtml(cite.section || "未知章节") : (cite.section || "未知章节")) + '</div>' +
-                  '<blockquote class="citation-quote">' + (helpers.escapeHtml ? helpers.escapeHtml(cite.quote || "") : (cite.quote || "")) + '</blockquote>';
+                card.innerHTML = '<div class="citation-source">' + (helpers.escapeHtml ? helpers.escapeHtml(cite.fileName || "未知资料") : (cite.fileName || "未知资料")) + ' - ' + (helpers.escapeHtml ? helpers.escapeHtml(cite.chapter || "未知章节") : (cite.chapter || "未知章节")) + '</div>' +
+                  '<blockquote class="citation-quote">' + (helpers.escapeHtml ? helpers.escapeHtml(cite.text || "") : (cite.text || "")) + '</blockquote>';
                 drawerContent.appendChild(card);
               });
             } else {
@@ -3474,6 +3516,12 @@
       if (ledgerResultBox) ledgerResultBox.hidden = true;
       if (markdownOutput) markdownOutput.hidden = false;
     }
+  }
+
+  function beginLedgerMaterialUpload(materialId) {
+    ledgerUploadTarget = { materialId: materialId || "", documentSessionId: getCurrentExcelDocumentSession() };
+    var input = byId("excel-ledger-file-input");
+    if (input) input.click();
   }
 
   function runExcelLedgerAction() {
@@ -5788,6 +5836,7 @@
   }
 
   function getTaskPageWorkflowType() {
+    if (state.currentMode === "excelLedger") return EXCEL_LEDGER_WORKFLOW_TASK_TYPE;
     if (state.currentMode === "excelFormulaAssistant") {
       return EXCEL_FORMULA_WORKFLOW_TASK_TYPE;
     }
@@ -8252,7 +8301,7 @@
     if (ledgerMode) {
       var ledgerCtrl = ensureMaterialLedger();
       if (ledgerCtrl && typeof ledgerCtrl.restore === "function") {
-        ledgerCtrl.restore();
+        ledgerCtrl.restore().catch(function () {});
       }
     }
     byId("btn-copy-formula").hidden = !formulaMode || !String((state.formulaResult && (state.formulaResult.copyText || state.formulaResult.primaryFormula)) || "").trim();
@@ -8436,8 +8485,7 @@
     }
     if (byId("btn-import-ledger-material")) {
       byId("btn-import-ledger-material").addEventListener("click", function () {
-        var fileInput = byId("excel-ledger-file-input");
-        if (fileInput) fileInput.click();
+        beginLedgerMaterialUpload();
       });
     }
     if (byId("excel-ledger-file-input")) {
@@ -8445,7 +8493,13 @@
         var file = e.target && e.target.files && e.target.files[0];
         if (file) {
           var ctrl = ensureMaterialLedger();
-          if (ctrl) ctrl.importMaterial(file);
+          var target = ledgerUploadTarget || { documentSessionId: getCurrentExcelDocumentSession() };
+          if (ctrl) {
+            ctrl.importMaterial(file, target.materialId, target.documentSessionId).catch(function (error) {
+              if (target.documentSessionId === getCurrentExcelDocumentSession()) setStatus(error.message);
+            });
+          }
+          ledgerUploadTarget = null;
           e.target.value = "";
         }
       });
@@ -8455,8 +8509,35 @@
         var sourceSessionId = e.target.value;
         if (sourceSessionId) {
           var ctrl = ensureMaterialLedger();
-          if (ctrl) ctrl.cloneFromSource(sourceSessionId);
+          if (ctrl) ctrl.cloneFromSource(sourceSessionId).catch(function () {});
         }
+      });
+    }
+    if (byId("ledger-material-list")) {
+      byId("ledger-material-list").addEventListener("click", function (e) {
+        var target = e.target;
+        var updateId = target && target.getAttribute("data-ledger-update");
+        var removeId = target && target.getAttribute("data-ledger-remove");
+        if (updateId) beginLedgerMaterialUpload(updateId);
+        if (removeId && window.confirm("移除这份资料？")) {
+          var ctrl = ensureMaterialLedger();
+          if (ctrl) ctrl.deleteMaterial(removeId).catch(function () {});
+        }
+      });
+    }
+    if (byId("ledger-conflicts")) {
+      byId("ledger-conflicts").addEventListener("change", function (e) {
+        var target = e.target;
+        var conflictId = target && target.getAttribute("data-ledger-conflict");
+        var ctrl = ensureMaterialLedger();
+        if (!conflictId || !ctrl) return;
+        var view = ctrl.getState();
+        var conflict = view.conflicts.filter(function (item) { return item.conflictId === conflictId; })[0];
+        var option = conflict && conflict.options.filter(function (item) { return item.optionId === target.value; })[0];
+        if (!option) return;
+        var choices = view.conflictResolutions.filter(function (item) { return item.conflictId !== conflictId; });
+        choices.push({ conflictId: conflictId, chosenCandidateId: option.optionId, chosenValue: option.value });
+        ctrl.setConflictResolutions(choices);
       });
     }
     if (byId("excel-ledger-instruction")) {

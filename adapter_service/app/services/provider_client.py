@@ -2786,6 +2786,7 @@ class ProviderClient:
             ("excel.analysis", "智能分析"),
             ("excel.formula_assistant", "公式助手"),
             ("excel.smart_fill", "智能填写"),
+            ("excel.material_ledger", "任务台账"),
             ("ppt.slide_assistant", "智能总结"),
             ("ppt.structure_review", "结构审查"),
         ]

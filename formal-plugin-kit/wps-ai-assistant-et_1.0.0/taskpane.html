@@ -92,6 +92,8 @@
                 </select>
               </label>
             </div>
+            <div id="ledger-material-list" aria-live="polite"></div>
+            <div id="ledger-conflicts" hidden></div>
             <div class="ledger-headers-section" style="margin-top: 8px;">
               <div class="ledger-headers-head" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
                 <span class="field-label" style="font-size: 13px; font-weight: 600;">台账表头列</span>
@@ -144,6 +146,7 @@
           <div id="result-output" class="markdown-output">等待运行。</div>
           <div id="excel-ledger-result" class="excel-ledger-result" hidden>
             <div class="ledger-result-toolbar" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+              <p id="ledger-basis-warning" class="field-hint" hidden></p>
               <span id="ledger-result-meta" class="field-hint"></span>
               <button id="btn-copy-ledger-tsv" class="ghost-action" type="button">复制表格 (TSV)</button>
             </div>

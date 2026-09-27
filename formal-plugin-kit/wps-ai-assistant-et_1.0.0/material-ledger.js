@@ -75,12 +75,14 @@
           conflictResolutions: (saved && saved.conflictResolutions) || [],
           jobId: (saved && saved.jobId) || "",
           clientJobId: (saved && saved.clientJobId) || "",
-          status: (saved && saved.jobId) ? "running" : "idle",
+          status: (saved && saved.status) || ((saved && saved.jobId) ? "running" : "idle"),
           phase: (saved && saved.phase) || "",
           phaseLabel: (saved && saved.phase) ? (LEDGER_PHASE_TEXT[saved.phase] || saved.phase) : "",
           result: (saved && saved.result) || null,
-          error: "",
-          busy: false,
+          error: (saved && saved.error) || "",
+          pendingRequest: (saved && saved.pendingRequest) || null,
+          busy: Boolean(saved && saved.jobId && (!saved.status || saved.status === "running" || saved.status === "queued")),
+          pollScheduled: false,
           activeDrawerRowIndex: null
         };
       }
@@ -101,7 +103,11 @@
           conflictResolutions: s.conflictResolutions,
           jobId: s.jobId,
           clientJobId: s.clientJobId,
-          result: s.result
+          result: s.result,
+          status: s.status,
+          phase: s.phase,
+          error: s.error,
+          pendingRequest: s.pendingRequest
         }));
       } catch (e) {
         // Storage might fail in sandboxed iframe
@@ -111,7 +117,7 @@
     function notify(s) {
       s.catalogLabel = formatCatalogLabel(s.catalogSummary);
       s.phaseLabel = LEDGER_PHASE_TEXT[s.phase] || (s.phase ? s.phase : (s.status === "running" ? "处理中..." : ""));
-      render(clone(s));
+      if (s.documentSessionId === getSessionId()) render(clone(s));
     }
 
     function setHeaders(headers) {
@@ -121,6 +127,8 @@
       } else {
         s.headers = DEFAULT_LEDGER_HEADERS.slice();
       }
+      s.conflicts = [];
+      s.conflictResolutions = [];
       persist(s);
       notify(s);
       return s.headers;
@@ -176,6 +184,8 @@
     function setInstruction(text) {
       var s = current();
       s.instruction = String(text || "").trim();
+      s.conflicts = [];
+      s.conflictResolutions = [];
       persist(s);
       notify(s);
     }
@@ -183,6 +193,8 @@
     function setUserFacts(text) {
       var s = current();
       s.userFacts = String(text || "").trim();
+      s.conflicts = [];
+      s.conflictResolutions = [];
       persist(s);
       notify(s);
     }
@@ -194,39 +206,45 @@
       notify(s);
     }
 
-    async function checkConflicts() {
-      var s = current();
+    async function checkConflicts(sessionId) {
+      var s = stateFor(sessionId || getSessionId());
+      var userFacts = s.userFacts;
       try {
         var res = await request(
           "/excel/material-ledger/conflicts?documentSessionId=" + encodeURIComponent(s.documentSessionId) +
-          "&userFacts=" + encodeURIComponent(s.userFacts || ""),
+          "&userFacts=" + encodeURIComponent(userFacts || ""),
           null,
           { method: "GET" }
         );
+        if (s.userFacts !== userFacts) return [];
+        var previous = JSON.stringify(s.conflicts);
         if (res && res.data && res.data.conflicts) {
           s.conflicts = res.data.conflicts;
         } else if (res && Array.isArray(res.data)) {
           s.conflicts = res.data;
         }
+        if (previous !== JSON.stringify(s.conflicts)) s.conflictResolutions = [];
         notify(s);
         return s.conflicts;
       } catch (err) {
-        s.conflicts = [];
+        s.error = (err && err.message) || "核对事实差异失败";
         notify(s);
-        return [];
+        throw err;
       }
     }
 
-    async function listReusableSources() {
-      var s = current();
+    async function listReusableSources(sessionId) {
+      var s = stateFor(sessionId || getSessionId());
       try {
         var res = await request("/materials/reusable-sources", null, { method: "GET" });
-        var list = (res && res.data && res.data.sources) || [];
+        var list = ((res && res.data && res.data.sources) || []).filter(function (source) {
+          return source.sourceSessionId !== s.documentSessionId;
+        });
         s.reusableSources = list;
         notify(s);
         return list;
       } catch (err) {
-        s.reusableSources = [];
+        s.error = (err && err.message) || "读取可复用资料失败";
         notify(s);
         return [];
       }
@@ -234,6 +252,7 @@
 
     async function cloneFromSource(sourceSessionId) {
       var s = current();
+      if (s.busy) throw new Error("当前工作簿正在处理任务，请稍后变更资料。");
       s.busy = true;
       notify(s);
       try {
@@ -247,8 +266,11 @@
           s.catalogSummary = res.data;
         }
         s.busy = false;
+        s.conflicts = [];
+        s.conflictResolutions = [];
         persist(s);
         notify(s);
+        await checkConflicts(s.documentSessionId);
         return s.catalogSummary;
       } catch (err) {
         s.busy = false;
@@ -258,24 +280,45 @@
       }
     }
 
-    async function importMaterial(upload) {
-      var s = current();
+    async function importMaterial(upload, materialId, sessionId) {
+      var s = stateFor(sessionId || getSessionId());
+      if (s.busy) throw new Error("当前工作簿正在处理任务，请稍后变更资料。");
       s.busy = true;
       notify(s);
       try {
-        var res = await request("/excel/materials/import", {
+        var fileName = upload.fileName || upload.name;
+        var contentBase64 = upload.contentBase64;
+        if (!contentBase64) {
+          if (typeof upload.arrayBuffer === "function") {
+            var bytes = new Uint8Array(await upload.arrayBuffer());
+            var binary = "";
+            for (var i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+            contentBase64 = btoa(binary);
+          } else {
+            contentBase64 = await new Promise(function (resolve, reject) {
+              var reader = new FileReader();
+              reader.onload = function () { resolve(String(reader.result || "").split(",").pop()); };
+              reader.onerror = function () { reject(new Error("读取资料文件失败")); };
+              reader.readAsDataURL(upload);
+            });
+          }
+        }
+        var res = await request(materialId ? "/excel/materials/" + encodeURIComponent(materialId) : "/excel/materials/import", {
           documentSessionId: s.documentSessionId,
-          fileName: upload.fileName,
-          contentBase64: upload.contentBase64
-        }, { method: "POST" });
+          fileName: fileName,
+          contentBase64: contentBase64
+        }, { method: materialId ? "PUT" : "POST" });
         if (res && res.data && res.data.catalogSummary) {
           s.catalogSummary = res.data.catalogSummary;
         } else {
-          await loadCatalog();
+          await loadCatalog(s.documentSessionId);
         }
         s.busy = false;
+        s.conflicts = [];
+        s.conflictResolutions = [];
         persist(s);
         notify(s);
+        await checkConflicts(s.documentSessionId);
         return res && res.data;
       } catch (err) {
         s.busy = false;
@@ -285,8 +328,13 @@
       }
     }
 
+    async function updateMaterial(materialId, upload, sessionId) {
+      return importMaterial(upload, materialId, sessionId);
+    }
+
     async function deleteMaterial(materialId) {
       var s = current();
+      if (s.busy) throw new Error("当前工作簿正在处理任务，请稍后变更资料。");
       s.busy = true;
       notify(s);
       try {
@@ -294,11 +342,14 @@
         if (res && res.data && res.data.catalogSummary) {
           s.catalogSummary = res.data.catalogSummary;
         } else {
-          await loadCatalog();
+          await loadCatalog(s.documentSessionId);
         }
         s.busy = false;
+        s.conflicts = [];
+        s.conflictResolutions = [];
         persist(s);
         notify(s);
+        await checkConflicts(s.documentSessionId);
         return res && res.data;
       } catch (err) {
         s.busy = false;
@@ -308,8 +359,8 @@
       }
     }
 
-    async function loadCatalog() {
-      var s = current();
+    async function loadCatalog(sessionId) {
+      var s = stateFor(sessionId || getSessionId());
       try {
         var res = await request("/excel/materials/catalog?documentSessionId=" + encodeURIComponent(s.documentSessionId), null, { method: "GET" });
         if (res && res.data) {
@@ -317,13 +368,60 @@
           persist(s);
           notify(s);
         }
-      } catch (err) {}
+      } catch (err) {
+        s.error = (err && err.message) || "读取资料目录失败";
+        notify(s);
+        throw err;
+      }
+    }
+
+    function finishJob(s, job) {
+      s.status = job.status;
+      s.phase = job.phase || job.status;
+      s.busy = job.status === "running" || job.status === "queued";
+      if (job.status === "completed") {
+        s.result = job.result;
+        s.error = "";
+      } else if (job.status === "failed") {
+        s.error = (job.error && job.error.message) || job.error || "台账提取失败";
+      }
+      if (!s.busy) {
+        s.jobId = "";
+        s.pendingRequest = null;
+      }
+      persist(s);
+      notify(s);
     }
 
     async function generate() {
       var s = current();
-      var clientJobId = "job_" + Math.random().toString(36).slice(2, 10);
-      s.clientJobId = clientJobId;
+      if (s.busy) return;
+      var payload = s.pendingRequest;
+      s.busy = true;
+      s.error = "";
+      notify(s);
+      if (!payload) {
+        try {
+          await checkConflicts(s.documentSessionId);
+        } catch (err) { s.busy = false; notify(s); return; }
+        if (s.conflicts.length && s.conflictResolutions.length !== s.conflicts.length) {
+          s.busy = false;
+          s.error = "资料存在事实差异，请先选择依据后再生成。";
+          notify(s);
+          return;
+        }
+        payload = clone({
+          documentSessionId: s.documentSessionId,
+          clientJobId: "job_" + Math.random().toString(36).slice(2, 10),
+          headers: s.headers,
+          instruction: s.instruction,
+          userFacts: s.userFacts,
+          conflictResolutions: s.conflictResolutions
+        });
+      }
+      s.pendingRequest = payload;
+      s.clientJobId = payload.clientJobId;
+      s.jobId = payload.clientJobId;
       s.status = "running";
       s.phase = "preparing";
       s.error = "";
@@ -331,106 +429,80 @@
       s.busy = true;
       persist(s);
       notify(s);
-
       try {
-        var payload = {
-          documentSessionId: s.documentSessionId,
-          clientJobId: clientJobId,
-          headers: s.headers,
-          instruction: s.instruction,
-          userFacts: s.userFacts,
-          conflictResolutions: s.conflictResolutions
-        };
         var res = await request("/excel/material-ledger/jobs", payload, { method: "POST" });
-        if (res && res.data) {
-          s.jobId = res.data.jobId || clientJobId;
-          s.status = res.data.status || "running";
-          s.phase = res.data.phase || s.phase;
-          persist(s);
-          notify(s);
-          pollJob(s.jobId);
-        }
+        var job = res && res.data;
+        if (!job || !job.jobId) throw new Error("未返回任务编号，请恢复查询。");
+        s.jobId = job.jobId;
+        s.pendingRequest = null;
+        finishJob(s, job);
+        if (s.busy) pollJob(s.jobId, s.documentSessionId);
       } catch (err) {
-        s.status = "failed";
+        s.status = "interrupted";
+        s.phase = "";
         s.busy = false;
-        s.error = (err && err.message) || "提交台账提取任务失败";
+        if (err && err.status >= 400 && err.status < 500) {
+          s.pendingRequest = null;
+          s.jobId = "";
+          s.status = "failed";
+        }
+        s.error = (err && err.message) || "提交响应未确认，重试将恢复原任务。";
         persist(s);
         notify(s);
       }
     }
 
-    function pollJob(jobId) {
-      var s = current();
-      if (!jobId || s.jobId !== jobId || s.status === "completed" || s.status === "failed" || s.status === "cancelled") {
-        return;
-      }
-
+    function pollJob(jobId, sessionId) {
+      var s = stateFor(sessionId || getSessionId());
+      if (!jobId || s.jobId !== jobId || s.pollScheduled || !s.busy) return;
+      s.pollScheduled = true;
       schedule(async function () {
-        if (s.jobId !== jobId) return;
+        s.pollScheduled = false;
+        if (s.jobId !== jobId || !s.busy) return;
         try {
           var res = await request("/excel/material-ledger/jobs/" + encodeURIComponent(jobId) + "?documentSessionId=" + encodeURIComponent(s.documentSessionId), null, { method: "GET" });
-          if (!res || !res.data) {
-            pollJob(jobId);
-            return;
-          }
-          var job = res.data;
-          s.status = job.status;
-          s.phase = job.phase || s.phase;
-          if (job.status === "completed") {
+          if (s.jobId !== jobId) return;
+          if (!res || !res.data) throw new Error("任务状态响应无效");
+          finishJob(s, res.data);
+          if (s.busy) pollJob(jobId, s.documentSessionId);
+        } catch (err) {
+          if (s.jobId !== jobId) return;
+          if (err && err.status === 404) {
+            s.jobId = "";
+            s.status = "interrupted";
+            s.phase = "";
             s.busy = false;
-            setResult(job.result);
-          } else if (job.status === "failed") {
-            s.busy = false;
-            s.error = job.error || "台账提取失败";
-            persist(s);
-            notify(s);
-          } else if (job.status === "cancelled") {
-            s.busy = false;
+            s.error = "原任务不存在，可能因 Adapter 重启而中断，请重新提交。";
             persist(s);
             notify(s);
           } else {
+            s.error = (err && err.message) || "状态查询暂时失败，正在恢复。";
             notify(s);
-            pollJob(jobId);
+            pollJob(jobId, s.documentSessionId);
           }
-        } catch (err) {
-          pollJob(jobId);
         }
       }, 1000);
     }
 
     async function cancel() {
       var s = current();
-      if (!s.jobId) {
-        s.status = "cancelled";
-        s.busy = false;
-        persist(s);
-        notify(s);
-        return;
-      }
+      if (!s.jobId) return;
       try {
         var res = await request("/excel/material-ledger/jobs/" + encodeURIComponent(s.jobId) + "/cancel", {
           documentSessionId: s.documentSessionId
         }, { method: "POST" });
-        s.status = "cancelled";
-        s.busy = false;
-        persist(s);
-        notify(s);
+        if (!res || !res.data) throw new Error("取消响应无效");
+        finishJob(s, res.data);
+        if (s.busy) pollJob(s.jobId, s.documentSessionId);
       } catch (err) {
-        s.status = "cancelled";
-        s.busy = false;
-        persist(s);
+        s.error = "取消失败：" + ((err && err.message) || "请稍后重试");
         notify(s);
       }
     }
 
     function setResult(result) {
       var s = current();
-      s.result = result;
-      s.status = "completed";
-      s.busy = false;
-      s.phase = "completed";
-      persist(s);
-      notify(s);
+      finishJob(s, { status: "completed", result: result });
     }
 
     function formatTsv(result) {
@@ -476,9 +548,10 @@
     async function restore() {
       var s = current();
       notify(s);
-      await loadCatalog();
-      if (s.jobId && s.status === "running") {
-        pollJob(s.jobId);
+      await loadCatalog(s.documentSessionId);
+      await listReusableSources(s.documentSessionId);
+      if (s.jobId && s.busy) {
+        pollJob(s.jobId, s.documentSessionId);
       }
     }
 
@@ -499,6 +572,7 @@
       cloneFromSource: cloneFromSource,
       importMaterial: importMaterial,
       deleteMaterial: deleteMaterial,
+      updateMaterial: updateMaterial,
       loadCatalog: loadCatalog,
       generate: generate,
       cancel: cancel,

@@ -151,6 +151,7 @@ def test_excel_material_store_update_and_limits(temp_roots):
     )
     assert updated["materialId"] == mat_id
     assert updated["fileName"] == "更新版.docx"
+    assert updated["updatedAt"] > res["updatedAt"]
 
     cat = store.get_catalog("excel_sess_3")
     assert cat["totalDocuments"] == 1
@@ -180,3 +181,72 @@ def test_excel_material_store_bind_document(temp_roots):
     cat = store.get_catalog("saved_sess_100")
     assert cat["totalDocuments"] == 1
     assert cat["documentSessionId"] == "saved_sess_100"
+
+
+def test_update_keeps_other_material_fragment_sources(temp_roots):
+    word_dir, excel_dir = temp_roots
+    store = ExcelMaterialStore(base_dir=excel_dir, word_base_dir=word_dir)
+    b64 = base64.b64encode(build_docx()).decode("ascii")
+    first = store.import_material("sources", "", "first.docx", b64)
+    second = store.import_material("sources", "", "second.docx", b64)
+    first_ids = {f["fragmentId"] for f in first["fragments"]}
+    store.update_material("sources", second["materialId"], "updated.docx", b64)
+    catalog = store.get_catalog("sources")
+    assert len({f["fragmentId"] for f in catalog["fragmentsList"]}) == len(catalog["fragmentsList"])
+    assert all(catalog["fragments"][fid]["materialId"] == first["materialId"] for fid in first_ids)
+
+
+def test_clone_self_is_rejected_without_removing_files(temp_roots):
+    word_dir, excel_dir = temp_roots
+    store = ExcelMaterialStore(base_dir=excel_dir, word_base_dir=word_dir)
+    raw = build_docx()
+    imported = store.import_material("self", "", "source.docx", base64.b64encode(raw).decode("ascii"))
+    source = store._get_dir_for_session("self") / "files" / (imported["materialId"] + ".docx")
+    with pytest.raises(AdapterError):
+        store.clone_from_source("self", "self")
+    assert source.read_bytes() == raw
+
+
+def test_clone_copy_failure_keeps_target_materials(temp_roots, monkeypatch):
+    word_dir, excel_dir = temp_roots
+    store = ExcelMaterialStore(base_dir=excel_dir, word_base_dir=word_dir)
+    raw = build_docx()
+    b64 = base64.b64encode(raw).decode("ascii")
+    store.import_material("source", "", "source.docx", b64)
+    target = store.import_material("target", "", "target.docx", b64)
+    target_file = store._get_dir_for_session("target") / "files" / (target["materialId"] + ".docx")
+    def fail_copy(*args, **kwargs):
+        raise OSError("disk full")
+    monkeypatch.setattr(shutil, "copy2", fail_copy)
+    with pytest.raises(OSError):
+        store.clone_from_source("source", "target")
+    assert target_file.read_bytes() == raw
+    assert store.get_catalog("target")["documents"][0]["fileName"] == "target.docx"
+
+
+def test_word_source_clone_waits_for_source_store_write(temp_roots):
+    import threading
+    word_dir, excel_dir = temp_roots
+    word = WordMaterialImportService(state_dir=word_dir)
+    word.import_material({"documentSessionId": "word-lock", "fileName": "source.docx",
+                          "contentBase64": base64.b64encode(build_docx()).decode("ascii")})
+    store = ExcelMaterialStore(base_dir=excel_dir, word_base_dir=word_dir)
+    store.word_store = word._store
+    done = threading.Event()
+    errors = []
+    def clone():
+        try:
+            store.clone_from_source("word-lock", "target-lock")
+        except Exception as exc:
+            errors.append(exc)
+        finally:
+            done.set()
+    worker = threading.Thread(target=clone)
+    with word._store._lock:
+        worker.start()
+        completed_while_writing = done.wait(0.1)
+    worker.join(2)
+    assert not completed_while_writing
+    assert not errors
+    assert done.is_set()
+    assert store.get_catalog("target-lock")["totalDocuments"] == 1

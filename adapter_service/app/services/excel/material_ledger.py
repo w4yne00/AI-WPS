@@ -23,18 +23,29 @@ from app.services.provider_client import (
     ProviderClient,
     _extract_json_payload,
     _estimate_direct_tokens,
+    extract_answer,
 )
 from app.services.system_prompts import SystemPromptStore
 from app.services.word.material_composer import (
     detect_material_conflicts,
     parse_user_facts,
-    extract_relevant_fragments,
 )
 
 TASK_TYPE = "excel.material_ledger"
 CLIENT_JOB_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
 DEFAULT_HEADERS = ["工作事项", "责任部门", "完成时间", "交付物验收"]
 MAX_REQUEST_BYTES = 64 * 1024
+
+
+def _fragment_chapters(catalog: dict) -> dict:
+    chapters = {}
+    current = {}
+    for block in catalog.get("blocks", []):
+        material_id = block.get("materialId", "")
+        if block.get("kind") == "heading":
+            current[material_id] = block.get("text") or "正文"
+        chapters[(material_id, block.get("blockId"))] = current.get(material_id, "正文")
+    return chapters
 
 
 class ExcelMaterialLedgerCoordinator:
@@ -81,10 +92,6 @@ class ExcelMaterialLedgerCoordinator:
         if not isinstance(conflict_resolutions, list):
             raise AdapterError("REQUEST_VALIDATION_FAILED", "冲突选择格式无效。", status_code=422)
 
-        catalog = self.store.get_catalog(session_id)
-        if not catalog or not catalog.get("documents"):
-            raise AdapterError("MATERIAL_NOT_FOUND", "当前工作簿尚未导入或复用参考资料，请先添加资料。", status_code=400)
-
         request_repr = {
             "documentSessionId": session_id,
             "clientJobId": client_job_id,
@@ -95,12 +102,37 @@ class ExcelMaterialLedgerCoordinator:
         }
         fingerprint = json.dumps(request_repr, ensure_ascii=False, sort_keys=True)
 
-        with self._lock:
+        with self._lock, self.store._lock:
             existing = self.coordinator.get(client_job_id, task_type=TASK_TYPE)
             if existing:
                 if self.coordinator.get_request_fingerprint(client_job_id, task_type=TASK_TYPE) != fingerprint:
                     raise AdapterError("MATERIAL_LEDGER_JOB_CONFLICT", "任务编号已绑定其他请求。", status_code=409)
                 return existing
+
+            self.store._check_busy(session_id)
+            catalog = self.store.get_catalog(session_id)
+            if not catalog.get("documents"):
+                raise AdapterError("MATERIAL_NOT_FOUND", "当前工作簿尚未导入或复用参考资料，请先添加资料。", status_code=400)
+            conflicts = detect_material_conflicts(catalog, user_facts=user_facts)
+            normalized_choices = []
+            for conflict in conflicts:
+                choices = [choice for choice in conflict_resolutions
+                           if isinstance(choice, dict) and choice.get("conflictId") == conflict["conflictId"]]
+                if len(choices) != 1:
+                    raise AdapterError("MATERIAL_LEDGER_CONFLICT_UNRESOLVED", "资料存在事实差异，请先核对并选择依据。", status_code=409)
+                choice = choices[0]
+                candidates = [option for option in conflict["options"]
+                              if option["optionId"] == choice.get("chosenCandidateId")
+                              and option["value"] == choice.get("chosenValue")]
+                if len(candidates) != 1:
+                    raise AdapterError("REQUEST_VALIDATION_FAILED", "冲突选择已失效，请重新核对。", status_code=422)
+                option = candidates[0]
+                normalized_choices.append(dict(conflictId=conflict["conflictId"], topic=conflict["topic"],
+                                               chosenCandidateId=option["optionId"], chosenValue=option["value"],
+                                               sourceId=option["sourceId"], sourceType=option["sourceType"]))
+            if len(normalized_choices) != len(conflict_resolutions):
+                raise AdapterError("REQUEST_VALIDATION_FAILED", "冲突选择已失效，请重新核对。", status_code=422)
+            conflict_resolutions = normalized_choices
 
             system_prompt_asset = SystemPromptStore().load(TASK_TYPE)
             system_prompt = system_prompt_asset["content"]
@@ -140,24 +172,16 @@ class ExcelMaterialLedgerCoordinator:
                 allow_running_cancel=True,
             )
 
-    def _call_provider_model(self, system_prompt: str, user_content: str) -> str:
-        auth = self.provider.resolve_task_auth(TASK_TYPE)
+    def _call_provider_model(self, system_prompt: str, user_content: str,
+                             task_auth=None, trace_id: str = "", progress=None) -> str:
+        auth = task_auth if task_auth is not None else self.provider.resolve_task_auth(TASK_TYPE)
         if not auth.get("providerBaseUrl") or not auth.get("apiKey"):
             raise AdapterError("MODEL_CONFIG_INCOMPLETE", "任务台账尚未配置模型，请前往设置。", status_code=400)
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_content},
-        ]
-        result = self.provider.chat_completion(
-            messages=messages,
-            task_type=TASK_TYPE,
-            temperature=0.1,
+        body = self.provider.post_task(
+            TASK_TYPE, trace_id, {}, system_prompt + "\n" + user_content,
+            task_auth=auth, progress_callback=progress,
         )
-        if isinstance(result, dict) and "choices" in result and result["choices"]:
-            return result["choices"][0].get("message", {}).get("content", "")
-        if isinstance(result, str):
-            return result
-        return str(result)
+        return extract_answer(body)
 
     def _build_user_prompt(
         self,
@@ -173,7 +197,7 @@ class ExcelMaterialLedgerCoordinator:
         if instruction:
             prompt_parts.append("【提取要求】\n{0}".format(instruction))
         if user_facts:
-            prompt_parts.append("【用户补充事实】\n{0}".format(user_facts))
+            prompt_parts.append("【用户补充事实】\n{0}".format(json.dumps(parse_user_facts(user_facts)[0], ensure_ascii=False)))
         if conflict_resolutions:
             prompt_parts.append("【事实冲突裁决】\n{0}".format(json.dumps(conflict_resolutions, ensure_ascii=False)))
 
@@ -208,7 +232,9 @@ class ExcelMaterialLedgerCoordinator:
         if raw_fragments is None:
             raw_frags = catalog.get("fragments", {})
             raw_fragments = list(raw_frags.values()) if isinstance(raw_frags, dict) else raw_frags
-        fragments = list(raw_fragments or [])
+        chapters = _fragment_chapters(catalog)
+        fragments = [dict(fragment, chapter=chapters.get((fragment.get("materialId", ""), fragment.get("blockId")), "正文"))
+                     for fragment in raw_fragments or []]
 
         user_content = self._build_user_prompt(
             headers=headers,
@@ -218,16 +244,24 @@ class ExcelMaterialLedgerCoordinator:
             fragments=fragments,
         )
 
+        auth = snapshot["taskAuth"]
+        budget, _ = direct_model_input_budget(
+            int(auth.get("contextWindowTokens") or DEFAULT_CONTEXT_WINDOW_TOKENS),
+            int(auth.get("maxOutputTokens") or DEFAULT_RESERVED_OUTPUT_TOKENS),
+        )
+        if _estimate_direct_tokens(system_prompt, system_prompt + "\n" + user_content) > budget:
+            raise AdapterError("MODEL_INPUT_OVER_BUDGET", "资料超过单次模型预算，请缩小资料范围；未截断资料。", status_code=413)
         check_cancel()
         progress("provider_processing")
-        raw_response = self._call_provider_model(system_prompt, user_content)
+        raw_response = self._call_provider_model(system_prompt, user_content,
+                                                 task_auth=auth, trace_id=snapshot["traceId"], progress=progress)
 
         check_cancel()
         progress("parsing")
-        validated_result = self._parse_and_validate_ledger(raw_response, headers, catalog)
+        validated_result = self._parse_and_validate_ledger(raw_response, headers, catalog, user_facts=user_facts)
         return validated_result
 
-    def _parse_and_validate_ledger(self, raw_response: str, headers: List[str], catalog: dict) -> dict:
+    def _parse_and_validate_ledger(self, raw_response: str, headers: List[str], catalog: dict, user_facts: str = "") -> dict:
         try:
             payload = _extract_json_payload(raw_response)
         except Exception as e:
@@ -263,6 +297,8 @@ class ExcelMaterialLedgerCoordinator:
         if not isinstance(existing_frags, dict):
             existing_frags = {str(f.get("fragmentId")): f for f in catalog.get("fragmentsList", [])}
 
+        chapters = _fragment_chapters(catalog)
+        _, user_fact_map = parse_user_facts(user_facts)
         validated_rows = []
         for idx, row in enumerate(raw_rows):
             if not isinstance(row, dict):
@@ -294,16 +330,18 @@ class ExcelMaterialLedgerCoordinator:
             if not isinstance(raw_fids, list):
                 raw_fids = []
 
+            if not raw_fids:
+                raise AdapterError("MATERIAL_LEDGER_INVALID_SOURCE", "任务行没有真实出处，无法核验。", status_code=502)
             sources = []
             for fid in raw_fids:
                 fid_str = str(fid)
-                if fid_str == "user-fact" or fid_str.startswith("user-fact-"):
+                if fid_str in user_fact_map:
                     sources.append({
                         "sourceId": fid_str,
                         "sourceType": "user",
                         "fileName": "用户补充事实",
                         "chapter": "补充事实",
-                        "text": fid_str,
+                        "text": user_fact_map[fid_str],
                     })
                     continue
 
@@ -325,7 +363,7 @@ class ExcelMaterialLedgerCoordinator:
                     "fragmentId": fid,
                     "materialId": frag.get("materialId", ""),
                     "fileName": frag.get("fileName", "参考资料"),
-                    "chapter": frag.get("heading") or frag.get("chapter") or "正文",
+                    "chapter": chapters.get((frag.get("materialId", ""), frag.get("blockId")), frag.get("heading") or frag.get("chapter") or "正文"),
                     "text": frag.get("text", ""),
                 })
 

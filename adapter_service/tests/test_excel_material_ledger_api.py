@@ -370,4 +370,3 @@ class StandaloneExcelMaterialLedgerTestCase(unittest.TestCase):
             finish.set()
             terminal = self.coordinator.wait_job("job_busy_001", "sess_busy_test")
             self.assertEqual(terminal["status"], "completed")
-

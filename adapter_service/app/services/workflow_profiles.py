@@ -19,6 +19,7 @@ SUPPORTED_WORKFLOW_TASKS = (
     "excel.analysis",
     "excel.formula_assistant",
     "excel.smart_fill",
+    "excel.material_ledger",
     "ppt.slide_assistant",
     "ppt.structure_review",
 )

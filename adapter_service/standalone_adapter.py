@@ -201,7 +201,7 @@ MATERIAL_COMPOSER_JOBS = MaterialComposerJobs(WORD_MATERIAL_IMPORT_SERVICE)
 EXCEL_ANALYSIS_JOB_STORE = ExcelAnalysisJobStore()
 EXCEL_FORMULA_ASSISTANT_JOB_STORE = ExcelFormulaAssistantJobStore()
 EXCEL_SMART_FILL_JOB_STORE = ExcelSmartFillJobStore()
-EXCEL_MATERIAL_STORE = ExcelMaterialStore()
+EXCEL_MATERIAL_STORE = ExcelMaterialStore(word_store=WORD_MATERIAL_IMPORT_SERVICE._store)
 EXCEL_MATERIAL_LEDGER_COORDINATOR = ExcelMaterialLedgerCoordinator(store=EXCEL_MATERIAL_STORE)
 PPT_DOCUMENT_FILE_STORE = PptDocumentFileStore(cleanup_interval_seconds=60)
 PPT_SLIDE_ASSISTANT_JOB_STORE = PptSlideAssistantJobStore(

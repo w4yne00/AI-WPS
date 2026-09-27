@@ -190,3 +190,116 @@ def test_excel_material_ledger_cancel_job(ledger_setup):
         assert cancelled["cancelRequested"] is True or cancelled["status"] == "cancelled"
         terminal = coordinator.wait_job(job_id, "excel_test_sess")
         assert terminal["status"] in ("cancelled", "failed")
+
+
+@pytest.mark.parametrize("fragment_ids", [[], ["user-fact-999"]])
+def test_ledger_rejects_absent_or_invented_sources(ledger_setup, fragment_ids):
+    store, ledger = ledger_setup
+    response = json.dumps({"schemaVersion": "excel.material_ledger.v1", "rows": [
+        {"values": {"工作事项": "无依据任务"}, "fragmentIds": fragment_ids}
+    ]})
+    with pytest.raises(AdapterError) as error:
+        ledger._parse_and_validate_ledger(response, ["工作事项"], store.get_catalog("excel_test_sess"))
+    assert error.value.code == "MATERIAL_LEDGER_INVALID_SOURCE"
+
+
+def test_ledger_model_configuration_is_available(tmp_path):
+    from app.services.model_configurations import ModelConfigurationStore
+    store = ModelConfigurationStore(config_path=tmp_path / "config.json", key_dir=tmp_path / "keys")
+    assert store.list_for_task("excel.material_ledger")["taskType"] == "excel.material_ledger"
+
+
+def test_ledger_rejects_second_job_in_same_workbook(ledger_setup):
+    import threading
+    store, ledger = ledger_setup
+    release = threading.Event()
+    entered = threading.Event()
+    def wait_for_release(*args, **kwargs):
+        entered.set()
+        assert release.wait(5)
+        return json.dumps({"schemaVersion": "excel.material_ledger.v1", "rows": []})
+    first_id = "busy_first"
+    try:
+        with patch.object(ledger, "_call_provider_model", side_effect=wait_for_release):
+            first = ledger.submit_job({"documentSessionId": "excel_test_sess", "clientJobId": first_id})
+            assert entered.wait(2)
+            assert ledger.submit_job({"documentSessionId": "excel_test_sess", "clientJobId": first_id})["jobId"] == first["jobId"]
+            with pytest.raises(AdapterError) as error:
+                ledger.submit_job({"documentSessionId": "excel_test_sess", "clientJobId": "busy_second"})
+            assert error.value.code == "MATERIAL_COMPOSER_BUSY"
+    finally:
+        release.set()
+        ledger.wait_job(first_id, "excel_test_sess")
+
+
+@pytest.mark.parametrize("method", ["direct_model", "workflow_platform"])
+def test_ledger_runs_through_real_provider_transport(ledger_setup, method):
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    import threading
+    store, ledger = ledger_setup
+    answer = json.dumps({"schemaVersion": "excel.material_ledger.v1", "rows": [
+        {"values": {"工作事项": "基础网络改造"}, "fragmentIds": [1]}
+    ]})
+    received = []
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            received.append((self.path, json.loads(self.rfile.read(int(self.headers["Content-Length"])).decode())))
+            body = {"choices": [{"message": {"content": answer}}]} if method == "direct_model" else {"answer": answer}
+            raw = json.dumps(body).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+        def log_message(self, *args):
+            pass
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    worker = threading.Thread(target=server.serve_forever, daemon=True)
+    worker.start()
+    auth = {"accessMethod": method, "providerBaseUrl": "http://127.0.0.1:{0}".format(server.server_port),
+            "providerChatPath": "/chat-messages", "providerMode": "blocking", "apiKey": "test-key",
+            "modelName": "test-model", "maxOutputTokens": 8000, "contextWindowTokens": 40000}
+    try:
+        with patch.object(ledger.provider, "resolve_task_auth", return_value=auth):
+            job = ledger.submit_job({"documentSessionId": "excel_test_sess", "clientJobId": "transport_" + method})
+            result = ledger.wait_job(job["jobId"], "excel_test_sess")
+        assert result["status"] == "completed", result.get("error")
+        assert result["result"]["rows"][0]["values"]["工作事项"] == "基础网络改造"
+        assert len(received) == 1
+        assert received[0][0] == ("/chat/completions" if method == "direct_model" else "/chat-messages")
+    finally:
+        server.shutdown()
+        server.server_close()
+        worker.join(2)
+
+
+def test_ledger_sources_include_original_chapter_and_user_fact_text(ledger_setup):
+    store, ledger = ledger_setup
+    raw = json.dumps({"schemaVersion": "excel.material_ledger.v1", "rows": [
+        {"values": {"工作事项": "网络改造"}, "fragmentIds": [2, "user-fact-1"]}
+    ]})
+    result = ledger._parse_and_validate_ledger(raw, ["工作事项"], store.get_catalog("excel_test_sess"), user_facts="一期由信息化部监督")
+    assert result["rows"][0]["sources"][0]["chapter"] == "第一章 建设任务"
+    assert result["rows"][0]["sources"][1]["text"] == "一期由信息化部监督"
+
+
+def test_ledger_conflict_choices_are_validated_against_current_materials(ledger_setup):
+    store, ledger = ledger_setup
+    raw = json.dumps({"schemaVersion": "excel.material_ledger.v1", "rows": []})
+    conflicts = [{"conflictId": "conflict-1", "topic": "预算", "options": [
+        {"optionId": "opt-1-1", "value": "100万元", "sourceId": "m1", "sourceType": "material"}
+    ]}]
+    with patch("app.services.excel.material_ledger.detect_material_conflicts", return_value=conflicts):
+        with pytest.raises(AdapterError) as error:
+            ledger.submit_job({"documentSessionId": "excel_test_sess", "clientJobId": "conflict_missing"})
+        assert error.value.code == "MATERIAL_LEDGER_CONFLICT_UNRESOLVED"
+        with pytest.raises(AdapterError) as error:
+            ledger.submit_job({"documentSessionId": "excel_test_sess", "clientJobId": "conflict_invalid", "conflictResolutions": [
+                {"conflictId": "conflict-1", "chosenCandidateId": "opt-1-1", "chosenValue": "200万元"}
+            ]})
+        assert error.value.code == "REQUEST_VALIDATION_FAILED"
+        with patch.object(ledger, "_call_provider_model", return_value=raw):
+            job = ledger.submit_job({"documentSessionId": "excel_test_sess", "clientJobId": "conflict_valid", "conflictResolutions": [
+                {"conflictId": "conflict-1", "chosenCandidateId": "opt-1-1", "chosenValue": "100万元"}
+            ]})
+            assert ledger.wait_job(job["jobId"], "excel_test_sess")["status"] == "completed"

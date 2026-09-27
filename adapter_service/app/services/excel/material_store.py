@@ -1,6 +1,5 @@
 import base64
 import binascii
-from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
@@ -8,6 +7,8 @@ import re
 import secrets
 import shutil
 import threading
+import tempfile
+from contextlib import nullcontext
 from typing import Dict, List, Optional
 
 from app.core.errors import AdapterError
@@ -32,6 +33,8 @@ from app.services.word.material_import import (
     _security_error,
     _read_document,
     _next_fragment_index,
+    _updated_at,
+    WordMaterialStore,
 )
 
 
@@ -41,6 +44,7 @@ class ExcelMaterialStore:
         base_dir: Optional[Path] = None,
         word_base_dir: Optional[Path] = None,
         coordinator: Optional[LongTaskCoordinator] = None,
+        word_store: Optional[WordMaterialStore] = None,
     ) -> None:
         if base_dir is not None:
             self.base_dir = Path(base_dir)
@@ -67,6 +71,9 @@ class ExcelMaterialStore:
             except Exception:
                 self.word_base_dir = Path("run/word_materials").resolve()
 
+        self.word_store = word_store
+        if word_store is not None:
+            self.word_base_dir = word_store.base_dir
         self.coordinator = coordinator or get_long_task_coordinator()
         self._lock = threading.RLock()
         self._memory_catalogs: Dict[str, dict] = {}
@@ -188,9 +195,8 @@ class ExcelMaterialStore:
         if not target_session_id:
             raise AdapterError("REQUEST_VALIDATION_FAILED", "请指定目标工作簿会话编号。", status_code=422)
 
-        self._check_busy(target_session_id)
-
-        with self._lock:
+        with self._lock, (self.word_store._lock if self.word_store is not None else nullcontext()):
+            self._check_busy(target_session_id)
             source_dir = self._get_dir_for_session(source_session_id, self.word_base_dir)
             if not source_dir:
                 source_dir = self._get_dir_for_session(source_session_id, self.base_dir)
@@ -208,64 +214,94 @@ class ExcelMaterialStore:
 
             target_dir_name = self._resolve_dir_name(target_session_id, target_doc_identity)
             target_dir = self.base_dir / target_dir_name
-            if target_dir.exists():
-                shutil.rmtree(target_dir, ignore_errors=True)
-            target_dir.mkdir(parents=True, exist_ok=True)
+            existing_target = self._get_dir_for_session(target_session_id)
+            if existing_target:
+                target_dir = existing_target
+                target_dir_name = target_dir.name
+            if source_session_id == target_session_id or source_dir.resolve() == target_dir.resolve():
+                raise AdapterError("MATERIAL_SOURCE_EQUALS_TARGET", "不能复用当前工作簿自身的资料。", status_code=409)
+            if self.coordinator.has_active_task(task_type="word.material_composer", document_session_id=source_session_id):
+                raise AdapterError("MATERIAL_COMPOSER_BUSY", "来源资料正在生成任务，请稍后复用。", status_code=409)
+            self._check_busy(source_session_id)
+            final_target = target_dir
+            target_dir = Path(tempfile.mkdtemp(prefix=".clone-", dir=str(self.base_dir)))
+            backup = None
+            published = False
 
-            # Copy files directory
-            source_files = source_dir / "files"
-            target_files = target_dir / "files"
-            target_files.mkdir(parents=True, exist_ok=True)
-            if source_files.exists():
-                for f in source_files.iterdir():
-                    if f.is_file():
-                        shutil.copy2(f, target_files / f.name)
+            try:
+                # Copy files directory
+                source_files = source_dir / "files"
+                target_files = target_dir / "files"
+                target_files.mkdir(parents=True, exist_ok=True)
+                if source_files.exists():
+                    for f in source_files.iterdir():
+                        if f.is_file():
+                            shutil.copy2(f, target_files / f.name)
 
-            # Copy materials directory
-            source_mats = source_dir / "materials"
-            target_mats = target_dir / "materials"
-            target_mats.mkdir(parents=True, exist_ok=True)
-            if source_mats.exists():
-                for f in source_mats.iterdir():
-                    if f.is_file():
-                        try:
-                            view = json.loads(f.read_text(encoding="utf-8"))
-                            view["documentSessionId"] = target_session_id
-                            (target_mats / f.name).write_text(json.dumps(view, ensure_ascii=False, indent=2), encoding="utf-8")
-                        except Exception:
-                            shutil.copy2(f, target_mats / f.name)
+                # Copy materials directory
+                source_mats = source_dir / "materials"
+                target_mats = target_dir / "materials"
+                target_mats.mkdir(parents=True, exist_ok=True)
+                if source_mats.exists():
+                    for f in source_mats.iterdir():
+                        if f.is_file():
+                            try:
+                                view = json.loads(f.read_text(encoding="utf-8"))
+                                view["documentSessionId"] = target_session_id
+                                (target_mats / f.name).write_text(json.dumps(view, ensure_ascii=False, indent=2), encoding="utf-8")
+                            except Exception:
+                                shutil.copy2(f, target_mats / f.name)
 
-            now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-            manifest["documentSessionId"] = target_session_id
-            manifest["documentIdentity"] = target_doc_identity
-            manifest["updatedAt"] = now_iso
-            (target_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+                now_iso = _updated_at()
+                manifest["documentSessionId"] = target_session_id
+                manifest["documentIdentity"] = target_doc_identity
+                manifest["updatedAt"] = now_iso
+                (target_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
 
-            # Copy and rebind catalog_cache.json
-            catalog: dict = {}
-            source_cache = source_dir / "catalog_cache.json"
-            if source_cache.exists():
+                # Copy and rebind catalog_cache.json
+                catalog: dict = {}
+                source_cache = source_dir / "catalog_cache.json"
+                if source_cache.exists():
+                    try:
+                        catalog = json.loads(source_cache.read_text(encoding="utf-8"))
+                        catalog["documentSessionId"] = target_session_id
+                    except Exception:
+                        catalog = {}
+                if not catalog:
+                    catalog = {
+                        "documentSessionId": target_session_id,
+                        "totalDocuments": manifest.get("totalDocuments", 0),
+                        "totalCharacters": manifest.get("totalCharacters", 0),
+                        "totalTableCells": manifest.get("totalTableCells", 0),
+                        "characterCountMethod": CHARACTER_COUNT_METHOD,
+                        "documents": manifest.get("documents", []),
+                        "toc": [],
+                        "blocks": [],
+                        "fragmentsList": [],
+                        "fragments": {},
+                    }
+                (target_dir / "catalog_cache.json").write_text(json.dumps(catalog, ensure_ascii=False, indent=2), encoding="utf-8")
+
+                if final_target.exists():
+                    backup = self.base_dir / (".previous-" + secrets.token_hex(8))
+                    final_target.rename(backup)
                 try:
-                    catalog = json.loads(source_cache.read_text(encoding="utf-8"))
-                    catalog["documentSessionId"] = target_session_id
+                    target_dir.rename(final_target)
+                    self._update_session_index(target_session_id, target_dir_name)
+                    published = True
                 except Exception:
-                    catalog = {}
-            if not catalog:
-                catalog = {
-                    "documentSessionId": target_session_id,
-                    "totalDocuments": manifest.get("totalDocuments", 0),
-                    "totalCharacters": manifest.get("totalCharacters", 0),
-                    "totalTableCells": manifest.get("totalTableCells", 0),
-                    "characterCountMethod": CHARACTER_COUNT_METHOD,
-                    "documents": manifest.get("documents", []),
-                    "toc": [],
-                    "blocks": [],
-                    "fragmentsList": [],
-                    "fragments": {},
-                }
-            (target_dir / "catalog_cache.json").write_text(json.dumps(catalog, ensure_ascii=False, indent=2), encoding="utf-8")
+                    if final_target.exists():
+                        shutil.rmtree(final_target)
+                    if backup is not None:
+                        backup.rename(final_target)
+                        backup = None
+                    raise
+            finally:
+                if target_dir.exists():
+                    shutil.rmtree(target_dir)
+                if published and backup is not None and backup.exists():
+                    shutil.rmtree(backup)
 
-            self._update_session_index(target_session_id, target_dir_name)
             self._memory_catalogs[target_session_id] = catalog
             return catalog
 
@@ -335,8 +371,8 @@ class ExcelMaterialStore:
         file_name: str,
         content_base64: str,
     ) -> dict:
-        self._check_busy(session_id)
         with self._lock:
+            self._check_busy(session_id)
             content = _decode_upload(content_base64)
             _reject_wrong_type(file_name, "")
             catalog = self.get_catalog(session_id)
@@ -376,7 +412,7 @@ class ExcelMaterialStore:
             for block in reading["blocks"]:
                 block["materialId"] = material_id
 
-            now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            now_iso = _updated_at()
             doc_entry = {
                 "materialId": material_id,
                 "fileName": file_name,
@@ -399,7 +435,8 @@ class ExcelMaterialStore:
 
             # Save on disk
             dir_name = self._resolve_dir_name(session_id, doc_identity)
-            d = self.base_dir / dir_name
+            d = self._get_dir_for_session(session_id) or self.base_dir / dir_name
+            dir_name = d.name
             d.mkdir(parents=True, exist_ok=True)
             files_dir = d / "files"
             files_dir.mkdir(parents=True, exist_ok=True)
@@ -443,8 +480,8 @@ class ExcelMaterialStore:
         file_name: str,
         content_base64: str,
     ) -> dict:
-        self._check_busy(session_id)
         with self._lock:
+            self._check_busy(session_id)
             content = _decode_upload(content_base64)
             _reject_wrong_type(file_name, "")
             catalog = self.get_catalog(session_id)
@@ -467,8 +504,8 @@ class ExcelMaterialStore:
                 validated.document_xml,
                 validated.style_names,
                 content,
-                remaining_table_cells=MATERIAL_IMPORT_MAX_TABLE_CELLS,
-                start_fragment_index=1,
+                remaining_table_cells=MATERIAL_IMPORT_MAX_TABLE_CELLS - catalog.get("totalTableCells", 0) + old_doc.get("tableCellsCount", old_doc.get("extractedTableCells", 0)),
+                start_fragment_index=_next_fragment_index(catalog),
             )
             char_count = reading["limits"]["readableCharacterCount"]
             old_chars = old_doc.get("readableCharacterCount", 0)
@@ -486,7 +523,8 @@ class ExcelMaterialStore:
             for block in reading["blocks"]:
                 block["materialId"] = material_id
 
-            now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            now_iso = _updated_at(old_doc.get("updatedAt", ""))
+            old_cells = old_doc.get("tableCellsCount", old_doc.get("extractedTableCells", 0))
             old_doc["fileName"] = file_name
             old_doc["fileSha256"] = hashlib.sha256(content).hexdigest()
             old_doc["readableCharacterCount"] = char_count
@@ -501,6 +539,7 @@ class ExcelMaterialStore:
             catalog["fragments"] = {k: v for k, v in catalog.get("fragments", {}).items() if v.get("materialId") != material_id}
             for frag in reading["fragments"]:
                 catalog["fragments"][str(frag["fragmentId"])] = frag
+            catalog["totalTableCells"] = catalog.get("totalTableCells", 0) - old_cells + reading["limits"].get("extractedTableCells", 0)
             catalog["totalCharacters"] = new_total
             catalog["totalDocuments"] = len(catalog["documents"])
 
@@ -537,6 +576,7 @@ class ExcelMaterialStore:
                     pass
             manifest["totalDocuments"] = catalog["totalDocuments"]
             manifest["totalCharacters"] = catalog["totalCharacters"]
+            manifest["totalTableCells"] = catalog["totalTableCells"]
             manifest["documents"] = catalog["documents"]
             manifest["updatedAt"] = now_iso
             manifest_file.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -546,8 +586,8 @@ class ExcelMaterialStore:
             return view
 
     def delete_material(self, session_id: str, material_id: str) -> dict:
-        self._check_busy(session_id)
         with self._lock:
+            self._check_busy(session_id)
             catalog = self.get_catalog(session_id)
             catalog["documents"] = [d for d in catalog.get("documents", []) if d.get("materialId") != material_id]
             catalog["blocks"] = [b for b in catalog.get("blocks", []) if b.get("materialId") != material_id]
@@ -555,6 +595,7 @@ class ExcelMaterialStore:
             catalog["fragments"] = {k: v for k, v in catalog.get("fragments", {}).items() if v.get("materialId") != material_id}
             catalog["totalDocuments"] = len(catalog["documents"])
             catalog["totalCharacters"] = sum(d.get("readableCharacterCount", 0) for d in catalog["documents"])
+            catalog["totalTableCells"] = sum(d.get("tableCellsCount", d.get("extractedTableCells", 0)) for d in catalog["documents"])
 
             d = self._get_dir_for_session(session_id)
             if d and d.exists():
@@ -565,7 +606,7 @@ class ExcelMaterialStore:
                 if mat_file.exists():
                     mat_file.unlink()
 
-                now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                now_iso = _updated_at()
                 m_file = d / "manifest.json"
                 if m_file.exists():
                     try:
@@ -573,6 +614,7 @@ class ExcelMaterialStore:
                         manifest["documents"] = catalog["documents"]
                         manifest["totalDocuments"] = catalog["totalDocuments"]
                         manifest["totalCharacters"] = catalog["totalCharacters"]
+                        manifest["totalTableCells"] = catalog["totalTableCells"]
                         manifest["updatedAt"] = now_iso
                         m_file.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
                     except Exception:
@@ -592,8 +634,9 @@ class ExcelMaterialStore:
         new_session_id: str,
         new_doc_identity: str,
     ) -> dict:
-        self._check_busy(old_session_id)
         with self._lock:
+            self._check_busy(old_session_id)
+            self._check_busy(new_session_id)
             old_dir = self._get_dir_for_session(old_session_id)
             if not old_dir or not old_dir.exists():
                 raise AdapterError("MATERIAL_NOT_FOUND", "原会话不存在资料集，无法迁移。", status_code=404)
@@ -606,7 +649,7 @@ class ExcelMaterialStore:
             if new_dir != old_dir:
                 old_dir.rename(new_dir)
 
-            now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            now_iso = _updated_at()
             m_file = new_dir / "manifest.json"
             manifest = json.loads(m_file.read_text(encoding="utf-8"))
             manifest["documentSessionId"] = new_session_id

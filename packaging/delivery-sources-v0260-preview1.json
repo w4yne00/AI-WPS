@@ -148,6 +148,26 @@
       "type": "file",
       "source": "formal-plugin-kit/wps-ai-assistant_1.0.0/material-composer.js",
       "target": "packages/wps-ai-assistant_1.0.0/material-composer.js"
+    },
+    {
+      "type": "file",
+      "source": "adapter_service/app/services/excel/material_store.py",
+      "target": "packages/adapter-start-kit/adapter_service/app/services/excel/material_store.py"
+    },
+    {
+      "type": "file",
+      "source": "adapter_service/app/services/excel/material_ledger.py",
+      "target": "packages/adapter-start-kit/adapter_service/app/services/excel/material_ledger.py"
+    },
+    {
+      "type": "file",
+      "source": "adapter_service/system_prompts/excel-material-ledger.md",
+      "target": "packages/adapter-start-kit/adapter_service/system_prompts/excel-material-ledger.md"
+    },
+    {
+      "type": "file",
+      "source": "formal-plugin-kit/wps-ai-assistant-et_1.0.0/material-ledger.js",
+      "target": "packages/wps-ai-assistant-et_1.0.0/material-ledger.js"
     }
   ]
 }
