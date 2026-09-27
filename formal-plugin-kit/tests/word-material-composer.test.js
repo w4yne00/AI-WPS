@@ -39,6 +39,106 @@ function harness(shared) {
   return h;
 }
 function result(session = 'doc-a') { return { taskType: 'word.material_composer', documentSessionId: session, plainText: '正文', paragraphs: [{text:'正文',sources:[{fileName:'资料.docx',section:'第一章',quote:'原句',fragmentId:'f1'}],missingItems:[]}],missingItems:[] }; }
+test('a new unsaved document with the same name never restores the previous document materials', async () => {
+  const helpers = require('../wps-ai-assistant_1.0.0/taskpane-helpers.js');
+  for (const fullName of ['', '文档1']) {
+    const firstDoc = { Name: '文档1', FullName: fullName };
+    const first = harness();
+    first.session = helpers.getDocumentSessionId(firstDoc);
+    first.api.setMaterial({materialId:'private-material', catalogSummary:{
+      totalDocuments:1, totalCharacters:5, documents:[{materialId:'private-material',fileName:'上份文档资料.docx'}], toc:[]
+    }});
+    assert.equal(helpers.getDocumentSessionId(firstDoc), first.session);
+    const reopenedPane = harness(first.saved);
+    reopenedPane.session = helpers.getDocumentSessionId(firstDoc);
+    await reopenedPane.api.restore();
+    assert.equal(reopenedPane.last().catalogSummary.totalDocuments, 1);
+    const nextDocument = harness(first.saved);
+    nextDocument.session = helpers.getDocumentSessionId({Name:'文档1', FullName:fullName});
+    await nextDocument.api.restore();
+    assert.equal(nextDocument.last().catalogSummary.totalDocuments, 0);
+    assert.deepEqual(Array.from(nextDocument.last().materialIds), []);
+    firstDoc.FullName = '/documents/已保存.docx';
+    const savedId = helpers.getDocumentSessionId(firstDoc);
+    assert.notEqual(savedId, first.session);
+    assert.equal(savedId, helpers.getDocumentSessionId({FullName:'/documents/已保存.docx'}));
+  }
+});
+test('an updated material timestamp within the same second pauses write-back and preserves copy', async () => {
+  const h = harness();
+  h.api.setMaterial({materialId:'m1',catalogSummary:{totalDocuments:1,totalCharacters:2,documents:[{
+    materialId:'m1',fileName:'资料.docx',updatedAt:'2026-09-27T10:00:00Z'
+  }],toc:[]}});
+  h.response = {success:true,data:{jobId:'job-a',status:'completed',documentSessionId:'doc-a',result:{
+    ...result(), basisMaterials:[{materialId:'m1',updatedAt:'2026-09-27T10:00:00Z'}]
+  }}};
+  await h.api.start({sectionTitle:'范围',instruction:'编写'});
+  h.api.updateMaterialCatalog({totalDocuments:1,totalCharacters:2,documents:[{
+    materialId:'m1',fileName:'资料.docx',updatedAt:'2026-09-27T10:00:00.000001Z'
+  }],toc:[]});
+  assert.equal(h.last().basisStatus, 'updated');
+  await assert.rejects(h.api.apply({documentSessionId:'doc-a'}), /参考资料已更新/);
+  assert.equal(h.applied.length, 0);
+  await h.api.copy();
+  assert.deepEqual(h.copied, ['正文']);
+});
+test('late catalog restore cannot undo a successful material update or removal', async () => {
+  for (const documents of [[{materialId:'m1',fileName:'新版.docx'}], []]) {
+    const h = harness();
+    let finish;
+    h.catalogResponse = new Promise(resolve => {finish=resolve;});
+    const restoring = h.api.restore();
+    h.api.updateMaterialCatalog({totalDocuments:documents.length,totalCharacters:documents.length,toc:[],documents});
+    finish({success:true,data:{totalDocuments:1,totalCharacters:1,documents:[{materialId:'m1',fileName:'旧版.docx'}],toc:[]}});
+    await restoring;
+    assert.deepEqual(JSON.parse(JSON.stringify(h.last().catalogSummary.documents)), documents);
+  }
+});
+test('write-back waits for every material mutation and reconciles the final server version', async () => {
+  const h = harness();
+  h.api.setMaterial({materialId:'m1',catalogSummary:{totalDocuments:1,totalCharacters:2,documents:[{materialId:'m1',updatedAt:'2026-09-27T10:00:00Z'}],toc:[]}});
+  h.response = {success:true,data:{jobId:'job-a',status:'completed',documentSessionId:'doc-a',result:{...result(),basisMaterials:[{materialId:'m1',updatedAt:'2026-09-27T10:00:00Z'}]}}};
+  await h.api.start({sectionTitle:'范围',instruction:'编写'});
+  h.api.beginMaterialMutation('doc-a');
+  h.api.beginMaterialMutation('doc-a');
+  assert.equal(h.last().basisStatus, 'checking');
+  await assert.rejects(h.api.apply(), /核查/);
+  await h.api.copy();
+  assert.deepEqual(h.copied, ['正文']);
+  h.catalogResponse = {success:true,data:{totalDocuments:1,totalCharacters:2,documents:[{materialId:'m1',updatedAt:'2026-09-27T10:30:00Z'}],toc:[]}};
+  await h.api.endMaterialMutation('doc-a', '第二份 DOCX 已被拒绝');
+  assert.equal(h.last().basisStatus, 'checking');
+  assert.equal(h.last().error, '第二份 DOCX 已被拒绝');
+  await h.api.endMaterialMutation('doc-a');
+  assert.equal(h.last().basisStatus, 'updated');
+  assert.equal(h.last().error, '第二份 DOCX 已被拒绝');
+  await assert.rejects(h.api.apply(), /参考资料已更新/);
+  assert.equal(h.applied.length, 0);
+});
+test('a failed catalog check preserves the draft for copy and blocks write-back until retry succeeds', async () => {
+  const h = harness();
+  h.api.setMaterial({materialId:'m1',catalogSummary:{totalDocuments:1,totalCharacters:2,documents:[{materialId:'m1',updatedAt:'2026-09-27T10:00:00Z'}],toc:[]}});
+  h.response = {success:true,data:{jobId:'job-a',status:'completed',documentSessionId:'doc-a',result:{...result(),basisMaterials:[{materialId:'m1',updatedAt:'2026-09-27T10:00:00Z'}]}}};
+  await h.api.start({sectionTitle:'范围',instruction:'编写'});
+  h.api.beginMaterialMutation('doc-a');
+  h.error = true;
+  await h.api.endMaterialMutation('doc-a');
+  assert.equal(h.last().basisStatus, 'checking');
+  await assert.rejects(h.api.apply(), /核查/);
+  await h.api.copy();
+  assert.deepEqual(h.copied, ['正文']);
+  h.error = false;
+  await h.api.restore();
+  assert.equal(h.last().basisStatus, 'current');
+});
+test('generation waits until a material mutation has finished', async () => {
+  const h = harness();
+  h.api.setMaterial({materialId:'m1'});
+  h.api.beginMaterialMutation('doc-a');
+  await h.api.start({sectionTitle:'范围',instruction:'编写'});
+  assert.equal(h.calls.some(call => call.method === 'POST'), false);
+  assert.equal(h.last().status, 'idle');
+});
 test('submits material reference and input, persists no source text, prevents repeated submission while running', async () => {
  const h=harness(); h.api.setMaterial({materialId:'m1',text:'秘密原文'}); await h.api.start({sectionTitle:'范围',instruction:'编写'}); await h.api.start({sectionTitle:'范围',instruction:'编写'});
  assert.equal(h.calls.filter(x=>x.method==='POST').length,1); assert.equal(h.calls[0].body.materialId,'m1'); assert.equal(h.calls[0].body.documentSessionId,'doc-a'); assert.ok(h.calls[0].body.clientJobId); assert.equal(h.last().status,'running'); assert.ok(!JSON.stringify([...h.saved]).includes('秘密原文'));

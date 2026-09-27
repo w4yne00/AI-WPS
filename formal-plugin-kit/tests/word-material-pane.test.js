@@ -21,6 +21,188 @@ function load(name, context) {
   return vm.runInNewContext('(' + source.slice(start, end) + ')', context);
 }
 
+function materialMutationHarness() {
+  const saved = new Map();
+  const nodes = new Map();
+  const h = { session: 'doc-a', copied: [], applied: [], views: [] };
+  const context = {
+    window: { confirm: () => true },
+    byId: id => {
+      if (!nodes.has(id)) nodes.set(id, { textContent: '', value: '', disabled: false });
+      return nodes.get(id);
+    },
+    getMaterialComposerSessionId: () => h.session,
+    materialImportRequestSequences: {},
+    request: (...args) => h.request(...args),
+    document: {
+      body: { appendChild(input) { input.parentNode = { removeChild() {} }; } },
+      createElement() {
+        return { style: {}, addEventListener(name, callback) { h.chooseFile = callback; }, click() {} };
+      }
+    }
+  };
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../wps-ai-assistant_1.0.0/material-composer.js'), 'utf8'), context);
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../wps-ai-assistant_1.0.0/material-import.js'), 'utf8'), context);
+  h.composer = context.window.createMaterialComposer({
+    getSessionId: () => h.session,
+    storage: { getItem: key => saved.get(key), setItem: (key, value) => saved.set(key, value) },
+    request: (...args) => h.request(...args),
+    render: view => h.views.push(view),
+    copyText: text => h.copied.push(text),
+    applyText: text => { h.applied.push(text); return true; },
+    schedule() {}
+  });
+  context.ensureMaterialComposer = () => h.composer;
+  context.window.readMaterialFile = async () => 'base64';
+  h.context = context;
+  h.saved = saved;
+  h.node = context.byId;
+  h.last = () => h.views[h.views.length - 1];
+  h.flush = () => new Promise(resolve => setImmediate(resolve));
+  return h;
+}
+
+test('the real delete response invalidates a generated draft while preserving copy', async () => {
+  const h = materialMutationHarness();
+  h.composer.setMaterial({ materialId: 'm1', catalogSummary: {
+    totalDocuments: 1, totalCharacters: 2, documents: [{ materialId: 'm1', updatedAt: '2026-09-27T01:00:00' }], toc: []
+  } });
+  h.request = async () => ({ success: true, data: {
+    jobId: 'job-a', status: 'succeeded', documentSessionId: 'doc-a', result: {
+      taskType: 'word.material_composer', documentSessionId: 'doc-a', plainText: '正文',
+      paragraphs: [{ text: '正文', sources: [], missingItems: [] }], missingItems: [],
+      basisMaterials: [{ materialId: 'm1', updatedAt: '2026-09-27T01:00:00' }]
+    }
+  } });
+  await h.composer.start({ sectionTitle: '第一章', instruction: '按资料编写' });
+  assert.equal(h.last().status, 'succeeded');
+  h.request = async () => ({ success: true, data: { totalDocuments: 0, totalCharacters: 0, documents: [], toc: [] } });
+  load('handleMaterialDelete', h.context)('m1');
+  await h.flush();
+  assert.equal(h.last().basisStatus, 'removed');
+  await assert.rejects(h.composer.apply({ documentSessionId: 'doc-a', sectionTitle: '第一章' }), /已被移除/);
+  assert.equal(h.applied.length, 0);
+  await h.composer.copy();
+  assert.deepEqual(h.copied, ['正文']);
+});
+
+test('late update and delete responses cannot replace another document catalog or notice', async () => {
+  for (const operation of ['update', 'delete']) {
+    for (const outcome of ['success', 'failure']) {
+      const h = materialMutationHarness();
+      let resolveRequest, rejectRequest;
+      h.request = () => new Promise((resolve, reject) => { resolveRequest = resolve; rejectRequest = reject; });
+      load(operation === 'update' ? 'handleMaterialUpdate' : 'handleMaterialDelete', h.context)('m1');
+      if (operation === 'update') h.chooseFile({ target: { files: [{ name: '更新.docx' }] } });
+      await h.flush();
+      h.session = 'doc-b';
+      h.composer.setMaterial({ materialId: 'b1', catalogSummary: { totalDocuments: 1, totalCharacters: 20, documents: [{ materialId: 'b1' }], toc: [] } });
+      h.node('material-composer-status').textContent = 'B 文档提示';
+      const catalog = { totalDocuments: 0, totalCharacters: 0, documents: [], toc: [] };
+      if (outcome === 'success') resolveRequest({ success: true, data: operation === 'update' ? { fileName: '更新.docx', catalogSummary: catalog } : catalog });
+      else rejectRequest(Error('A 旧请求失败'));
+      await h.flush();
+      assert.deepEqual(Array.from(h.last().materialIds), ['b1'], operation + outcome);
+      assert.equal(h.node('material-composer-status').textContent, 'B 文档提示', operation + outcome);
+    }
+  }
+});
+
+test('a later deletion wins over an earlier update response in the same document', async () => {
+  const h = materialMutationHarness();
+  const pending = {};
+  h.request = (url, body, options) => new Promise(resolve => { pending[options.method] = resolve; });
+  load('handleMaterialUpdate', h.context)('m1');
+  h.chooseFile({ target: { files: [{ name: '更新.docx' }] } });
+  await h.flush();
+  load('handleMaterialDelete', h.context)('m1');
+  pending.DELETE({ success: true, data: { totalDocuments: 0, totalCharacters: 0, documents: [], toc: [] } });
+  await h.flush();
+  const deletionNotice = h.node('material-composer-status').textContent;
+  pending.PUT({ success: true, data: { fileName: '更新.docx', catalogSummary: { totalDocuments: 1, totalCharacters: 20, documents: [{ materialId: 'm1' }], toc: [] } } });
+  await h.flush();
+  assert.equal(h.last().catalogSummary.totalDocuments, 0);
+  assert.equal(h.node('material-composer-status').textContent, deletionNotice);
+});
+
+test('a newer import wins over an earlier deletion response and old import failures stay in their document', async () => {
+  const h = materialMutationHarness();
+  let resolveDelete, rejectImport;
+  h.request = (url, body, options = {}) => {
+    if (options.method === 'DELETE') return new Promise(resolve => { resolveDelete = resolve; });
+    if (h.session === 'doc-b') return new Promise((resolve, reject) => { rejectImport = reject; });
+    return Promise.resolve({ success: true, data: { materialId: 'm2', documentSessionId: 'doc-a', catalogSummary: { totalDocuments: 1, totalCharacters: 20, documents: [{ materialId: 'm2' }], toc: [] } } });
+  };
+  h.context.window.renderMaterialReading = () => {};
+  load('handleMaterialDelete', h.context)('m1');
+  const importFile = load('handleMaterialImportFileChange', h.context);
+  importFile({ target: { files: [{ name: '新资料.docx' }] } });
+  await h.flush();
+  resolveDelete({ success: true, data: { totalDocuments: 0, totalCharacters: 0, documents: [], toc: [] } });
+  await h.flush();
+  assert.deepEqual(Array.from(h.last().materialIds), ['m2']);
+  h.session = 'doc-b';
+  importFile({ target: { files: [{ name: 'B资料.docx' }] } });
+  await h.flush();
+  h.session = 'doc-a';
+  h.node('material-import-status').textContent = 'A 文档提示';
+  rejectImport(Error('B 导入失败'));
+  await h.flush();
+  assert.equal(h.node('material-import-status').textContent, 'A 文档提示');
+});
+
+for (const catalogOutcome of ['success', 'failure']) {
+  test('a delayed committed update followed by a failed update stays unwritable until catalog ' + catalogOutcome, async () => {
+    const h = materialMutationHarness();
+    const original = { totalDocuments: 1, totalCharacters: 2, documents: [{ materialId: 'm1', updatedAt: '2026-09-27T01:00:00' }], toc: [] };
+    const updated = { totalDocuments: 1, totalCharacters: 2, documents: [{ materialId: 'm1', updatedAt: '2026-09-27T02:00:00' }], toc: [] };
+    h.composer.setMaterial({ materialId: 'm1', catalogSummary: original });
+    h.request = async () => ({ success: true, data: {
+      jobId: 'job-a', status: 'succeeded', documentSessionId: 'doc-a', result: {
+        taskType: 'word.material_composer', documentSessionId: 'doc-a', plainText: '正文',
+        paragraphs: [{ text: '正文', sources: [], missingItems: [] }], missingItems: [],
+        basisMaterials: [{ materialId: 'm1', updatedAt: '2026-09-27T01:00:00' }]
+      }
+    } });
+    await h.composer.start({ sectionTitle: '第一章', instruction: '按资料编写' });
+    let resolveFirst, resolveCatalog, rejectCatalog;
+    let catalogGets = 0;
+    h.request = (url, body) => {
+      if (url.includes('/catalog')) {
+        catalogGets += 1;
+        return new Promise((resolve, reject) => { resolveCatalog = resolve; rejectCatalog = reject; });
+      }
+      if (body.fileName === '更新1.docx') return new Promise(resolve => { resolveFirst = resolve; });
+      return Promise.reject(Object.assign(Error('更新2不是有效DOCX'), { httpStatus: 422 }));
+    };
+    const update = load('handleMaterialUpdate', h.context);
+    update('m1');
+    h.chooseFile({ target: { files: [{ name: '更新1.docx' }] } });
+    await h.flush();
+    assert.equal(h.last().basisStatus, 'checking');
+    await assert.rejects(h.composer.apply({ documentSessionId: 'doc-a', sectionTitle: '第一章' }));
+    update('m1');
+    h.chooseFile({ target: { files: [{ name: '更新2.docx' }] } });
+    await h.flush();
+    assert.equal(catalogGets, 0, 'the final catalog must wait for every submitted mutation');
+    resolveFirst({ success: true, data: { fileName: '更新1.docx', catalogSummary: updated } });
+    await h.flush();
+    assert.equal(catalogGets, 1);
+    assert.equal(h.last().basisStatus, 'checking');
+    await assert.rejects(h.composer.apply({ documentSessionId: 'doc-a', sectionTitle: '第一章' }));
+    if (catalogOutcome === 'success') resolveCatalog({ success: true, data: updated });
+    else rejectCatalog(Error('目录查询失败'));
+    await h.flush();
+    assert.equal(h.last().basisStatus, catalogOutcome === 'success' ? 'updated' : 'checking');
+    if (catalogOutcome === 'success') assert.match(h.last().error, /更新2不是有效DOCX/);
+    await assert.rejects(h.composer.apply({ documentSessionId: 'doc-a', sectionTitle: '第一章' }));
+    assert.equal(h.applied.length, 0);
+    await h.composer.copy();
+    assert.deepEqual(h.copied, ['正文']);
+    assert.match(h.node('material-composer-status').textContent, /更新2不是有效DOCX/);
+  });
+}
+
 test('chapter generation sends only explicit chapter and requirements, never document body', async () => {
   const nodes = {
     'material-section-title': {value: '实施安排'},
@@ -97,7 +279,10 @@ test('the latest material selection wins when reads finish out of order in one d
     byId: id => nodes[id],
     getMaterialComposerSessionId: () => 'doc-a',
     materialImportRequestSequences: {},
-    ensureMaterialComposer: () => ({setMaterial(reading) { accepted.push(reading.materialId); }}),
+    ensureMaterialComposer: () => ({
+      setMaterial(reading) { accepted.push(reading.materialId); },
+      beginMaterialMutation() {}, endMaterialMutation() {}
+    }),
     request() {},
     window: {
       readMaterialFile(file) { return new Promise(resolve => { pending[file.name] = resolve; }); },
@@ -562,7 +747,7 @@ test('late conflict failure cannot replace a new document or edited input notice
   }
 });
 
-test('renderMaterialComposerView disables apply and warns when basisStatus is updated or removed', () => {
+test('renderMaterialComposerView disables apply and preserves copy while basis is checking, updated or removed', () => {
   const nodes = {
     'material-composer-status': { textContent: '' },
     'material-import-file': { disabled: false },
@@ -594,10 +779,12 @@ test('renderMaterialComposerView disables apply and warns when basisStatus is up
     busy: false,
     result: { plainText: '正文' },
     input: { sectionTitle: '第一章' },
-    basisStatus: 'updated'
+    basisStatus: 'updated',
+    error: '更新2不是有效DOCX'
   });
   assert.equal(nodes['btn-material-apply'].disabled, true);
   assert.ok(nodes['material-composer-status'].textContent.includes('参考资料已更新'));
+  assert.match(nodes['material-composer-status'].textContent, /更新2不是有效DOCX/);
 
   view({
     documentSessionId: 'doc-a',
@@ -609,6 +796,10 @@ test('renderMaterialComposerView disables apply and warns when basisStatus is up
   });
   assert.equal(nodes['btn-material-apply'].disabled, true);
   assert.ok(nodes['material-composer-status'].textContent.includes('已被移除'));
+  view({ documentSessionId: 'doc-a', status: 'succeeded', busy: false, result: { plainText: '正文' }, input: { sectionTitle: '第一章' }, basisStatus: 'checking' });
+  assert.equal(nodes['btn-material-apply'].disabled, true);
+  assert.equal(nodes['btn-material-copy'].disabled, false);
+  assert.match(nodes['material-composer-status'].textContent, /核查|核对|确认/);
 });
 
 test('applyMaterialComposerResult pauses write-back when basis is updated or removed', async () => {
@@ -644,7 +835,26 @@ test('applyMaterialComposerResult pauses write-back when basis is updated or rem
   assert.ok(nodes['material-composer-status'].textContent.includes('参考资料已更新'));
 });
 
-test('syncMaterialComposerSession migrates material session when the same document instance is saved as a new identity', () => {
+test('checking the catalog pauses pane write without consuming the draft write attempt', async () => {
+  const doc = { Selection: { Range: { Start: 2, End: 5, Text: '旧内容' } }, Content: { Start: 0, End: 7, Text: '前缀旧内容后缀' } };
+  const nodes = { 'material-section-title': { value: '第一章' }, 'material-composer-status': { textContent: '' }, 'btn-material-apply': { disabled: false } };
+  let applied = false;
+  const context = {
+    getActiveDocument: () => doc, getMaterialComposerSessionId: () => 'doc-a',
+    getWritableSelection: d => d.Selection, getSelectionText: d => d.Selection.Range.Text,
+    materialComposerTargetSnapshot: { documentSessionId: 'doc-a', sectionTitle: '第一章', start: 2, end: 5, selectedText: '旧内容' },
+    lastMaterialComposerView: { documentSessionId: 'doc-a', status: 'succeeded', basisStatus: 'checking', result: { plainText: '正文' } },
+    byId: id => nodes[id],
+    ensureMaterialComposer: () => ({ apply: async () => { applied = true; return { ok: true, mode: 'replace' }; } })
+  };
+  await load('applyMaterialComposerResult', context)();
+  assert.equal(applied, false);
+  assert.equal(context.materialComposerWriteAttempted, false);
+  assert.equal(nodes['btn-material-apply'].disabled, true);
+  assert.match(nodes['material-composer-status'].textContent, /核查|核对|确认/);
+});
+
+test('syncMaterialComposerSession migrates material session only after binding succeeds', async () => {
   const doc = { FullName: '未命名1.docx' };
   let currentDocSession = 'unsaved-session-1';
   const nodes = {
@@ -672,6 +882,7 @@ test('syncMaterialComposerSession migrates material session when the same docume
     lastBoundDocumentObject: doc,
     lastBoundDocumentSessionId: 'unsaved-session-1',
     materialComposerSession: 'unsaved-session-1',
+    materialComposerBindings: [],
     request: (url, body) => {
       requests.push({ url, body });
       return Promise.resolve({ success: true, data: { totalDocuments: 1 } });
@@ -701,9 +912,272 @@ test('syncMaterialComposerSession migrates material session when the same docume
   assert.equal(requests[0].body.oldDocumentSessionId, 'unsaved-session-1');
   assert.equal(requests[0].body.newDocumentSessionId, 'saved-session-2');
 
-  // Verify storage was migrated
+  assert.equal(storage.has('word.material-composer:saved-session-2'), false);
+  await new Promise(resolve => setImmediate(resolve));
+  // Verify storage was migrated after the server accepted the binding.
   assert.ok(storage.has('word.material-composer:saved-session-2'));
   const migrated = JSON.parse(storage.get('word.material-composer:saved-session-2'));
   assert.equal(migrated.documentSessionId, 'saved-session-2');
   assert.deepEqual(migrated.materialIds, ['m1']);
+});
+
+function materialBindingHarness() {
+  const h = materialMutationHarness();
+  h.doc = { FullName: '/path/to/saved.docx' };
+  h.now = 1000;
+  h.context.Date = { now: () => h.now };
+  h.context.state = { currentMode: 'materialImport' };
+  h.context.getActiveDocument = () => h.doc;
+  h.context.lastBoundDocumentObject = h.doc;
+  h.context.lastBoundDocumentSessionId = 'doc-a';
+  h.context.materialComposerSession = 'doc-a';
+  h.context.materialComposerBindings = [];
+  h.context.window.localStorage = {
+    getItem: key => h.saved.get(key), setItem: (key, value) => h.saved.set(key, value)
+  };
+  h.saved.set('word.material-composer:doc-a', JSON.stringify({
+    documentSessionId: 'doc-a', materialId: 'm1', materialIds: ['m1'],
+    catalogSummary: { totalDocuments: 1, totalCharacters: 20, documents: [{ materialId: 'm1' }], toc: [] },
+    jobId: 'old-job', clientJobId: 'old-client', submittedRequest: { documentSessionId: 'doc-a', clientJobId: 'old-client' },
+    input: { sectionTitle: '第一章', instruction: '编写' }
+  }));
+  h.session = 'saved-a';
+  h.sync = load('syncMaterialComposerSession', h.context);
+  return h;
+}
+
+test('busy binding preserves pending migration and retries after the task can finish', async () => {
+  const h = materialBindingHarness();
+  let attempts = 0;
+  h.request = async url => {
+    if (url.includes('bind-document')) {
+      attempts += 1;
+      if (attempts === 1) throw Object.assign(Error('生成中'), { httpStatus: 409, adapterCode: 'MATERIAL_COMPOSER_BUSY' });
+    }
+    return { success: true, data: { totalDocuments: 1, totalCharacters: 20, documents: [{ materialId: 'm1' }], toc: [] } };
+  };
+  h.sync();
+  await h.flush();
+  assert.equal(h.saved.has('word.material-composer:saved-a'), false);
+  assert.match(h.node('material-import-status').textContent, /生成|任务/);
+  h.sync();
+  await h.flush();
+  assert.equal(attempts, 1);
+  h.now += 2000;
+  h.sync();
+  await h.flush();
+  assert.equal(attempts, 2);
+  assert.equal(h.last().catalogSummary.totalDocuments, 1);
+  const migrated = JSON.parse(h.saved.get('word.material-composer:saved-a'));
+  assert.deepEqual(migrated.materialIds, ['m1']);
+  assert.ok(!migrated.jobId && !migrated.clientJobId && !migrated.submittedRequest);
+});
+
+test('binding an existing completed job never queries that job under the new document session', async () => {
+  const h = materialBindingHarness();
+  const urls = [];
+  h.request = async url => {
+    urls.push(url);
+    return { success: true, data: { totalDocuments: 1, totalCharacters: 20, documents: [{ materialId: 'm1' }], toc: [] } };
+  };
+  h.sync();
+  await h.flush();
+  assert.equal(urls.some(url => url.includes('/jobs/')), false);
+  assert.equal(h.last().documentSessionId, 'saved-a');
+  assert.equal(h.last().jobId, '');
+  assert.deepEqual(JSON.parse(h.saved.get('word.material-composer:doc-a')).jobId, 'old-job');
+});
+
+test('a binding identity conflict is visible and never commits or repeatedly retries the migration', async () => {
+  const h = materialBindingHarness();
+  let attempts = 0;
+  h.request = async () => {
+    attempts += 1;
+    throw Object.assign(Error('目标文档已有资料'), { httpStatus: 409, adapterCode: 'MATERIAL_BIND_TARGET_CONFLICT' });
+  };
+  h.sync();
+  await h.flush();
+  assert.match(h.node('material-import-status').textContent, /目标文档已有资料/);
+  assert.equal(h.saved.has('word.material-composer:saved-a'), false);
+  h.now += 10000;
+  h.sync();
+  await h.flush();
+  assert.equal(attempts, 1);
+});
+
+test('saving to a different identity lets a pending conflict bind to the corrected target', async () => {
+  const h = materialBindingHarness();
+  const targets = [];
+  h.request = async (url, body) => {
+    if (url.includes('bind-document')) {
+      targets.push(body.newDocumentSessionId);
+      if (body.newDocumentSessionId === 'saved-a') throw Object.assign(Error('目标文档已有资料'), { httpStatus: 409, adapterCode: 'MATERIAL_BIND_TARGET_CONFLICT' });
+    }
+    return { success: true, data: { totalDocuments: 1, totalCharacters: 20, documents: [{ materialId: 'm1' }], toc: [] } };
+  };
+  h.sync();
+  await h.flush();
+  h.session = 'saved-corrected-a';
+  h.sync();
+  await h.flush();
+  assert.deepEqual(targets, ['saved-a', 'saved-corrected-a']);
+  assert.equal(h.last().documentSessionId, 'saved-corrected-a');
+  assert.deepEqual(Array.from(h.last().materialIds), ['m1']);
+});
+
+test('late binding success or failure cannot change another document pane', async () => {
+  for (const outcome of ['success', 'failure']) {
+    const h = materialBindingHarness();
+    let resolveBind, rejectBind;
+    h.request = url => {
+      if (url.includes('bind-document')) return new Promise((resolve, reject) => { resolveBind = resolve; rejectBind = reject; });
+      return Promise.resolve({ success: true, data: { totalDocuments: 1, totalCharacters: 20, documents: [{ materialId: 'b1' }], toc: [] } });
+    };
+    h.sync();
+    h.doc = { FullName: '/path/to/b.docx' };
+    h.session = 'doc-b';
+    h.sync();
+    await h.flush();
+    h.node('material-import-status').textContent = 'B 文档提示';
+    if (outcome === 'success') resolveBind({ success: true, data: { totalDocuments: 1, totalCharacters: 20, documents: [{ materialId: 'm1' }], toc: [] } });
+    else rejectBind(Object.assign(Error('A 生成中'), { httpStatus: 409, adapterCode: 'MATERIAL_COMPOSER_BUSY' }));
+    await h.flush();
+    assert.equal(h.last().documentSessionId, 'doc-b');
+    assert.deepEqual(Array.from(h.last().materialIds), ['b1']);
+    assert.equal(h.node('material-import-status').textContent, 'B 文档提示');
+  }
+});
+
+test('two documents can retain independent pending save bindings', async () => {
+  const h = materialBindingHarness();
+  const pending = new Map();
+  h.request = (url, body) => {
+    if (url.includes('bind-document')) return new Promise(resolve => { pending.set(body.newDocumentSessionId, resolve); });
+    if (url.includes('saved-a')) return Promise.resolve({ success: true, data: { totalDocuments: 1, totalCharacters: 20, documents: [{ materialId: 'm1' }], toc: [] } });
+    return Promise.resolve({ success: true, data: { totalDocuments: 0, totalCharacters: 0, documents: [], toc: [] } });
+  };
+  h.sync();
+  const a = h.doc;
+  h.doc = { FullName: '未命名2.docx' };
+  h.session = 'doc-b';
+  h.sync();
+  await h.flush();
+  h.doc.FullName = '/path/to/b.docx';
+  h.session = 'saved-b';
+  h.sync();
+  assert.equal(pending.size, 2);
+  pending.get('saved-b')({ success: true, data: { totalDocuments: 0, totalCharacters: 0, documents: [], toc: [] } });
+  await h.flush();
+  h.doc = a;
+  h.session = 'saved-a';
+  h.sync();
+  pending.get('saved-a')({ success: true, data: { totalDocuments: 1, totalCharacters: 20, documents: [{ materialId: 'm1' }], toc: [] } });
+  await h.flush();
+  assert.equal(h.last().documentSessionId, 'saved-a');
+  assert.deepEqual(Array.from(h.last().materialIds), ['m1']);
+});
+
+test('a save completing while another document is active retains the next save migration', async () => {
+  const h = materialBindingHarness();
+  const a = h.doc;
+  const binds = [];
+  let resolveFirst;
+  h.request = (url, body) => {
+    const catalog = { success: true, data: { totalDocuments: 1, totalCharacters: 20, documents: [{ materialId: 'm1' }], toc: [] } };
+    if (url.includes('bind-document')) {
+      binds.push([body.oldDocumentSessionId, body.newDocumentSessionId]);
+      if (binds.length === 1) return new Promise(resolve => { resolveFirst = resolve; });
+    }
+    return Promise.resolve(catalog);
+  };
+  h.sync();
+  h.doc = { FullName: '/path/to/b.docx' };
+  h.session = 'doc-b';
+  h.sync();
+  resolveFirst({ success: true, data: { totalDocuments: 1, totalCharacters: 20, documents: [{ materialId: 'm1' }], toc: [] } });
+  await h.flush();
+  h.doc = a;
+  h.session = 'saved-a-again';
+  h.sync();
+  await h.flush();
+  assert.deepEqual(binds, [['doc-a', 'saved-a'], ['saved-a', 'saved-a-again']]);
+  assert.equal(h.last().documentSessionId, 'saved-a-again');
+  assert.deepEqual(Array.from(h.last().materialIds), ['m1']);
+});
+
+test('saving before the first import still binds imported materials on the next save', async () => {
+  const h = materialBindingHarness();
+  h.saved.delete('word.material-composer:doc-a');
+  const catalogs = new Map();
+  const binds = [];
+  const empty = { totalDocuments: 0, totalCharacters: 0, documents: [], toc: [] };
+  h.request = async (url, body) => {
+    if (url.includes('bind-document')) {
+      binds.push([body.oldDocumentSessionId, body.newDocumentSessionId]);
+      const source = catalogs.get(body.oldDocumentSessionId);
+      if (!source) throw Object.assign(Error('原会话不存在资料集，无法迁移。'), { httpStatus: 404, adapterCode: 'MATERIAL_NOT_FOUND' });
+      catalogs.set(body.newDocumentSessionId, source);
+      catalogs.delete(body.oldDocumentSessionId);
+      return { success: true, data: source };
+    }
+    if (url === '/word/materials') {
+      const summary = { totalDocuments: 1, totalCharacters: 20, documents: [{ materialId: 'm-new', fileName: body.fileName }], toc: [] };
+      catalogs.set(body.documentSessionId, summary);
+      return { success: true, data: { materialId: 'm-new', documentSessionId: body.documentSessionId, catalogSummary: summary } };
+    }
+    return { success: true, data: catalogs.get(decodeURIComponent(url.split('documentSessionId=')[1])) || empty };
+  };
+  h.sync();
+  await h.flush();
+  load('handleMaterialImportFileChange', h.context)({ target: { files: [{ name: '首次资料.docx' }] } });
+  await h.flush();
+  h.session = 'saved-a-again';
+  h.sync();
+  await h.flush();
+  assert.deepEqual(binds, [['doc-a', 'saved-a'], ['saved-a', 'saved-a-again']]);
+  assert.equal(h.last().documentSessionId, 'saved-a-again');
+  assert.deepEqual(Array.from(h.last().materialIds), ['m-new']);
+  assert.equal(h.saved.has('word.material-composer:doc-a'), false);
+});
+
+test('an explicitly missing server source preserves the old local job and reports unavailable materials', async () => {
+  const h = materialBindingHarness();
+  const oldCache = h.saved.get('word.material-composer:doc-a');
+  let binds = 0;
+  h.request = async url => {
+    if (url.includes('bind-document')) {
+      binds += 1;
+      throw Object.assign(Error('原会话不存在资料集，无法迁移。'), { httpStatus: 404, adapterCode: 'MATERIAL_NOT_FOUND' });
+    }
+    return { success: true, data: { totalDocuments: 0, totalCharacters: 0, documents: [], toc: [] } };
+  };
+  h.sync();
+  await h.flush();
+  assert.equal(h.saved.get('word.material-composer:doc-a'), oldCache);
+  assert.match(h.node('material-import-status').textContent, /不可用|不存在/);
+  assert.ok(h.last(), 'the current document catalog must be restored after a missing source');
+  assert.equal(h.last().documentSessionId, 'saved-a');
+  assert.deepEqual(Array.from(h.last().materialIds), []);
+  assert.equal(h.last().jobId, '');
+  h.now += 10000;
+  h.sync();
+  await h.flush();
+  assert.equal(binds, 1);
+});
+
+test('an unrelated 404 remains an explicit binding failure and does not advance the source session', async () => {
+  const h = materialBindingHarness();
+  const binds = [];
+  h.request = async (url, body) => {
+    binds.push(body.oldDocumentSessionId);
+    throw Object.assign(Error('接口不可用'), { httpStatus: 404, adapterCode: 'ROUTE_NOT_FOUND' });
+  };
+  h.sync();
+  await h.flush();
+  assert.equal(h.saved.has('word.material-composer:saved-a'), false);
+  assert.match(h.node('material-import-status').textContent, /接口不可用/);
+  h.session = 'saved-a-again';
+  h.sync();
+  await h.flush();
+  assert.deepEqual(binds, ['doc-a', 'doc-a']);
 });

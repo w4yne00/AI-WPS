@@ -1,6 +1,6 @@
 import base64
 import binascii
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import io
 import json
@@ -154,7 +154,7 @@ class WordMaterialStore:
             mat_path = mats_dir / "{0}.json".format(material_id)
             mat_path.write_text(json.dumps(view, ensure_ascii=False, indent=2), encoding="utf-8")
 
-            now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            now_iso = view["updatedAt"]
             manifest_file = d / "manifest.json"
             manifest = {
                 "documentSessionId": session_id,
@@ -237,6 +237,13 @@ class WordMaterialStore:
                 catalog = json.loads(c_file.read_text(encoding="utf-8"))
                 catalog["documentSessionId"] = new_session_id
                 c_file.write_text(json.dumps(catalog, ensure_ascii=False, indent=2), encoding="utf-8")
+
+            for mat_file in (new_dir / "materials").glob("*.json"):
+                view = json.loads(mat_file.read_text(encoding="utf-8"))
+                view["documentSessionId"] = new_session_id
+                tmp_file = mat_file.with_suffix(".json.tmp")
+                tmp_file.write_text(json.dumps(view, ensure_ascii=False, indent=2), encoding="utf-8")
+                tmp_file.replace(mat_file)
 
             self._update_session_index(new_session_id, new_dir_name)
             return {
@@ -407,7 +414,7 @@ class WordMaterialImportService:
         if session_id and self.get_session_catalog(session_id):
             cat = self._session_catalogs[session_id]
             existing_cells = cat.get("totalTableCells", 0)
-            start_fragment_index = len(cat.get("fragmentsList", [])) + 1
+            start_fragment_index = _next_fragment_index(cat)
 
         reading = _read_document(
             validated.document_xml,
@@ -444,7 +451,7 @@ class WordMaterialImportService:
             block["fileName"] = file_name
             block["materialId"] = material_id
 
-        now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        now_iso = _updated_at()
         doc_summary = {
             "materialId": material_id,
             "fileName": file_name,
@@ -609,10 +616,9 @@ class WordMaterialImportService:
                 cat = self._session_catalogs.pop(old_sid)
                 cat["documentSessionId"] = new_sid
                 self._session_catalogs[new_sid] = cat
-                for doc in cat.get("documents", []):
-                    mid = doc.get("materialId")
-                    if mid in self._materials:
-                        self._materials[mid]["documentSessionId"] = new_sid
+            for view in self._materials.values():
+                if view.get("documentSessionId") == old_sid:
+                    view["documentSessionId"] = new_sid
             return summary
 
     def update_material(self, material_id: str, request: dict) -> dict:
@@ -672,8 +678,7 @@ class WordMaterialImportService:
 
         start_fragment_index = 1
         if session_cat:
-            other_frags = [f for f in session_cat.get("fragmentsList", []) if f.get("materialId") != material_id]
-            start_fragment_index = len(other_frags) + 1
+            start_fragment_index = _next_fragment_index(session_cat)
 
         reading = _read_document(
             validated.document_xml,
@@ -716,7 +721,7 @@ class WordMaterialImportService:
                     status_code=413,
                 )
 
-        now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        now_iso = _updated_at(old_view.get("updatedAt") or old_view.get("importedAt") or "")
 
         for frag in reading["fragments"]:
             frag["fileName"] = file_name
@@ -889,6 +894,23 @@ class WordMaterialImportService:
             "documents": [],
             "toc": [],
         }
+
+
+def _next_fragment_index(catalog: dict) -> int:
+    return max(
+        (int(fragment["fragmentId"].split("-")[-1])
+         for fragment in catalog.get("fragmentsList", [])),
+        default=0,
+    ) + 1
+
+
+def _updated_at(previous: str = "") -> str:
+    now = datetime.now(timezone.utc)
+    if previous:
+        previous_time = datetime.fromisoformat(previous.replace("Z", "+00:00"))
+        if now <= previous_time:
+            now = previous_time + timedelta(microseconds=1)
+    return now.isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
 def _decode_upload(value) -> bytes:

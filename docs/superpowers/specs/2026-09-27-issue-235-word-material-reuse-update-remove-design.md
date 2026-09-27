@@ -74,8 +74,8 @@ $AI_WPS_STATE_DIR/word_materials/
    - 前缀加 `full:`，计算 SHA-256 派生哈希（8-16 字符）作为目录名；
    - 只要文档在同一路径打开，重开窗格或重启 Adapter 均能准确识别并加载对应资料。
 2. **未保存文档（Unsaved Document，如“文档1”）**：
-   - `document.FullName` 为空，仅有临时名称（如 `文档1`）；
-   - 前缀加 `name:`，结合窗格首次分配的 `documentSessionId`（如 `session_doc_session_uuid`）作为目录名；
+   - `document.FullName` 为空或仅返回临时名称（如 `文档1`），不按名称建立持久化身份；
+   - 使用该文档实例首次分配的临时 `documentSessionId` 作为资料会话；同一实例重开窗格复用该编号，不同实例即使同名也分开；
    - 保证不同新建文档之间物理隔离，互不串用。
 
 ### 2.3 另存为与首次保存无感迁移（`bind-document`）
@@ -95,7 +95,7 @@ $AI_WPS_STATE_DIR/word_materials/
 3. Adapter 在锁保护下：
    - 校验 `oldDocumentSessionId` 对应的资料目录是否存在；
    - 计算新身份的目录路径；若新路径尚无资料，将旧临时目录安全迁移（重命名或复制副本）至新目录，更新 `manifest.json` 中的 `documentIdentity` 与 `documentSessionId`；
-   - 原临时会话目录安全销毁，返回迁移后的目录摘要；
+   - 同步更新持久化资料详情的会话编号，返回迁移后的目录摘要；运行中暂时拒绝迁移时保留旧会话并延后重试，成功后才迁移窗格缓存；旧任务仍归原会话，不按新会话查询；
    - 若新路径已存在资料集，则返回 409 拒绝静默覆盖，要求用户显式确认。
 
 ---
@@ -120,7 +120,7 @@ $AI_WPS_STATE_DIR/word_materials/
 4. **原子落盘与目录重建**：
    - 覆写 `files/{material_id}.docx`；
    - 保持 `materialId` 不变，重新解析 blocks、fragments 与 heading 目录项；
-   - 刷新 `manifest.json`，设置 `updatedAt = 当前 ISO 时间戳`；
+   - 刷新 `manifest.json`，设置微秒精度的 ISO `updatedAt`，连续更新严格递增，并与资料详情及目录中的版本时间一致；
    - 原子刷新 `catalog_cache.json`，返回更新后的资料视图与 `catalogSummary`。
 
 ### 3.2 资料移除与物理清理（`DELETE /word/materials/{material_id}`）
@@ -198,8 +198,9 @@ FastAPI 路由（`app/api/word.py`）与 Standalone Adapter（`standalone_adapte
 
 | 条件 | 状态码 (`basisStatus`) | 界面警示标签 | 写入选区/光标权限 | 复制正文权限 |
 | :--- | :--- | :--- | :--- | :--- |
+| 资料变更请求尚未全部结束，或尚未成功核查服务端目录 | `checking` | `资料依据正在核查，已暂停写入；草稿仍可复制` | **禁用（Pause）** | 允许（Enabled） |
 | `basisMaterials` 中至少一份资料不在当前目录中 | `removed` | `⚠️ 所引参考资料已被移除，当前草稿依据已失效` | **禁用（Pause）** | 允许（Enabled） |
-| 资料均在，但至少一份资料的当前 `updatedAt > generatedAt` | `updated` | `⚠️ 参考资料已更新，当前草稿依据已变更，请重新生成` | **禁用（Pause）** | 允许（Enabled） |
+| 资料均在，但至少一份资料的当前 `updatedAt` 与 `basisMaterials` 中的版本不同 | `updated` | `⚠️ 参考资料已更新，当前草稿依据已变更，请重新生成` | **禁用（Pause）** | 允许（Enabled） |
 | 所有资料均在且未被更新 | `current` | 无警示 | 允许（正常激活） | 允许（Enabled） |
 
 ### 5.3 写入安全熔断实现
