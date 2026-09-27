@@ -2789,6 +2789,7 @@ class ProviderClient:
             ("excel.material_ledger", "任务台账"),
             ("ppt.slide_assistant", "智能总结"),
             ("ppt.structure_review", "结构审查"),
+            ("ppt.material_outline", "逐页大纲"),
         ]
         status = {}
         for task_type, label in tasks:

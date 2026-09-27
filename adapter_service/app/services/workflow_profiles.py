@@ -22,6 +22,7 @@ SUPPORTED_WORKFLOW_TASKS = (
     "excel.material_ledger",
     "ppt.slide_assistant",
     "ppt.structure_review",
+    "ppt.material_outline",
 )
 MAX_PROFILES_PER_TASK = 20
 MAX_PROFILE_NAME_LENGTH = 40
