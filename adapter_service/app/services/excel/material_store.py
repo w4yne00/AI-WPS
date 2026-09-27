@@ -12,6 +12,10 @@ from typing import Dict, List, Optional
 
 from app.core.errors import AdapterError
 from app.core.runtime_paths import resolve_runtime_paths
+from app.services.long_task_coordinator import (
+    get_long_task_coordinator,
+    LongTaskCoordinator,
+)
 from app.services.ppt.docx_security import (
     DOCX_MAX_PACKAGE_BYTES,
     DocxSecurityError,
@@ -36,6 +40,7 @@ class ExcelMaterialStore:
         self,
         base_dir: Optional[Path] = None,
         word_base_dir: Optional[Path] = None,
+        coordinator: Optional[LongTaskCoordinator] = None,
     ) -> None:
         if base_dir is not None:
             self.base_dir = Path(base_dir)
@@ -62,8 +67,23 @@ class ExcelMaterialStore:
             except Exception:
                 self.word_base_dir = Path("run/word_materials").resolve()
 
+        self.coordinator = coordinator or get_long_task_coordinator()
         self._lock = threading.RLock()
         self._memory_catalogs: Dict[str, dict] = {}
+
+    def _check_busy(self, session_id: Optional[str]) -> None:
+        if not session_id:
+            return
+        if self.coordinator is not None and hasattr(self.coordinator, "has_active_task"):
+            if self.coordinator.has_active_task(
+                task_type="excel.material_ledger",
+                document_session_id=session_id,
+            ):
+                raise AdapterError(
+                    "MATERIAL_COMPOSER_BUSY",
+                    "任务台账正在生成中，请等待完成或取消任务后再更新/移除资料。",
+                    status_code=409,
+                )
 
     def _resolve_dir_name(self, session_id: str, doc_identity: str = "") -> str:
         if doc_identity:
@@ -167,6 +187,8 @@ class ExcelMaterialStore:
             raise AdapterError("REQUEST_VALIDATION_FAILED", "请指定来源资料会话编号。", status_code=422)
         if not target_session_id:
             raise AdapterError("REQUEST_VALIDATION_FAILED", "请指定目标工作簿会话编号。", status_code=422)
+
+        self._check_busy(target_session_id)
 
         with self._lock:
             source_dir = self._get_dir_for_session(source_session_id, self.word_base_dir)
@@ -313,6 +335,7 @@ class ExcelMaterialStore:
         file_name: str,
         content_base64: str,
     ) -> dict:
+        self._check_busy(session_id)
         with self._lock:
             content = _decode_upload(content_base64)
             _reject_wrong_type(file_name, "")
@@ -420,6 +443,7 @@ class ExcelMaterialStore:
         file_name: str,
         content_base64: str,
     ) -> dict:
+        self._check_busy(session_id)
         with self._lock:
             content = _decode_upload(content_base64)
             _reject_wrong_type(file_name, "")
@@ -522,6 +546,7 @@ class ExcelMaterialStore:
             return view
 
     def delete_material(self, session_id: str, material_id: str) -> dict:
+        self._check_busy(session_id)
         with self._lock:
             catalog = self.get_catalog(session_id)
             catalog["documents"] = [d for d in catalog.get("documents", []) if d.get("materialId") != material_id]
@@ -567,6 +592,7 @@ class ExcelMaterialStore:
         new_session_id: str,
         new_doc_identity: str,
     ) -> dict:
+        self._check_busy(old_session_id)
         with self._lock:
             old_dir = self._get_dir_for_session(old_session_id)
             if not old_dir or not old_dir.exists():
