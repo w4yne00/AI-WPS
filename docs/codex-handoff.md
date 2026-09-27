@@ -1,5 +1,33 @@
 # Codex Handoff - AI-WPS
 
+## Issue #238：PPT：根据资料生成并确认逐页大纲（2026-09-27）
+
+- **目标与核心机制**：在 PPT/WPP 中支持主动导入 DOCX 资料或跨宿主复用资料，基于受控提示词生成结构化逐页大纲（`schemaVersion: ppt.material_outline.v1`），并在任务窗格核对出处、缺项并确认；确认状态作为下游生成正文的严格前置门禁（`hasConfirmedOutline()`）。
+- **演示文稿隔离持久化与跨宿主克隆（PPT Material Store）**：
+  - 后端持久化存储在 `ppt_materials/<documentSessionId>/` 目录，管理 `files/`、`materials/`、`manifest.json` 与 `catalog_cache.json`；
+  - 支持主动导入 DOCX、原子更新、物理删除与单演示文稿 5 份文件/10 万字上限；
+  - 支持通过 `POST /ppt/materials/clone-from-source` 从 Word 或 Excel 的资料集克隆导入当前演示文稿，克隆后资料完全独立，源头变更不自动污染 PPT 存储；
+  - 另存为迁移：支持 `POST /ppt/materials/bind-document` 迁移资料归属会话。
+- **逐页大纲协调器（PptMaterialOutlineCoordinator）**：
+  - 注册 `TaskType.PPT_MATERIAL_OUTLINE`（`ppt.material_outline`）系统提示词，通过 `ProviderClient.post_task` 调用模型；
+  - 严格校验受控 JSON 输出：支持指定汇报对象（`audience`）、页数（`slideCount`，范围 4~20 页）、重点要求（`instruction`）、补充事实（`userFacts`）与冲突决策（`conflictResolutions`）；
+  - 结构解析与容错：每页包含 `pageIndex`、`pageRole`（cover/agenda/transition/content/summary/backcover）、`title`、`keyPoints`、`missingItems`、`sources`；容错解析数字/字符串混合的片段编号（如 `1` / `"frag-1"`），严格防御伪造出处；
+  - 依据追踪：大纲保存 `basisMaterials` 快照，当底层资料更新或移除时标记 `basisWarning` 并使确认失效。
+- **纯只读幻灯片不变量（Pure Read-Only Invariant）**：
+  - 本模块全程只操作资料与大纲模型结果，调用 0 项 PPT 幻灯片修改 API（如 `Presentation.Slides.Add`、`AddSlide`、`Shapes.Add` 等），与既有 `ppt.slide_assistant` 和 `ppt.structure_review` 完全解耦，零副作用。
+- **确认门禁与降级状态机（Confirmation Gate State Machine）**：
+  - 任务窗格提供明确状态指示：未确认（`unconfirmed`）、已确认（`confirmed`）、需重新确认（`needs_reconfirmation`）；
+  - 点击“确认大纲”记录快照与确认时间戳，下游生成任务可通过 `hasConfirmedOutline()` 作为硬门禁拦截；
+  - 降级保护：一旦用户编辑单页标题/要点、修改汇报对象/页数/重点要求、修改补充事实或底层资料发生变更，确认状态立即自动降级为 `needs_reconfirmation`，杜绝脱靶生成。
+- **双运行时接口与插件端集成**：
+  - FastAPI 与 Standalone Adapter 对等暴露 `/ppt/materials/*` 与 `/ppt/material-outline/*` 完整路由；
+  - 功能区 `ribbon.xml` 与 `ribbon.js` 新增“资料大纲”按钮（`btnAiPptMaterialOutline`，映射模式 `pptMaterialOutline`）；
+  - 任务窗格 `taskpane.html`、`taskpane.css`、`taskpane.js` 与独立控制器 `material-outline.js` 实现完整的资料管理、冲突核对、大纲预览、逐页编辑、出处抽屉与 Markdown 复制功能。
+- **自检结论**：
+  - 后端 Python 3.8 测试：`154 passed, 11 skipped`（覆盖所有 PPT 及 Excel/Word 相关用例）；
+  - 正式插件契约与浏览器自动化测试：`92 passed, 0 failed`（含 Chrome 真实视口回归及 PPT 大纲生命周期、状态机、只读性 7 项新用例）；
+  - 语法扫描与格式门禁：`python3 -m compileall` 0 错误，`git diff --check` 0 警告。
+
 ## PR #248 审查修复（2026-09-27）
 
 - 检测目标时保存工作簿会话、工作表、起始位置和选区尺寸；确认后写入传递同一 `targetRangeInfo`，执行前拒绝目标变化并重新检查空白。未检测目标不允许写入，弹窗工作簿名使用检测快照。
