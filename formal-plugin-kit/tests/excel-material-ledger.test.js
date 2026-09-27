@@ -864,4 +864,102 @@ test('writeExcelMaterialLedger reports COMPENSATION_FAILED if rollback fails', (
   });
 });
 
+test('ledger controller inspectTargetRange updates state with target address and valid status', () => {
+  const h = createTestHarness();
+  h.context.window.WpsAiAssistantHelpers = helpers;
+  h.api.setResult({
+    headers: ['工作事项', '责任部门'],
+    rows: [
+      { values: { '工作事项': '任务1', '责任部门': '技术部' }, missingFields: [] }
+    ]
+  });
+
+  const app = createMockGridApp({ selectionRow: 2, selectionCol: 1, selectionRowCount: 1, selectionColCount: 1 });
+  const inspection = h.api.inspectTargetRange(app);
+  assert.strictEqual(inspection.valid, true);
+  assert.strictEqual(h.api.getState().includeHeaders, true);
+  assert.strictEqual(h.api.getState().writeStatus, 'ready');
+  assert.strictEqual(h.api.getState().targetRangeInfo.targetAddress, 'A2:B3');
+  assert.strictEqual(h.api.getState().targetRangeInfo.rowCount, 2);
+});
+
+test('ledger controller setIncludeHeaders toggles header inclusion and recalculates range', () => {
+  const h = createTestHarness();
+  h.context.window.WpsAiAssistantHelpers = helpers;
+  h.api.setResult({
+    headers: ['工作事项', '责任部门'],
+    rows: [
+      { values: { '工作事项': '任务1', '责任部门': '技术部' }, missingFields: [] }
+    ]
+  });
+
+  h.api.setIncludeHeaders(false);
+  assert.strictEqual(h.api.getState().includeHeaders, false);
+
+  const app = createMockGridApp({ selectionRow: 2, selectionCol: 1, selectionRowCount: 1, selectionColCount: 1 });
+  const inspection = h.api.inspectTargetRange(app);
+  assert.strictEqual(inspection.valid, true);
+  assert.strictEqual(h.api.getState().targetRangeInfo.targetAddress, 'A2:B2');
+  assert.strictEqual(h.api.getState().targetRangeInfo.rowCount, 1);
+});
+
+test('ledger controller writeToSheet writes to sheet and updates writeStatus to success', async () => {
+  const h = createTestHarness();
+  h.context.window.WpsAiAssistantHelpers = helpers;
+  h.api.setResult({
+    headers: ['工作事项', '责任部门'],
+    rows: [
+      { values: { '工作事项': '任务1', '责任部门': '技术部' }, missingFields: [] }
+    ]
+  });
+
+  const app = createMockGridApp({ selectionRow: 2, selectionCol: 1, selectionRowCount: 1, selectionColCount: 1 });
+  const report = await h.api.writeToSheet(app);
+  assert.strictEqual(report.success, true);
+  assert.strictEqual(h.api.getState().writeStatus, 'success');
+  assert.strictEqual(app.getCellValue(2, 1), '工作事项');
+  assert.strictEqual(app.getCellValue(3, 1), '任务1');
+});
+
+test('ledger controller writeToSheet updates writeStatus to error on write failure', async () => {
+  const h = createTestHarness();
+  h.context.window.WpsAiAssistantHelpers = helpers;
+  h.api.setResult({
+    headers: ['工作事项', '责任部门'],
+    rows: [
+      { values: { '工作事项': '任务1', '责任部门': '技术部' }, missingFields: [] }
+    ]
+  });
+
+  const app = createMockGridApp({
+    selectionRow: 2,
+    selectionCol: 1,
+    cells: {
+      '2,1': {
+        onWrite: () => {
+          throw new Error('Write failed at 2,1');
+        }
+      }
+    }
+  });
+
+  await assert.rejects(async () => {
+    await h.api.writeToSheet(app);
+  }, /写入失败/);
+
+  assert.strictEqual(h.api.getState().writeStatus, 'error');
+  assert.ok(h.api.getState().writeError.includes('写入失败'));
+});
+
+test('ledger controller writeToSheet rejects when result is not completed', async () => {
+  const h = createTestHarness();
+  h.context.window.WpsAiAssistantHelpers = helpers;
+  // State is idle by default without completed result
+  const app = createMockGridApp();
+  await assert.rejects(async () => {
+    await h.api.writeToSheet(app);
+  }, /没有可写入的已完成台账/);
+});
+
+
 

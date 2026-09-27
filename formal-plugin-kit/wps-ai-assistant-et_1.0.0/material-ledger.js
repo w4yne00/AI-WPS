@@ -83,7 +83,14 @@
           pendingRequest: (saved && saved.pendingRequest) || null,
           busy: Boolean(saved && saved.jobId && (!saved.status || saved.status === "running" || saved.status === "queued")),
           pollScheduled: false,
-          activeDrawerRowIndex: null
+          activeDrawerRowIndex: null,
+          includeHeaders: (saved && typeof saved.includeHeaders === "boolean") ? saved.includeHeaders : true,
+          targetRangeInfo: null,
+          writing: false,
+          writeStatus: "",
+          writeError: "",
+          writeReport: null,
+          partialWriteAddresses: []
         };
       }
       return states[sessionId];
@@ -107,7 +114,8 @@
           status: s.status,
           phase: s.phase,
           error: s.error,
-          pendingRequest: s.pendingRequest
+          pendingRequest: s.pendingRequest,
+          includeHeaders: s.includeHeaders
         }));
       } catch (e) {
         // Storage might fail in sandboxed iframe
@@ -545,6 +553,85 @@
       notify(s);
     }
 
+    function setIncludeHeaders(val) {
+      var s = current();
+      s.includeHeaders = Boolean(val);
+      persist(s);
+      notify(s);
+      return s.includeHeaders;
+    }
+
+    function inspectTargetRange(app) {
+      var s = current();
+      var h = opts.helpers || (typeof window !== "undefined" && window.WpsAiAssistantHelpers) || (typeof globalThis !== "undefined" && globalThis.WpsAiAssistantHelpers) || {};
+      if (!s.result || !Array.isArray(s.result.rows) || !s.result.rows.length) {
+        s.targetRangeInfo = null;
+        s.writeStatus = "error";
+        s.writeError = "尚未生成台账结果";
+        notify(s);
+        return { valid: false, error: s.writeError };
+      }
+      var rowCount = s.result.rows.length + (s.includeHeaders ? 1 : 0);
+      var colCount = (Array.isArray(s.result.headers) && s.result.headers.length) ? s.result.headers.length : (Array.isArray(s.headers) ? s.headers.length : 1);
+      try {
+        if (typeof h.resolveExcelLedgerTargetRange !== "function") {
+          throw new Error("目标区域解析函数不可用");
+        }
+        var info = h.resolveExcelLedgerTargetRange(app, rowCount, colCount);
+        if (typeof h.validateExcelLedgerTargetBlank === "function") {
+          h.validateExcelLedgerTargetBlank(app, info, { documentSessionId: s.documentSessionId });
+        }
+        s.targetRangeInfo = info;
+        s.writeStatus = "ready";
+        s.writeError = "";
+        notify(s);
+        return { valid: true, info: info };
+      } catch (err) {
+        s.targetRangeInfo = null;
+        s.writeStatus = "error";
+        s.writeError = (err && err.message) || String(err);
+        notify(s);
+        return { valid: false, error: s.writeError };
+      }
+    }
+
+    async function writeToSheet(app, options) {
+      var s = current();
+      if (s.status !== "completed" || !s.result || !Array.isArray(s.result.rows) || !s.result.rows.length) {
+        throw new Error("没有可写入的已完成台账");
+      }
+      if (s.writing) {
+        return s.writeReport;
+      }
+      var h = opts.helpers || (typeof window !== "undefined" && window.WpsAiAssistantHelpers) || (typeof globalThis !== "undefined" && globalThis.WpsAiAssistantHelpers) || {};
+      s.writing = true;
+      s.writeStatus = "writing";
+      notify(s);
+      try {
+        if (typeof h.writeExcelMaterialLedger !== "function") {
+          throw new Error("写入辅助函数不可用");
+        }
+        var report = h.writeExcelMaterialLedger(app, s.result, {
+          includeHeaders: s.includeHeaders,
+          documentSessionId: s.documentSessionId
+        });
+        s.writing = false;
+        s.writeStatus = "success";
+        s.writeError = "";
+        s.partialWriteAddresses = [];
+        s.writeReport = report;
+        notify(s);
+        return report;
+      } catch (err) {
+        s.writing = false;
+        s.writeStatus = "error";
+        s.writeError = (err && err.message) || "写入失败，请检查工作表";
+        s.partialWriteAddresses = (err && err.rollbackFailures) || [];
+        notify(s);
+        throw err;
+      }
+    }
+
     async function restore() {
       var s = current();
       notify(s);
@@ -581,6 +668,9 @@
       copyTsv: copyTsv,
       openSourceDrawer: openSourceDrawer,
       closeSourceDrawer: closeSourceDrawer,
+      setIncludeHeaders: setIncludeHeaders,
+      inspectTargetRange: inspectTargetRange,
+      writeToSheet: writeToSheet,
       restore: restore
     };
   }
