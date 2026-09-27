@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 from app.core.errors import AdapterError
-from app.services.ppt.material_store import PptMaterialStore
+from app.services.ppt.material_store import PptMaterialStore, ppt_material_store
 from app.services.long_task_coordinator import (
     get_long_task_coordinator,
     LongTaskCancelled,
@@ -495,4 +495,4 @@ class PptMaterialOutlineCoordinator:
         return self.coordinator.request_cancel(job_id, task_type=TASK_TYPE)
 
 
-ppt_material_outline = PptMaterialOutlineCoordinator()
+ppt_material_outline = PptMaterialOutlineCoordinator(store=ppt_material_store)
