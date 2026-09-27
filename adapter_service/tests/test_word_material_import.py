@@ -67,8 +67,7 @@ def upload_payload(content, file_name="资料.docx", mime_type=""):
 class WordMaterialImportApiTests(unittest.TestCase):
     def setUp(self):
         from app.api.word import material_import_service
-        material_import_service._session_catalogs.clear()
-        material_import_service._materials.clear()
+        material_import_service.clear()
 
     def test_import_and_view_keeps_source_and_shows_located_reading(self):
         """Dropping heading level, table columns, source location, or unread
@@ -407,3 +406,40 @@ def _paragraph_document(text):
         '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
         "<w:body><w:p><w:r><w:t>{0}</w:t></w:r></w:p></w:body></w:document>"
     ).format(text).encode("utf-8")
+
+
+def test_word_material_store_persists_and_restores_catalog_across_instances(tmp_path):
+    from app.services.word.material_import import WordMaterialImportService
+
+    state_dir = tmp_path / "state"
+    state_dir.mkdir(parents=True)
+    session_id = "doc_session_persist_1"
+    xml = """<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p><w:pPr><w:outlineLvl w:val="0" /></w:pPr><w:r><w:t>第一章 概述</w:t></w:r></w:p>
+    <w:p><w:r><w:t>项目总预算为500万元人民币。</w:t></w:r></w:p>
+  </w:body>
+</w:document>""".encode("utf-8")
+    doc_bytes = build_docx(document_xml=xml)
+    b64 = base64.b64encode(doc_bytes).decode("ascii")
+
+    # Instance 1
+    service1 = WordMaterialImportService(state_dir=state_dir)
+    res1 = service1.import_material({
+        "fileName": "立项.docx",
+        "contentBase64": b64,
+        "documentSessionId": session_id,
+        "documentIdentity": "full:/path/to/project.docx",
+    })
+    mat_id = res1["materialId"]
+    assert res1["catalogSummary"]["totalDocuments"] == 1
+
+    # Instance 2 pointing to same state_dir
+    service2 = WordMaterialImportService(state_dir=state_dir)
+    cat2 = service2.get_catalog(session_id)
+    assert cat2["totalDocuments"] == 1
+    assert cat2["documents"][0]["materialId"] == mat_id
+    assert cat2["documents"][0]["fileName"] == "立项.docx"
+    assert len(cat2["toc"]) >= 1
+

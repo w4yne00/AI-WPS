@@ -8,6 +8,14 @@ from app.main import app
 from tests.test_word_material_import import build_docx, upload_payload
 
 
+@pytest.fixture(autouse=True)
+def clean_material_service():
+    from app.api.word import material_import_service
+    material_import_service.clear()
+    yield
+    material_import_service.clear()
+
+
 def test_composer_api_resolves_sources_and_preserves_missing_information():
     client = TestClient(app)
     material = client.post('/word/materials', json=upload_payload(build_docx())).json()['data']
