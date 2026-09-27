@@ -1,5 +1,23 @@
 # Codex Handoff - AI-WPS
 
+## Issue #235：Word：资料跨次复用、更新与移除（2026-09-27）
+
+- **资料跨次复用与持久化存储**：引入 `WordMaterialStore`，在本地持久化导入的 DOCX 资料原始文件（`materials/{documentSessionId}/{materialId}.docx`）及提取的结构化元数据（`meta.json`），实现服务重启、窗格关闭重开及同文档会话跨多次起草时目录和原文可靠复用；双运行时启动均自愈初始化。
+- **主动更新与原子容量重算**：新增 `PUT /word/materials/{material_id}` 接口（FastAPI 与 Standalone 双运行时对等支持），支持替换单份 DOCX 资料；原子重算 5 份文件、10 万字符与 10 万展开单元格安全上限，超限 fail-closed 拒绝且安全回滚，旧版本安全归档保留 audit trail。
+- **主动移除与物理清理**：新增 `DELETE /word/materials/{material_id}` 接口（双运行时对等），支持移除指定资料，物理删除磁盘原始文件及关联的结构块、原文片段与目录条目；剩余资料重新整理目录并持久化。
+- **生成并发互斥门禁**：在资料导入、更新、移除时检查协调器活跃任务；当该会话存在 `queued` 或 `running` 状态任务时拒绝变更并返回 409 `MATERIAL_COMPOSER_BUSY`，保证起草依据与提取原文在单次生成生命周期内不可变。
+- **草稿依据追踪与写回熔断保护**：
+  - 生成结果快照新增 `basisMaterials`（记录本次起草引用的资料编号、文件名及生成时 `updatedAt` 时间戳）与 `generatedAt`；
+  - 任务窗格通过 `evaluateBasisStatus` 实时对照服务端当前目录；当依据资料发生更新（`updated`）或被移除（`removed`）时，在结果顶部渲染醒目警告，并立即熔断禁用直接写入文档按钮（`btn-material-apply`），同时保留纯文本预览和复制按钮（`btn-material-copy`）。
+- **多文档隔离与另存为迁移**：
+  - 任务窗格通过 `helpers.getDocumentSessionId` 彻底隔离各文档会话资料目录；
+  - 新增 `POST /word/materials/bind-document` 接口，在文档另存为或路径持久化时，将临时会话导入的资料与元数据无缝迁移绑定至新文档标识，避免用户另存后资料丢失。
+- **全量回归验证**：
+  - 后端 Python 3.8 核心用例：`adapter_service/tests/test_word_material_*.py` 共 84 项测试全部通过；
+  - 正式插件全量契约测试：`formal-plugin-kit/tests/` 共 355 项测试全部通过（含 50 项 `word-material-composer`、26 项 `word-material-pane` 及真实 Chrome 浏览器视口测试）；
+  - `wps-addon` 原型插件：Vitest 12 passed，生产打包 `vite build` 成功；
+  - 语法扫描与格式校验：Python 3.8 `compileall` 0 错误，`git diff --check` 0 警告。
+
 ## PR #245 审查修复（2026-09-27）
 
 - 冲突接口与正式窗格统一使用 `conflictId/topic/difference/options`，每个候选含 `optionId/sourceId/sourceType/sourceName/value/text`；`sourceId` 为资料编号或 `user`，同名资料仍独立。逐项比较预算、工期与责任，交付、初验、终验等里程碑及一期、二期分别核对，不只取每份资料的首次匹配。
