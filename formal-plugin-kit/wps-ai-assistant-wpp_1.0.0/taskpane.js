@@ -2239,14 +2239,17 @@
           statusLine.textContent = "大纲状态：已确认（可用于生成正文）";
           statusLine.style.color = "#166534";
           if (confirmBtn) confirmBtn.textContent = "大纲已确认";
+          renderTemplateBodyPageView();
         } else if (v.confirmationStatus === "needs_reconfirmation") {
           statusLine.textContent = "大纲状态：已修改，需重新确认";
           statusLine.style.color = "#b45309";
           if (confirmBtn) confirmBtn.textContent = "重新确认大纲";
+          if (byId("ppt-template-page-card")) byId("ppt-template-page-card").hidden = true;
         } else {
           statusLine.textContent = "大纲状态：已生成，等待确认";
           statusLine.style.color = "#1e40af";
           if (confirmBtn) confirmBtn.textContent = "确认大纲";
+          if (byId("ppt-template-page-card")) byId("ppt-template-page-card").hidden = true;
         }
       }
     } else {
@@ -2265,6 +2268,7 @@
         statusLine.style.color = "";
         if (confirmBtn) confirmBtn.textContent = "确认大纲";
       }
+      if (byId("ppt-template-page-card")) byId("ppt-template-page-card").hidden = true;
     }
 
     // Drawer rendering
@@ -2287,6 +2291,159 @@
       } else {
         drawer.hidden = true;
       }
+    }
+  }
+
+  var templateBodyPage = null;
+
+  function ensureTemplateBodyPage() {
+    if (!templateBodyPage && typeof window.createTemplateBodyPage === "function") {
+      templateBodyPage = window.createTemplateBodyPage({
+        request: request,
+        storage: window.localStorage,
+        getSessionId: getPptOutlineSessionId,
+        getConfirmedOutline: function () {
+          var mo = ensureMaterialOutline();
+          if (!mo) return null;
+          var cur = mo.current();
+          var s = cur && mo.stateFor(cur.documentSessionId);
+          if (s && s.confirmationStatus === "confirmed" && s.result) {
+            return {
+              confirmed: true,
+              slides: s.result.slides || []
+            };
+          }
+          return null;
+        },
+        hasConfirmedOutline: function () {
+          var mo = ensureMaterialOutline();
+          if (!mo) return false;
+          var cur = mo.current();
+          var s = cur && mo.stateFor(cur.documentSessionId);
+          return !!(s && s.confirmationStatus === "confirmed");
+        },
+        render: renderTemplateBodyPageView,
+        wpsApp: typeof wps !== "undefined" ? wps.WppApplication() : null
+      });
+    }
+    return templateBodyPage;
+  }
+
+  function renderTemplateBodyPageView(view) {
+    var card = byId("ppt-template-page-card");
+    if (!card) return;
+
+    var ctrl = ensureTemplateBodyPage();
+    if (!ctrl) {
+      card.hidden = true;
+      return;
+    }
+
+    var outlineConfirmed = ctrl.hasConfirmedOutline ? ctrl.hasConfirmedOutline() : false;
+    if (!outlineConfirmed) {
+      card.hidden = true;
+      return;
+    }
+
+    card.hidden = false;
+    var v = view || ctrl.getState();
+
+    // Populate select
+    var select = byId("ppt-template-page-select");
+    var outlineData = ctrl.getConfirmedOutline ? ctrl.getConfirmedOutline() : null;
+    if (select && outlineData && Array.isArray(outlineData.slides)) {
+      var contentSlides = outlineData.slides.filter(function (s) { return s.pageRole === "content"; });
+      var prevVal = select.value;
+      select.innerHTML = contentSlides.map(function (s) {
+        return '<option value="' + s.pageIndex + '">第 ' + s.pageIndex + ' 页：' + helpers.escapeHtml(s.title || "正文页") + '</option>';
+      }).join("");
+      if (prevVal && contentSlides.some(function (s) { return String(s.pageIndex) === String(prevVal); })) {
+        select.value = prevVal;
+      }
+    }
+
+    var statusEl = byId("ppt-template-page-status");
+    var overflowEl = byId("ppt-template-page-overflow-warning");
+    var previewEl = byId("ppt-template-page-preview");
+    var previewContentEl = byId("ppt-template-page-preview-content");
+    var generateBtn = byId("btn-ppt-generate-template-page");
+    var cancelBtn = byId("btn-ppt-cancel-template-page");
+    var appendBtn = byId("btn-ppt-append-slide-confirm");
+
+    if (v.status === "running") {
+      if (generateBtn) {
+        generateBtn.disabled = true;
+        generateBtn.textContent = "正在生成正文页...";
+      }
+      if (cancelBtn) cancelBtn.hidden = false;
+      if (statusEl) {
+        statusEl.hidden = false;
+        statusEl.textContent = "正在请求模型生成标准正文页...";
+      }
+      if (overflowEl) overflowEl.hidden = true;
+    } else if (v.status === "OVERFLOW_REJECTED") {
+      if (generateBtn) {
+        generateBtn.disabled = false;
+        generateBtn.textContent = "重新生成正文页";
+      }
+      if (cancelBtn) cancelBtn.hidden = true;
+      if (statusEl) statusEl.hidden = true;
+      if (overflowEl) {
+        overflowEl.hidden = false;
+        overflowEl.textContent = "排版容量超限：" + (v.overflowReasons || []).join("；") + "。已拦截写入幻灯片以保持固定模板版面效果。";
+      }
+      if (previewEl) previewEl.hidden = true;
+    } else if (v.status === "completed") {
+      if (generateBtn) {
+        generateBtn.disabled = false;
+        generateBtn.textContent = "重新生成正文页";
+      }
+      if (cancelBtn) cancelBtn.hidden = true;
+      if (statusEl) {
+        statusEl.hidden = false;
+        statusEl.textContent = v.writtenToSlide ? ("已追加至幻灯片第 " + v.newSlideIndex + " 页。") : "正文页生成完成，待确认追加。";
+      }
+      if (overflowEl) overflowEl.hidden = true;
+      if (previewEl) {
+        previewEl.hidden = false;
+        if (previewContentEl && v.result) {
+          previewContentEl.innerHTML = '<div style="font-weight:600; margin-bottom:4px;">' + helpers.escapeHtml(v.result.title) + '</div>' +
+            '<ul style="margin:0; padding-left:16px;">' +
+            (v.result.keyPoints || []).map(function(p) { return '<li>' + helpers.escapeHtml(p) + '</li>'; }).join("") +
+            '</ul>' +
+            (v.result.speakerNotes ? ('<div class="field-hint" style="margin-top:6px; font-size:11px;">演讲备注：' + helpers.escapeHtml(v.result.speakerNotes) + '</div>') : '');
+        }
+      }
+      if (appendBtn) appendBtn.hidden = v.writtenToSlide;
+    } else if (v.status === "failed") {
+      if (generateBtn) {
+        generateBtn.disabled = false;
+        generateBtn.textContent = "生成并追加模板正文页";
+      }
+      if (cancelBtn) cancelBtn.hidden = true;
+      if (statusEl) {
+        statusEl.hidden = false;
+        statusEl.textContent = "正文页生成失败：" + ((v.error && v.error.message) || "未知错误");
+      }
+    } else if (v.status === "cancelled") {
+      if (generateBtn) {
+        generateBtn.disabled = false;
+        generateBtn.textContent = "生成并追加模板正文页";
+      }
+      if (cancelBtn) cancelBtn.hidden = true;
+      if (statusEl) {
+        statusEl.hidden = false;
+        statusEl.textContent = "任务已取消。";
+      }
+    } else {
+      if (generateBtn) {
+        generateBtn.disabled = false;
+        generateBtn.textContent = "生成并追加模板正文页";
+      }
+      if (cancelBtn) cancelBtn.hidden = true;
+      if (statusEl) statusEl.hidden = true;
+      if (overflowEl) overflowEl.hidden = true;
+      if (previewEl) previewEl.hidden = true;
     }
   }
 
@@ -5857,6 +6014,71 @@
           var s = ctrl.current();
           s.activeDrawerPageIndex = null;
           renderMaterialOutlineView(s);
+        }
+      });
+    }
+    if (byId("btn-ppt-generate-template-page")) {
+      byId("btn-ppt-generate-template-page").addEventListener("click", function () {
+        var ctrl = ensureTemplateBodyPage();
+        if (!ctrl) return;
+        var select = byId("ppt-template-page-select");
+        var pageIndex = select ? parseInt(select.value, 10) : undefined;
+        ctrl.startGenerate({ pageIndex: pageIndex })
+          .then(function (res) {
+            if (res && res.status === "COMPLETED") {
+              var app = typeof wps !== "undefined" ? wps.WppApplication() : null;
+              var currentCount = (app && app.ActivePresentation && app.ActivePresentation.Slides && app.ActivePresentation.Slides.Count) || 0;
+              var title = (res.result && res.result.title) || "模板正文页";
+              var confirmMsg = "即将向当前演示文稿末尾（第 " + (currentCount + 1) + " 页）追加一张模板正文页：“" + title + "”。\n现有第 1 至 " + currentCount + " 页完全保持不变。\n\n确认追加？";
+              if (window.confirm(confirmMsg)) {
+                try {
+                  var writeRes = ctrl.appendSlide(app);
+                  if (writeRes && writeRes.success) {
+                    setStatus("已成功向末尾追加模板正文页（第 " + writeRes.slideIndex + " 页）！");
+                  } else {
+                    setStatus("写入失败：" + ((writeRes && writeRes.error) || "未知错误"));
+                  }
+                } catch (err) {
+                  setStatus("写入失败：" + (err.message || String(err)));
+                }
+              } else {
+                setStatus("已取消追加。内容已保留在预览区，可按需追加。");
+              }
+            } else if (res && res.status === "OVERFLOW_REJECTED") {
+              setStatus("正文页排版容量超限，已拦截写入。");
+            }
+          })
+          .catch(function (err) {
+            setStatus("正文页生成失败：" + (err.message || String(err)));
+          });
+      });
+    }
+    if (byId("btn-ppt-cancel-template-page")) {
+      byId("btn-ppt-cancel-template-page").addEventListener("click", function () {
+        var ctrl = ensureTemplateBodyPage();
+        if (ctrl) ctrl.cancelJob();
+      });
+    }
+    if (byId("btn-ppt-append-slide-confirm")) {
+      byId("btn-ppt-append-slide-confirm").addEventListener("click", function () {
+        var ctrl = ensureTemplateBodyPage();
+        if (!ctrl) return;
+        var app = typeof wps !== "undefined" ? wps.WppApplication() : null;
+        var currentCount = (app && app.ActivePresentation && app.ActivePresentation.Slides && app.ActivePresentation.Slides.Count) || 0;
+        var state = ctrl.getState();
+        var title = (state.result && state.result.title) || "模板正文页";
+        var confirmMsg = "即将向当前演示文稿末尾（第 " + (currentCount + 1) + " 页）追加一张模板正文页：“" + title + "”。\n现有第 1 至 " + currentCount + " 页完全保持不变。\n\n确认追加？";
+        if (window.confirm(confirmMsg)) {
+          try {
+            var writeRes = ctrl.appendSlide(app);
+            if (writeRes && writeRes.success) {
+              setStatus("已成功向末尾追加模板正文页（第 " + writeRes.slideIndex + " 页）！");
+            } else {
+              setStatus("写入失败：" + ((writeRes && writeRes.error) || "未知错误"));
+            }
+          } catch (err) {
+            setStatus("写入失败：" + (err.message || String(err)));
+          }
         }
       });
     }

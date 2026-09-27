@@ -553,3 +553,17 @@ test("controller.appendSlide integrates with generator and prevents duplicate wr
     (err) => err.message.includes("请勿重复写入")
   );
 });
+
+test("taskpane.html contains template body page markup and script tags", async (t) => {
+  const htmlPath = path.join(root, "taskpane.html");
+  const htmlContent = fs.readFileSync(htmlPath, "utf8");
+
+  assert.ok(htmlContent.includes('<script src="./template-body-page.js?v=0.23.1-alpha"></script>'));
+  assert.ok(htmlContent.includes('id="ppt-template-page-card"'));
+  assert.ok(htmlContent.includes('id="ppt-template-page-select"'));
+  assert.ok(htmlContent.includes('id="btn-ppt-generate-template-page"'));
+  assert.ok(htmlContent.includes('id="btn-ppt-cancel-template-page"'));
+  assert.ok(htmlContent.includes('id="ppt-template-page-overflow-warning"'));
+  assert.ok(htmlContent.includes('id="ppt-template-page-preview"'));
+  assert.ok(htmlContent.includes('id="btn-ppt-append-slide-confirm"'));
+});

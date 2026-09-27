@@ -227,6 +227,31 @@
             <div id="outline-confirmation-status-line" class="inline-status" style="margin-bottom: 8px; font-weight: 500;">大纲状态：待生成</div>
             <button id="btn-confirm-outline" class="primary-button" type="button" style="width: 100%;" disabled>确认大纲</button>
           </div>
+
+          <section id="ppt-template-page-card" class="template-page-card" hidden style="margin-top: 12px; padding: 12px; border: 1px solid var(--border-color, #e5e7eb); border-radius: 6px; background-color: var(--card-bg, #ffffff);">
+            <div class="template-page-head" style="margin-bottom: 8px;">
+              <h3 style="margin: 0; font-size: 13px; font-weight: 600;">模板正文页生成</h3>
+              <p class="field-hint" style="margin: 4px 0 0; font-size: 12px; color: var(--text-muted, #6b7280);">
+                基于已确认的大纲，使用固定模板在演示文稿末尾追加标准正文页。
+              </p>
+            </div>
+            <div class="template-page-select-row" style="margin-bottom: 8px;">
+              <label class="field" for="ppt-template-page-select">
+                <span>选择正文页</span>
+                <select id="ppt-template-page-select"></select>
+              </label>
+            </div>
+            <div class="action-bar task-job-actions" style="margin-bottom: 8px;">
+              <button id="btn-ppt-generate-template-page" class="primary-button" type="button" style="width: 100%;">生成并追加模板正文页</button>
+              <button id="btn-ppt-cancel-template-page" class="ghost-action" type="button" hidden>取消</button>
+            </div>
+            <div id="ppt-template-page-status" class="template-page-status inline-status" aria-live="polite" hidden style="margin-top: 4px;"></div>
+            <div id="ppt-template-page-overflow-warning" class="template-page-overflow-warning" hidden style="margin-top: 8px; padding: 8px 10px; background-color: #fef2f2; border: 1px solid #fca5a5; border-radius: 4px; color: #dc2626; font-size: 12px;"></div>
+            <div id="ppt-template-page-preview" class="template-page-preview" hidden style="margin-top: 8px; padding: 8px; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 4px;">
+              <div id="ppt-template-page-preview-content"></div>
+              <button id="btn-ppt-append-slide-confirm" class="primary-button" type="button" style="width: 100%; margin-top: 8px;" hidden>追加到幻灯片末尾</button>
+            </div>
+          </section>
         </section>
       </section>
 
@@ -467,6 +492,7 @@
     </div>
     <script src="./taskpane-helpers.js?v=0.23.1-alpha"></script>
     <script src="./material-outline.js?v=0.23.1-alpha"></script>
+    <script src="./template-body-page.js?v=0.23.1-alpha"></script>
     <script src="./taskpane.js?v=0.23.1-alpha"></script>
   </body>
 </html>
