@@ -6,6 +6,7 @@
   if (typeof window !== "undefined") {
     window.createTemplateBodyPage = exports.createTemplateBodyPage;
     window.evaluateSlideTextCapacity = exports.evaluateSlideTextCapacity;
+    window.appendTemplateBodySlide = exports.appendTemplateBodySlide;
     window.MAX_POINTS = exports.MAX_POINTS;
     window.MAX_CHARACTERS = exports.MAX_CHARACTERS;
     window.MAX_ESTIMATED_LINES = exports.MAX_ESTIMATED_LINES;
@@ -15,6 +16,7 @@
   if (root) {
     root.createTemplateBodyPage = exports.createTemplateBodyPage;
     root.evaluateSlideTextCapacity = exports.evaluateSlideTextCapacity;
+    root.appendTemplateBodySlide = exports.appendTemplateBodySlide;
     root.MAX_POINTS = exports.MAX_POINTS;
     root.MAX_CHARACTERS = exports.MAX_CHARACTERS;
     root.MAX_ESTIMATED_LINES = exports.MAX_ESTIMATED_LINES;
@@ -64,6 +66,204 @@
       isOverflow: reasons.length > 0,
       reasons: reasons
     };
+  }
+
+  function findCustomLayout(pres, layoutName) {
+    if (!pres) return null;
+    var targetName = layoutName || TEMPLATE_LAYOUT_NAME;
+
+    // 1. Check pres.SlideMaster.CustomLayouts
+    try {
+      if (pres.SlideMaster && pres.SlideMaster.CustomLayouts) {
+        var count = pres.SlideMaster.CustomLayouts.Count || 0;
+        for (var i = 1; i <= count; i++) {
+          var layout = pres.SlideMaster.CustomLayouts.Item(i);
+          if (layout && layout.Name === targetName) {
+            return layout;
+          }
+        }
+      }
+    } catch (e) {}
+
+    // 2. Check pres.Designs
+    try {
+      if (pres.Designs) {
+        var designCount = pres.Designs.Count || 1;
+        for (var d = 1; d <= designCount; d++) {
+          var design = pres.Designs.Item(d);
+          if (design && design.SlideMaster && design.SlideMaster.CustomLayouts) {
+            var lCount = design.SlideMaster.CustomLayouts.Count || 0;
+            for (var j = 1; j <= lCount; j++) {
+              var l = design.SlideMaster.CustomLayouts.Item(j);
+              if (l && l.Name === targetName) {
+                return l;
+              }
+            }
+          }
+        }
+      }
+    } catch (e2) {}
+
+    return null;
+  }
+
+  /**
+   * Append a new slide at Count + 1 using template layout, fill placeholders,
+   * and execute reverse rollback compensation if any error occurs midway.
+   */
+  function appendTemplateBodySlide(app, result, options) {
+    var opts = options || {};
+    if (!app || !app.ActivePresentation) {
+      throw new Error("未找到当前打开的演示文稿。");
+    }
+
+    if (opts.expectedSessionId && opts.sessionId && opts.expectedSessionId !== opts.sessionId) {
+      throw new Error("文档会话已变更，禁止跨文档写入。");
+    }
+
+    if (!result) {
+      throw new Error("缺少要写入的正文页数据。");
+    }
+
+    if (result.isOverflow) {
+      throw new Error("排版容量超限，禁止写入幻灯片。");
+    }
+
+    var pres = app.ActivePresentation;
+    if (!pres.Slides) {
+      throw new Error("演示文稿缺少幻灯片集合。");
+    }
+
+    var initialCount = pres.Slides.Count || 0;
+    var insertIndex = initialCount + 1; // Strictly append to the end!
+    var createdSlide = null;
+
+    try {
+      var layout = findCustomLayout(pres, opts.layoutName || TEMPLATE_LAYOUT_NAME);
+      if (layout && typeof pres.Slides.AddSlide === "function") {
+        createdSlide = pres.Slides.AddSlide(insertIndex, layout);
+      } else if (typeof pres.Slides.Add === "function") {
+        // Fallback: 2 = ppLayoutText / ppLayoutTitleAndContent
+        createdSlide = pres.Slides.Add(insertIndex, 2);
+      } else {
+        throw new Error("当前环境不支持添加幻灯片。");
+      }
+
+      var titleText = String(result.title || "").trim();
+      var keyPoints = Array.isArray(result.keyPoints) ? result.keyPoints : [];
+      var bodyText = keyPoints.join("\r\n");
+
+      var shapes = createdSlide.Shapes;
+      var shapeCount = (shapes && shapes.Count) || 0;
+      var titleFilled = false;
+      var bodyFilled = false;
+
+      // 1. Try Placeholders collection if available
+      var placeholders = shapes && shapes.Placeholders;
+      var phCount = (placeholders && placeholders.Count) || 0;
+
+      for (var p = 1; p <= phCount; p++) {
+        try {
+          var ph = placeholders.Item(p);
+          if (!ph) continue;
+          var pType = ph.PlaceholderFormat ? ph.PlaceholderFormat.Type : 0;
+          if ((pType === 1 || pType === 3) && !titleFilled) {
+            if (ph.TextFrame && ph.TextFrame.TextRange) {
+              ph.TextFrame.TextRange.Text = titleText;
+              titleFilled = true;
+            }
+          } else if ((pType === 2 || pType === 7) && !bodyFilled) {
+            if (ph.TextFrame && ph.TextFrame.TextRange) {
+              ph.TextFrame.TextRange.Text = bodyText;
+              bodyFilled = true;
+            }
+          }
+        } catch (ePh) {}
+      }
+
+      // 2. Fallback to general shapes
+      if (!titleFilled || !bodyFilled) {
+        for (var s = 1; s <= shapeCount; s++) {
+          var sh = shapes.Item(s);
+          if (!sh) continue;
+          var sName = sh.Name || "";
+          var sType = sh.PlaceholderFormat ? sh.PlaceholderFormat.Type : 0;
+          if (!titleFilled && (sType === 1 || sType === 3 || sName.indexOf("标题") !== -1 || sName.indexOf("Title") !== -1)) {
+            if (sh.TextFrame && sh.TextFrame.TextRange) {
+              sh.TextFrame.TextRange.Text = titleText;
+              titleFilled = true;
+            }
+          } else if (!bodyFilled && (sType === 2 || sType === 7 || sName.indexOf("内容") !== -1 || sName.indexOf("Body") !== -1 || sName.indexOf("Content") !== -1)) {
+            if (sh.TextFrame && sh.TextFrame.TextRange) {
+              sh.TextFrame.TextRange.Text = bodyText;
+              bodyFilled = true;
+            }
+          }
+        }
+      }
+
+      if (!titleFilled && !bodyFilled) {
+        throw new Error("未能在新建幻灯片中定位并填充有效占位符。");
+      }
+
+      // 3. Notes page
+      if (result.speakerNotes && createdSlide.NotesPage && createdSlide.NotesPage.Shapes) {
+        try {
+          var nShapes = createdSlide.NotesPage.Shapes;
+          var nPhs = nShapes.Placeholders;
+          var nPhCount = (nPhs && nPhs.Count) || 0;
+          var notesFilled = false;
+          for (var np = 1; np <= nPhCount; np++) {
+            var nph = nPhs.Item(np);
+            if (nph && nph.PlaceholderFormat && nph.PlaceholderFormat.Type === 2) {
+              if (nph.TextFrame && nph.TextFrame.TextRange) {
+                nph.TextFrame.TextRange.Text = String(result.speakerNotes).trim();
+                notesFilled = true;
+                break;
+              }
+            }
+          }
+          if (!notesFilled && nShapes.Item) {
+            for (var ns = 1; ns <= (nShapes.Count || 0); ns++) {
+              var nsh = nShapes.Item(ns);
+              if (nsh && nsh.PlaceholderFormat && nsh.PlaceholderFormat.Type === 2) {
+                if (nsh.TextFrame && nsh.TextFrame.TextRange) {
+                  nsh.TextFrame.TextRange.Text = String(result.speakerNotes).trim();
+                  break;
+                }
+              }
+            }
+          }
+        } catch (eNotes) {}
+      }
+
+      return {
+        success: true,
+        status: "APPENDED",
+        slideIndex: insertIndex,
+        initialCount: initialCount,
+        newCount: pres.Slides.Count || (initialCount + 1)
+      };
+    } catch (writeErr) {
+      // Reverse Rollback Compensation: delete the created slide and restore count
+      if (createdSlide && typeof createdSlide.Delete === "function") {
+        try {
+          createdSlide.Delete();
+        } catch (delErr) {
+          if (typeof console !== "undefined" && console.error) {
+            console.error("Rollback deletion failed:", delErr);
+          }
+        }
+      }
+
+      return {
+        success: false,
+        status: "ROLLBACK_COMPENSATED",
+        error: writeErr.message || String(writeErr),
+        initialCount: initialCount,
+        currentCount: pres.Slides.Count || initialCount
+      };
+    }
   }
 
   function createTemplateBodyPage(options) {
@@ -301,6 +501,31 @@
       });
     }
 
+    function appendSlide(appToUse, resultToUse) {
+      if (currentState.writtenToSlide) {
+        throw new Error("本页内容已追加写入，请勿重复写入。");
+      }
+      var res = resultToUse || currentState.result;
+      if (!res) {
+        throw new Error("尚未生成正文页数据。");
+      }
+      var app = appToUse || wpsApp;
+      var sessionId = getSessionId();
+
+      var writeRes = appendTemplateBodySlide(app, res, {
+        expectedSessionId: sessionId,
+        sessionId: sessionId
+      });
+
+      if (writeRes.success) {
+        currentState.writtenToSlide = true;
+        currentState.newSlideIndex = writeRes.slideIndex;
+        notify();
+      }
+
+      return writeRes;
+    }
+
     function getState() {
       return Object.assign({}, currentState);
     }
@@ -309,6 +534,7 @@
       getCandidatePage: getCandidatePage,
       startGenerate: startGenerate,
       cancelJob: cancelJob,
+      appendSlide: appendSlide,
       getState: getState,
       evaluateSlideTextCapacity: evaluateSlideTextCapacity
     };
@@ -321,6 +547,8 @@
     CHARS_PER_LINE: CHARS_PER_LINE,
     TEMPLATE_LAYOUT_NAME: TEMPLATE_LAYOUT_NAME,
     evaluateSlideTextCapacity: evaluateSlideTextCapacity,
+    appendTemplateBodySlide: appendTemplateBodySlide,
+    findCustomLayout: findCustomLayout,
     createTemplateBodyPage: createTemplateBodyPage
   };
 });

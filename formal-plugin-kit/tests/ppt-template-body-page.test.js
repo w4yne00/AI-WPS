@@ -306,3 +306,250 @@ test("handles server failure gracefully", async (t) => {
   assert.equal(controller.getState().status, "failed");
   assert.equal(controller.getState().error.message, "模型调用超时");
 });
+
+test("appendTemplateBodySlide appends slide at Count + 1 and fills placeholders", async (t) => {
+  const { context } = createTestHarness();
+  const appendSlide = context.window.appendTemplateBodySlide;
+  assert.ok(appendSlide, "appendTemplateBodySlide should be exported");
+
+  // Mock Presentation with 3 existing slides
+  const createdSlides = [];
+  const mockLayout = { Name: "标题和内容", Index: 3 };
+
+  const mockPres = {
+    Designs: {
+      Item: (idx) => ({
+        SlideMaster: {
+          CustomLayouts: {
+            Count: 1,
+            Item: (i) => mockLayout,
+          },
+        },
+      }),
+    },
+    SlideMaster: {
+      CustomLayouts: {
+        Count: 1,
+        Item: (i) => mockLayout,
+      },
+    },
+    Slides: {
+      Count: 3,
+      Item: (i) => ({ Index: i }),
+      AddSlide: (index, layout) => {
+        const titleShape = {
+          Name: "标题 1",
+          PlaceholderFormat: { Type: 1 },
+          TextFrame: { TextRange: { Text: "" } },
+        };
+        const bodyShape = {
+          Name: "内容占位符 2",
+          PlaceholderFormat: { Type: 2 },
+          TextFrame: { TextRange: { Text: "" } },
+        };
+        const notesShape = {
+          Name: "备注占位符",
+          PlaceholderFormat: { Type: 2 },
+          TextFrame: { TextRange: { Text: "" } },
+        };
+        const newSlide = {
+          Index: index,
+          Layout: layout,
+          Shapes: {
+            Count: 2,
+            Item: (idx) => (idx === 1 ? titleShape : bodyShape),
+            Placeholders: {
+              Count: 2,
+              Item: (idx) => (idx === 1 ? titleShape : bodyShape),
+            },
+          },
+          NotesPage: {
+            Shapes: {
+              Placeholders: {
+                Count: 1,
+                Item: (idx) => notesShape,
+              },
+            },
+          },
+          deleted: false,
+          Delete: function () {
+            this.deleted = true;
+            mockPres.Slides.Count--;
+          },
+        };
+        mockPres.Slides.Count++;
+        createdSlides.push(newSlide);
+        return newSlide;
+      },
+    },
+  };
+
+  const mockApp = { ActivePresentation: mockPres };
+
+  const result = {
+    schemaVersion: "ppt.template_page.v1",
+    pageIndex: 2,
+    pageRole: "content",
+    title: "核心系统架构",
+    keyPoints: [
+      "分层解耦：采用业务域服务化解耦架构",
+      "安全可控：全栈适配自主可控基础设施",
+    ],
+    speakerNotes: "各位评委，这是总体架构设计要点。",
+  };
+
+  const appendRes = appendSlide(mockApp, result, {
+    expectedSessionId: "sess-1",
+    sessionId: "sess-1",
+  });
+
+  assert.equal(appendRes.success, true);
+  assert.equal(appendRes.slideIndex, 4); // Count 3 -> appended at 4
+  assert.equal(mockPres.Slides.Count, 4);
+  assert.equal(createdSlides.length, 1);
+
+  const slide = createdSlides[0];
+  assert.equal(slide.Layout.Name, "标题和内容");
+  assert.equal(slide.Shapes.Item(1).TextFrame.TextRange.Text, "核心系统架构");
+  assert.ok(slide.Shapes.Item(2).TextFrame.TextRange.Text.includes("分层解耦"));
+  assert.ok(slide.Shapes.Item(2).TextFrame.TextRange.Text.includes("安全可控"));
+  assert.equal(slide.NotesPage.Shapes.Placeholders.Item(1).TextFrame.TextRange.Text, "各位评委，这是总体架构设计要点。");
+});
+
+test("appendTemplateBodySlide rejects on session mismatch", async (t) => {
+  const { context } = createTestHarness();
+  const appendSlide = context.window.appendTemplateBodySlide;
+
+  const mockApp = { ActivePresentation: { Slides: { Count: 2 } } };
+  const result = { title: "测试", keyPoints: ["点1"] };
+
+  assert.throws(
+    () => {
+      appendSlide(mockApp, result, {
+        expectedSessionId: "sess-original",
+        sessionId: "sess-switched",
+      });
+    },
+    (err) => err.message.includes("会话已变更")
+  );
+});
+
+test("appendTemplateBodySlide performs reverse rollback compensation on write error", async (t) => {
+  const { context } = createTestHarness();
+  const appendSlide = context.window.appendTemplateBodySlide;
+
+  let deletedCalled = false;
+  const mockPres = {
+    SlideMaster: { CustomLayouts: { Count: 0 } },
+    Slides: {
+      Count: 5,
+      Add: (index, layoutType) => {
+        mockPres.Slides.Count++;
+        return {
+          Index: index,
+          Shapes: {
+            Count: 1,
+            Item: () => {
+              throw new Error("COM_DISP_E_BADPARAM: Shape text frame write error");
+            },
+          },
+          Delete: () => {
+            deletedCalled = true;
+            mockPres.Slides.Count--;
+          },
+        };
+      },
+    },
+  };
+
+  const mockApp = { ActivePresentation: mockPres };
+  const result = { title: "故障测试", keyPoints: ["要点"] };
+
+  const rollbackRes = appendSlide(mockApp, result);
+
+  assert.equal(rollbackRes.success, false);
+  assert.equal(rollbackRes.status, "ROLLBACK_COMPENSATED");
+  assert.equal(deletedCalled, true);
+  assert.equal(mockPres.Slides.Count, 5); // Count restored back to initial 5
+  assert.equal(rollbackRes.initialCount, 5);
+  assert.equal(rollbackRes.currentCount, 5);
+});
+
+test("controller.appendSlide integrates with generator and prevents duplicate writes", async (t) => {
+  const sampleOutline = {
+    confirmed: true,
+    slides: [
+      { pageIndex: 2, pageRole: "content", title: "核心架构", keyPoints: ["要点一", "要点二"] },
+    ],
+  };
+
+  const { h } = createTestHarness({ confirmedOutline: sampleOutline });
+
+  h.requestHandler = async (url, body, opts) => {
+    if (url === "/ppt/template-page/jobs" && opts.method === "POST") {
+      return { success: true, data: { jobId: "cjob_success_write", status: "running" } };
+    }
+    if (url.startsWith("/ppt/template-page/jobs/cjob_success_write")) {
+      return {
+        success: true,
+        data: {
+          jobId: "cjob_success_write",
+          status: "completed",
+          result: {
+            schemaVersion: "ppt.template_page.v1",
+            pageIndex: 2,
+            pageRole: "content",
+            title: "核心系统架构",
+            keyPoints: ["微服务解耦", "信创适配"],
+            speakerNotes: "演讲备注",
+          },
+        },
+      };
+    }
+    return { success: true };
+  };
+
+  const mockPres = {
+    SlideMaster: { CustomLayouts: { Count: 0 } },
+    Slides: {
+      Count: 2,
+      Add: (idx, type) => {
+        mockPres.Slides.Count++;
+        const sTitle = { Name: "标题", TextFrame: { TextRange: { Text: "" } } };
+        const sBody = { Name: "内容", TextFrame: { TextRange: { Text: "" } } };
+        return {
+          Index: idx,
+          Shapes: {
+            Count: 2,
+            Item: (i) => (i === 1 ? sTitle : sBody),
+          },
+        };
+      },
+    },
+  };
+
+  const mockApp = { ActivePresentation: mockPres };
+
+  const controller = h.createController({ pollIntervalMs: 10, wpsApp: mockApp });
+  await controller.startGenerate({ pageIndex: 2 });
+
+  const state = controller.getState();
+  assert.equal(state.status, "completed");
+  assert.equal(state.writtenToSlide, false);
+
+  // 1. First append succeeds
+  const writeRes = controller.appendSlide(mockApp);
+  assert.equal(writeRes.success, true);
+  assert.equal(writeRes.slideIndex, 3);
+  assert.equal(mockPres.Slides.Count, 3);
+  assert.equal(controller.getState().writtenToSlide, true);
+  assert.equal(controller.getState().newSlideIndex, 3);
+
+  // 2. Second append throws error (duplicate write prevention)
+  assert.throws(
+    () => {
+      controller.appendSlide(mockApp);
+    },
+    (err) => err.message.includes("请勿重复写入")
+  );
+});
