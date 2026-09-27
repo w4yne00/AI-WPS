@@ -23,6 +23,7 @@ SUPPORTED_WORKFLOW_TASKS = (
     "ppt.slide_assistant",
     "ppt.structure_review",
     "ppt.material_outline",
+    "ppt.template_page",
 )
 MAX_PROFILES_PER_TASK = 20
 MAX_PROFILE_NAME_LENGTH = 40

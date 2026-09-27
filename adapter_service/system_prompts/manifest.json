@@ -61,6 +61,11 @@
       "version": "2026-09-27.1",
       "file": "ppt-material-outline.md",
       "sha256": "e02aeed0089a2b4482c14946062b58dd425183bed051924ad225016e389ffb20"
+    },
+    "ppt.template_page": {
+      "version": "2026-09-27.1",
+      "file": "ppt-template-page.md",
+      "sha256": "6cf73517426f88b7cea167e23d5ce0cf7e957a67f58bb12eebf410b6107eeeb4"
     }
   },
   "stages": {
