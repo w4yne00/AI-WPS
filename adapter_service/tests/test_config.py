@@ -148,6 +148,7 @@ class ConfigApiTests(unittest.TestCase):
                 "excel.material_ledger",
                 "ppt.slide_assistant",
                 "ppt.structure_review",
+                "ppt.material_outline",
             ],
         )
         self.assertEqual(data["providerChatPath"], "/chat-messages")

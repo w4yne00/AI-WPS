@@ -64,7 +64,7 @@ class DirectModelProviderTests(unittest.TestCase):
     def test_system_prompt_manifest_exposes_all_supported_tasks(self) -> None:
         metadata = SystemPromptStore().list_metadata()
 
-        self.assertEqual(len(metadata), 11)
+        self.assertEqual(len(metadata), 12)
         self.assertEqual(
             {item["taskType"] for item in metadata},
             {
@@ -79,6 +79,7 @@ class DirectModelProviderTests(unittest.TestCase):
                 "excel.material_ledger",
                 "ppt.slide_assistant",
                 "ppt.structure_review",
+                "ppt.material_outline",
             },
         )
 

@@ -373,7 +373,9 @@ class PptMaterialOutlineCoordinator:
 
         chapters = _fragment_chapters(catalog)
         validated_slides = []
-        user_facts_items = parse_user_facts(user_facts)[0] if user_facts else []
+        _, user_fact_map = parse_user_facts(user_facts)
+        if user_fact_map:
+            user_fact_map["user"] = user_facts.strip()
 
         for idx, slide in enumerate(raw_slides):
             if not isinstance(slide, dict):
@@ -410,20 +412,18 @@ class PptMaterialOutlineCoordinator:
             sources = []
             normalized_fids = []
             for fid in fids:
-                if str(fid).lower() in ("user", "user-fact", "user_fact"):
-                    if user_facts_items:
-                        for uf in user_facts_items:
-                            sources.append({
-                                "sourceId": "user",
-                                "sourceType": "user",
-                                "fileName": "用户补充事实",
-                                "chapter": "用户补充",
-                                "text": uf.get("text", ""),
-                            })
-                    normalized_fids.append("user-fact")
+                clean_fid = str(fid).strip()
+                if clean_fid.lower() in user_fact_map:
+                    sources.append({
+                        "sourceId": clean_fid,
+                        "sourceType": "user",
+                        "fileName": "用户补充事实",
+                        "chapter": "用户补充",
+                        "text": user_fact_map[clean_fid.lower()],
+                    })
+                    normalized_fids.append(clean_fid)
                     continue
 
-                clean_fid = str(fid).strip()
                 frag = None
                 if clean_fid in existing_frags:
                     frag = existing_frags[clean_fid]

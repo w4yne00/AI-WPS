@@ -22,6 +22,7 @@ from app.services.ppt.docx_security import (
     DocxSecurityError,
     validate_docx_bytes,
 )
+from app.services.excel.material_store import ExcelMaterialStore
 from app.services.word.material_import import (
     MATERIAL_IMPORT_MAX_DOCUMENTS,
     MATERIAL_IMPORT_MAX_READABLE_CHARACTERS,
@@ -46,6 +47,7 @@ class PptMaterialStore:
         excel_base_dir: Optional[Path] = None,
         coordinator: Optional[LongTaskCoordinator] = None,
         word_store: Optional[WordMaterialStore] = None,
+        excel_store: Optional[ExcelMaterialStore] = None,
     ) -> None:
         if base_dir is not None:
             self.base_dir = Path(base_dir)
@@ -87,6 +89,9 @@ class PptMaterialStore:
         self.word_store = word_store
         if word_store is not None:
             self.word_base_dir = word_store.base_dir
+        self.excel_store = excel_store
+        if excel_store is not None:
+            self.excel_base_dir = excel_store.base_dir
         self.coordinator = coordinator or get_long_task_coordinator()
         self._lock = threading.RLock()
         self._memory_catalogs: Dict[str, dict] = {}
@@ -209,7 +214,9 @@ class PptMaterialStore:
         if not target_session_id:
             raise AdapterError("REQUEST_VALIDATION_FAILED", "请指定目标演示文稿会话编号。", status_code=422)
 
-        with self._lock, (self.word_store._lock if self.word_store is not None else nullcontext()):
+        # Match Excel's Excel -> Word lock order; acquire PPT last.
+        with (self.excel_store._lock if self.excel_store is not None else nullcontext()), \
+                (self.word_store._lock if self.word_store is not None else nullcontext()), self._lock:
             self._check_busy(target_session_id)
             source_dir = self._get_dir_for_session(source_session_id, self.word_base_dir)
             if not source_dir:
@@ -248,7 +255,11 @@ class PptMaterialStore:
                    self.coordinator.has_active_task(task_type="ppt.material_outline", document_session_id=source_session_id):
                     raise AdapterError("MATERIAL_COMPOSER_BUSY", "来源资料正在生成任务，请稍后复用。", status_code=409)
 
+            index_file = self.base_dir / "sessions.json"
+            previous_index = index_file.read_bytes() if index_file.exists() else None
             temp_target_dir = Path(tempfile.mkdtemp(prefix=".clone-", dir=str(self.base_dir)))
+            backup = None
+            published = False
             try:
                 source_files = source_dir / "files"
                 target_files = temp_target_dir / "files"
@@ -314,14 +325,31 @@ class PptMaterialStore:
                 (temp_target_dir / "catalog_cache.json").write_text(json.dumps(catalog, ensure_ascii=False, indent=2), encoding="utf-8")
 
                 if target_dir.exists():
-                    shutil.rmtree(target_dir)
-                temp_target_dir.rename(target_dir)
+                    backup = self.base_dir / (".previous-" + secrets.token_hex(8))
+                    target_dir.rename(backup)
+                try:
+                    temp_target_dir.rename(target_dir)
+                    published = True
+                    self._update_session_index(target_session_id, target_dir_name)
+                except Exception:
+                    if published and target_dir.exists():
+                        shutil.rmtree(target_dir)
+                    if backup is not None:
+                        backup.rename(target_dir)
+                        backup = None
+                    if previous_index is None:
+                        if index_file.exists():
+                            index_file.unlink()
+                    else:
+                        index_file.write_bytes(previous_index)
+                    raise
             except Exception as e:
                 if temp_target_dir.exists():
                     shutil.rmtree(temp_target_dir, ignore_errors=True)
                 raise AdapterError("MATERIAL_CLONE_FAILED", "复用资料失败，未能建立演示文稿资料副本。", status_code=500) from e
 
-            self._update_session_index(target_session_id, target_dir_name)
+            if backup is not None and backup.exists():
+                shutil.rmtree(backup)
             self._memory_catalogs.pop(target_session_id, None)
             return self.get_catalog(target_session_id)
 

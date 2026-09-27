@@ -59,6 +59,49 @@ def outline_setup():
     shutil.rmtree(temp_dir, ignore_errors=True)
 
 
+@pytest.mark.parametrize("fact_id, expected_text", [
+    ("user-fact-1", "一期已验收"),
+    ("user-fact-2", "二期预算500万元"),
+    ("user", "一期已验收；二期预算500万元"),
+    ("USER", "一期已验收；二期预算500万元"),
+])
+def test_outline_resolves_only_the_referenced_user_fact(outline_setup, fact_id, expected_text):
+    store, coordinator = outline_setup
+    raw = json.dumps({
+        "schemaVersion": "ppt.material_outline.v1",
+        "slides": [{"title": "补充事实", "fragmentIds": [fact_id]}],
+    })
+    result = coordinator._parse_and_validate_outline(
+        raw, "高管", 1, "", store.get_catalog("ppt_test_sess"),
+        user_facts="一期已验收；二期预算500万元",
+    )
+    assert result["slides"][0]["fragmentIds"] == [fact_id]
+    assert result["slides"][0]["sources"] == [{
+        "sourceId": fact_id, "sourceType": "user", "fileName": "用户补充事实",
+        "chapter": "用户补充", "text": expected_text,
+    }]
+
+
+@pytest.mark.parametrize("fact_id, user_facts", [
+    ("user-fact-99", "一期已验收"),
+    ("user-fact-1", ""),
+    ("user", ""),
+    ("user-fact", ""),
+    ("user_fact", ""),
+])
+def test_outline_rejects_user_sources_without_corresponding_facts(outline_setup, fact_id, user_facts):
+    store, coordinator = outline_setup
+    raw = json.dumps({
+        "schemaVersion": "ppt.material_outline.v1",
+        "slides": [{"title": "伪造事实", "fragmentIds": [fact_id]}],
+    })
+    with pytest.raises(AdapterError) as exc_info:
+        coordinator._parse_and_validate_outline(
+            raw, "高管", 1, "", store.get_catalog("ppt_test_sess"), user_facts=user_facts,
+        )
+    assert exc_info.value.code == "MATERIAL_OUTLINE_INVALID_SOURCE"
+
+
 def test_ppt_material_outline_submission_validation(outline_setup):
     store, coordinator = outline_setup
     with pytest.raises(AdapterError) as exc_info:
@@ -295,4 +338,3 @@ def test_ppt_material_outline_with_user_facts(outline_setup):
         assert result["slides"][0]["sources"][0]["sourceType"] == "user"
         assert result["slides"][0]["sources"][0]["fileName"] == "用户补充事实"
         assert "500万元" in result["slides"][0]["sources"][0]["text"]
-

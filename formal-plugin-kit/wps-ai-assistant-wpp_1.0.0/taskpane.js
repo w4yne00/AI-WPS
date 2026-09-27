@@ -2017,11 +2017,67 @@
 
   var materialOutline = null;
   var pptOutlineUploadTarget = null;
+  var pptOutlineBindings = [];
+  var renderedOutlineResult = null;
+  var renderedOutlineSessionId = "";
+  var renderedOutlineInputSessionId = "";
+
+  function getPptOutlineDocumentIdentity(presentation) {
+    var fullName = presentation && (presentation.FullName || presentation.fullName);
+    if (typeof fullName === "function") fullName = fullName.call(presentation);
+    var path = safeText(fullName).replace(/\\/g, "/");
+    return /^(?:\/|[A-Za-z]:\/|[A-Za-z][A-Za-z0-9+.-]*:\/\/)/.test(path) ? "full:" + path : "";
+  }
+
+  function getPptOutlineSessionId() {
+    var presentation = getActivePresentation();
+    var sessionId = helpers.getDocumentSessionId(presentation);
+    if (!presentation) return sessionId;
+    var binding = pptOutlineBindings.filter(function (item) { return item.presentation === presentation; })[0];
+    if (!binding) {
+      binding = { presentation: presentation, boundSessionId: sessionId, inFlight: false, retryAt: 0 };
+      pptOutlineBindings.push(binding);
+    }
+    if (materialOutline && binding.boundSessionId !== sessionId && !binding.inFlight && Date.now() >= binding.retryAt) {
+      var oldSessionId = binding.boundSessionId;
+      binding.inFlight = true;
+      materialOutline.bindDocument(oldSessionId, getPptOutlineDocumentIdentity(presentation), sessionId).then(function () {
+        binding.boundSessionId = sessionId;
+        binding.inFlight = false;
+        binding.retryAt = 0;
+        renderMaterialOutlineView();
+      }).catch(function (error) {
+        binding.inFlight = false;
+        binding.retryAt = Date.now() + 1500;
+        if (getActivePresentation() === presentation) {
+          setStatus("资料绑定失败：" + ((error && error.message) || "请稍后重试") + "，原演示文稿资料已保留。");
+        }
+      });
+    }
+    return binding.boundSessionId;
+  }
+
+  function syncPptOutlinePresentation() {
+    if (state.taskMode === "pptMaterialOutline") {
+      var ctrl = ensureMaterialOutline();
+      if (ctrl) {
+        var sessionId = ctrl.current().documentSessionId;
+        if (syncPptOutlinePresentation.sessionId !== sessionId) {
+          syncPptOutlinePresentation.sessionId = sessionId;
+          ctrl.refreshCatalog();
+          ctrl.refreshReusableSources();
+          ctrl.poll();
+          renderMaterialOutlineView();
+        }
+      }
+    }
+    setTimeout(syncPptOutlinePresentation, 1000);
+  }
 
   function beginPptOutlineMaterialUpload(materialId) {
     pptOutlineUploadTarget = {
       materialId: materialId || "",
-      documentSessionId: state.documentSessionId || (helpers.getDocumentSessionId && helpers.getDocumentSessionId(window.Application)) || "default_ppt_session"
+      documentSessionId: getPptOutlineSessionId()
     };
     var input = byId("ppt-outline-file-input");
     if (input) input.click();
@@ -2032,9 +2088,7 @@
       materialOutline = window.createMaterialOutline({
         request: request,
         storage: window.localStorage,
-        getSessionId: function () {
-          return state.documentSessionId || (helpers.getDocumentSessionId && helpers.getDocumentSessionId(window.Application)) || "default_ppt_session";
-        },
+        getSessionId: getPptOutlineSessionId,
         render: renderMaterialOutlineView,
         copyText: function (text) {
           copyText(text, "逐页大纲已复制到剪贴板。");
@@ -2050,6 +2104,21 @@
     }
     var v = view || (ensureMaterialOutline() && ensureMaterialOutline().stateFor(ensureMaterialOutline().current().documentSessionId));
     if (!v) return;
+
+    [
+      ["ppt-outline-audience", v.audience],
+      ["ppt-outline-slide-count", v.slideCount],
+      ["ppt-outline-instruction", v.instruction],
+      ["ppt-outline-user-facts", v.userFacts]
+    ].forEach(function (field) {
+      var input = byId(field[0]);
+      if (input && typeof field[1] !== "undefined" &&
+          (document.activeElement !== input || renderedOutlineInputSessionId !== v.documentSessionId)) {
+        var value = String(field[1]);
+        if (input.value !== value) input.value = value;
+      }
+    });
+    renderedOutlineInputSessionId = v.documentSessionId;
 
     var countLabel = byId("outline-material-count-label");
     if (countLabel) {
@@ -2072,8 +2141,8 @@
     var materialList = byId("outline-material-list");
     if (materialList) {
       materialList.innerHTML = ((v.catalogSummary && v.catalogSummary.documents) || []).map(function (mat) {
-        var id = safeText(mat.materialId);
-        return '<div class="outline-material-item"><span>' + safeText(mat.fileName) +
+        var id = helpers.escapeHtml(mat.materialId);
+        return '<div class="outline-material-item"><span>' + helpers.escapeHtml(mat.fileName) +
           '（' + Number(mat.readableCharacterCount || 0) + ' 字）</span>' +
           '<div><button type="button" class="text-action" data-outline-update="' + id + '"' + (v.busy ? ' disabled' : '') + '>更新</button> ' +
           '<button type="button" class="text-action" data-outline-remove="' + id + '"' + (v.busy ? ' disabled' : '') + '>移除</button></div></div>';
@@ -2085,12 +2154,12 @@
       conflictBox.hidden = !(v.conflicts && v.conflicts.length);
       conflictBox.innerHTML = (v.conflicts || []).map(function (conflict) {
         var chosen = (v.conflictResolutions || []).filter(function (choice) { return choice.conflictId === conflict.conflictId; })[0];
-        return '<fieldset style="border:1px solid #e5e7eb; border-radius:6px; padding:6px 8px; margin-bottom:6px;"><legend style="font-size:12px; font-weight:600;">' + safeText(conflict.topic || conflict.difference) + '</legend>' +
+        return '<fieldset style="border:1px solid #e5e7eb; border-radius:6px; padding:6px 8px; margin-bottom:6px;"><legend style="font-size:12px; font-weight:600;">' + helpers.escapeHtml(conflict.topic || conflict.difference) + '</legend>' +
           conflict.options.map(function (option) {
-            return '<label class="field-hint" style="display:block; margin:2px 0;"><input type="radio" name="outline-conflict-' + safeText(conflict.conflictId) +
-              '" data-outline-conflict="' + safeText(conflict.conflictId) + '" value="' + safeText(option.optionId) + '"' +
+            return '<label class="field-hint" style="display:block; margin:2px 0;"><input type="radio" name="outline-conflict-' + helpers.escapeHtml(conflict.conflictId) +
+              '" data-outline-conflict="' + helpers.escapeHtml(conflict.conflictId) + '" value="' + helpers.escapeHtml(option.optionId) + '"' +
               (chosen && chosen.chosenCandidateId === option.optionId ? ' checked' : '') + (v.busy ? ' disabled' : '') + '> ' +
-              safeText(option.sourceName + '：' + option.value) + '</label>';
+              helpers.escapeHtml(option.sourceName + '：' + option.value) + '</label>';
           }).join("") + '</fieldset>';
       }).join("");
     }
@@ -2120,38 +2189,47 @@
     var statusLine = byId("outline-confirmation-status-line");
 
     if (v.result && v.result.slides && v.result.slides.length) {
-      if (resultOutput) resultOutput.hidden = true;
+      if (resultOutput) {
+        resultOutput.hidden = !v.error;
+        resultOutput.textContent = v.error || "";
+      }
       if (slideListEl) {
         slideListEl.hidden = false;
+        var activeInput = document.activeElement;
+        var editingTitle = activeInput && activeInput.getAttribute && activeInput.getAttribute("data-title-page") &&
+          slideListEl.contains && slideListEl.contains(activeInput) &&
+          renderedOutlineResult === v.result && renderedOutlineSessionId === v.documentSessionId;
         var roleNames = {
           cover: "封面页", agenda: "目录页", transition: "过渡页",
           content: "内容页", summary: "总结页", backcover: "封底页"
         };
-        slideListEl.innerHTML = v.result.slides.map(function (slide) {
+        if (!editingTitle) slideListEl.innerHTML = v.result.slides.map(function (slide) {
           var role = slide.pageRole || "content";
           var roleLabel = roleNames[role] || role;
           var keyPointsHtml = (slide.keyPoints || []).map(function (p) {
-            return '<li>' + safeText(p) + '</li>';
+            return '<li>' + helpers.escapeHtml(p) + '</li>';
           }).join("");
           var missingHtml = (slide.missingItems || []).map(function (m) {
-            return '<div class="outline-missing-item">〔待补充：' + safeText(m) + '〕</div>';
+            return '<div class="outline-missing-item">〔待补充：' + helpers.escapeHtml(m) + '〕</div>';
           }).join("");
           var sourcesCount = (slide.sources || []).length;
           var sourcesBtnHtml = sourcesCount > 0 ?
-            '<button type="button" class="text-action" data-drawer-page="' + slide.pageIndex + '">查看出处 (' + sourcesCount + ' 项)</button>' :
+            '<button type="button" class="text-action" data-drawer-page="' + helpers.escapeHtml(slide.pageIndex) + '">查看出处 (' + sourcesCount + ' 项)</button>' :
             '<span class="field-hint" style="font-size:11px;">无出处引用</span>';
 
-          return '<div class="outline-slide-card" data-page-card="' + slide.pageIndex + '">' +
+          return '<div class="outline-slide-card" data-page-card="' + helpers.escapeHtml(slide.pageIndex) + '">' +
             '<div class="outline-slide-header">' +
-              '<strong>第 ' + slide.pageIndex + ' 页</strong>' +
-              '<span class="outline-role-badge ' + role + '">' + roleLabel + '</span>' +
+              '<strong>第 ' + helpers.escapeHtml(slide.pageIndex) + ' 页</strong>' +
+              '<span class="outline-role-badge ' + helpers.escapeHtml(role) + '">' + helpers.escapeHtml(roleLabel) + '</span>' +
             '</div>' +
-            '<input class="outline-slide-title-input" data-title-page="' + slide.pageIndex + '" value="' + safeText(slide.title || "") + '" />' +
+            '<input class="outline-slide-title-input" data-title-page="' + helpers.escapeHtml(slide.pageIndex) + '" value="' + helpers.escapeHtml(slide.title || "") + '" />' +
             '<ul class="outline-slide-keypoints">' + keyPointsHtml + '</ul>' +
             missingHtml +
             '<div style="margin-top:6px; display:flex; justify-content:flex-end;">' + sourcesBtnHtml + '</div>' +
           '</div>';
         }).join("");
+        renderedOutlineResult = v.result;
+        renderedOutlineSessionId = v.documentSessionId;
       }
       if (copyMdBtn) copyMdBtn.disabled = false;
       if (confirmBtn) confirmBtn.disabled = false;
@@ -2174,7 +2252,7 @@
     } else {
       if (resultOutput) {
         resultOutput.hidden = false;
-        resultOutput.textContent = v.busy ? (v.phaseLabel || "正在生成...") : (v.error || "等待运行。");
+        resultOutput.textContent = v.error || (v.busy ? (v.phaseLabel || "正在生成...") : "等待运行。");
       }
       if (slideListEl) {
         slideListEl.hidden = true;
@@ -2199,8 +2277,8 @@
           drawer.hidden = false;
           drawerContent.innerHTML = activeSlide.sources.map(function (src) {
             return '<div style="margin-bottom:6px; padding:4px 6px; background:#fff; border-radius:4px; font-size:11px;">' +
-              '<strong>《' + safeText(src.fileName || "资料") + '》- ' + safeText(src.chapter || "正文") + '</strong>' +
-              '<p style="margin:2px 0 0; color:#4b5563;">' + safeText(src.text || "") + '</p>' +
+              '<strong>《' + helpers.escapeHtml(src.fileName || "资料") + '》- ' + helpers.escapeHtml(src.chapter || "正文") + '</strong>' +
+              '<p style="margin:2px 0 0; color:#4b5563;">' + helpers.escapeHtml(src.text || "") + '</p>' +
             '</div>';
           }).join("");
         } else {
@@ -5634,9 +5712,9 @@
         var file = e.target && e.target.files && e.target.files[0];
         if (file) {
           var ctrl = ensureMaterialOutline();
-          var target = pptOutlineUploadTarget || { materialId: "", documentSessionId: state.documentSessionId };
+          var target = pptOutlineUploadTarget || { materialId: "", documentSessionId: getPptOutlineSessionId() };
           if (ctrl) {
-            ctrl.importMaterial(file, target.materialId).catch(function (error) {
+            ctrl.importMaterial(file, target.materialId, "", target.documentSessionId).catch(function (error) {
               setStatus((error && error.message) || "导入资料失败");
             });
           }
@@ -5934,6 +6012,7 @@
       }
     });
     switchView(initialView);
+    syncPptOutlinePresentation();
     if (initialView === "home") {
       refreshSettings({ silent: true });
     }

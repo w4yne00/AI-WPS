@@ -201,8 +201,8 @@
       }
     }
 
-    async function refreshCatalog() {
-      var s = current();
+    async function refreshCatalog(sessionId) {
+      var s = sessionId ? stateFor(sessionId) : current();
       try {
         var res = await request("/ppt/materials/catalog?documentSessionId=" + encodeURIComponent(s.documentSessionId));
         if (res && res.success && res.data) {
@@ -212,7 +212,7 @@
             documents: res.data.documents || []
           };
           s.catalogLabel = formatCatalogLabel(s.catalogSummary);
-          onMaterialsChanged(s.catalogSummary.documents);
+          onMaterialsChanged(s.catalogSummary.documents, s.documentSessionId);
           persist(s);
           render();
         }
@@ -244,14 +244,14 @@
         targetDocumentIdentity: targetIdentity || ""
       }, { method: "POST" });
       if (res && res.success) {
-        await refreshCatalog();
-        await detectConflicts();
+        await refreshCatalog(s.documentSessionId);
+        await detectConflicts(s.documentSessionId);
       }
       return res;
     }
 
-    async function importMaterial(upload, base64OrMaterialId, docIdentity) {
-      var s = current();
+    async function importMaterial(upload, base64OrMaterialId, docIdentity, sessionId) {
+      var s = sessionId ? stateFor(sessionId) : current();
       var fileName = "";
       var contentBase64 = "";
       var materialId = "";
@@ -286,8 +286,8 @@
         contentBase64: contentBase64
       }, { method: materialId ? "PUT" : "POST" });
       if (res && res.success) {
-        await refreshCatalog();
-        await detectConflicts();
+        await refreshCatalog(s.documentSessionId);
+        await detectConflicts(s.documentSessionId);
       }
       return res;
     }
@@ -296,8 +296,8 @@
       var s = current();
       var res = await request("/ppt/materials/" + encodeURIComponent(materialId) + "?documentSessionId=" + encodeURIComponent(s.documentSessionId), null, { method: "DELETE" });
       if (res && res.success) {
-        await refreshCatalog();
-        await detectConflicts();
+        await refreshCatalog(s.documentSessionId);
+        await detectConflicts(s.documentSessionId);
       }
       return res;
     }
@@ -310,23 +310,50 @@
         contentBase64: base64Content
       }, { method: "PUT" });
       if (res && res.success) {
-        await refreshCatalog();
-        await detectConflicts();
+        await refreshCatalog(s.documentSessionId);
+        await detectConflicts(s.documentSessionId);
       }
       return res;
     }
 
     async function bindDocument(oldSessionId, newIdentity, newSessionId) {
-      var res = await request("/ppt/materials/bind-document", {
-        oldDocumentSessionId: oldSessionId,
-        newDocumentIdentity: newIdentity || "",
-        newDocumentSessionId: newSessionId
-      }, { method: "POST" });
+      var old = stateFor(oldSessionId);
+      var res;
+      try {
+        res = await request("/ppt/materials/bind-document", {
+          oldDocumentSessionId: oldSessionId,
+          newDocumentIdentity: newIdentity || "",
+          newDocumentSessionId: newSessionId
+        }, { method: "POST" });
+        if (!res || !res.success) throw new Error((res && res.message) || "资料绑定失败");
+      } catch (error) {
+        if (!(error && error.status === 404 && error.adapterCode === "MATERIAL_NOT_FOUND" &&
+            !old.result && !old.busy && !old.catalogSummary.totalDocuments)) throw error;
+        // No server materials exist yet; first save only migrates the local draft.
+        var target = stateFor(newSessionId);
+        if (target.result || target.jobId || target.catalogSummary.totalDocuments ||
+            target.audience !== DEFAULT_AUDIENCE || target.slideCount !== DEFAULT_SLIDE_COUNT ||
+            target.instruction || target.userFacts || target.conflictResolutions.length) return;
+      }
+      var migrated = clone(old);
+      migrated.documentSessionId = newSessionId;
+      // The outline belongs to the saved presentation; an old job keeps its original identity.
+      migrated.jobId = "";
+      migrated.clientJobId = "";
+      migrated.pendingRequest = null;
+      migrated.busy = false;
+      migrated.pollScheduled = false;
+      if (res && res.data && Array.isArray(res.data.documents)) {
+        migrated.catalogSummary = res.data;
+        migrated.catalogLabel = formatCatalogLabel(res.data);
+      }
+      states[newSessionId] = migrated;
+      persist(migrated);
       return res;
     }
 
-    async function detectConflicts() {
-      var s = current();
+    async function detectConflicts(sessionId) {
+      var s = sessionId ? stateFor(sessionId) : current();
       try {
         var res = await request("/ppt/material-outline/conflicts", {
           documentSessionId: s.documentSessionId,
@@ -359,8 +386,8 @@
       render();
     }
 
-    function onMaterialsChanged(currentDocs) {
-      var s = current();
+    function onMaterialsChanged(currentDocs, sessionId) {
+      var s = sessionId ? stateFor(sessionId) : current();
       if (!s.result || !s.result.basisMaterials || !s.result.basisMaterials.length) {
         s.basisWarning = false;
         return;
@@ -417,6 +444,7 @@
 
       try {
         var res = await request("/ppt/material-outline/jobs", reqPayload, { method: "POST" });
+        if (s.jobId !== clientJobId || !s.busy) return;
         if (res && res.success && res.data) {
           s.jobId = res.data.jobId || clientJobId;
           s.status = res.data.status || "running";
@@ -424,11 +452,12 @@
           s.phaseLabel = OUTLINE_PHASE_TEXT[s.phase] || OUTLINE_PHASE_TEXT.provider_processing;
           persist(s);
           render();
-          schedulePoll();
+          schedulePoll(s, s.jobId);
         } else {
           throw new Error((res && res.message) || "任务提交失败");
         }
       } catch (err) {
+        if (s.jobId !== clientJobId || !s.busy) return;
         s.busy = false;
         s.status = "failed";
         s.phase = "failed";
@@ -439,11 +468,14 @@
       }
     }
 
-    async function poll() {
-      var s = current();
-      if (!s.jobId) return;
+    async function poll(sessionId, expectedJobId) {
+      var s = sessionId ? stateFor(sessionId) : current();
+      var jobId = expectedJobId || s.jobId;
+      if (!jobId || s.jobId !== jobId || !s.busy) return;
       try {
-        var res = await request("/ppt/material-outline/jobs/" + encodeURIComponent(s.jobId) + "?documentSessionId=" + encodeURIComponent(s.documentSessionId));
+        var res = await request("/ppt/material-outline/jobs/" + encodeURIComponent(jobId) + "?documentSessionId=" + encodeURIComponent(s.documentSessionId));
+        if (s.jobId !== jobId || !s.busy) return;
+        if (!res || !res.success || !res.data) throw new Error("任务状态响应无效");
         if (res && res.success && res.data) {
           var job = res.data;
           s.status = job.status || s.status;
@@ -473,44 +505,65 @@
             // Still running or queued
             persist(s);
             render();
-            schedulePoll();
+            schedulePoll(s, jobId);
           }
         }
       } catch (err) {
-        // retry on transient network errors
-        schedulePoll();
+        if (s.jobId !== jobId || !s.busy) return;
+        if (err && (err.status === 404 || err.adapterCode === "LONG_TASK_NOT_FOUND")) {
+          s.busy = false;
+          s.jobId = "";
+          s.pendingRequest = null;
+          s.status = "interrupted";
+          s.phase = "";
+          s.phaseLabel = "";
+          s.error = "原任务不存在，可能因 Adapter 重启而中断，请重新提交。";
+          persist(s);
+          render();
+        } else {
+          s.error = (err && err.message) || "状态查询暂时失败，正在重试。";
+          persist(s);
+          render();
+          schedulePoll(s, jobId);
+        }
       }
     }
 
-    function schedulePoll() {
-      var s = current();
-      if (s.pollScheduled || !s.busy) return;
-      s.pollScheduled = true;
+    function schedulePoll(s, jobId) {
+      if (s.pollScheduled === jobId || !s.busy || s.jobId !== jobId) return;
+      s.pollScheduled = jobId;
       schedule(function () {
-        s.pollScheduled = false;
-        poll();
+        if (s.pollScheduled === jobId) s.pollScheduled = false;
+        return poll(s.documentSessionId, jobId);
       }, 1000);
     }
 
     async function cancel() {
       var s = current();
       if (!s.jobId || !s.busy) return;
+      var jobId = s.jobId;
       try {
-        var res = await request("/ppt/material-outline/jobs/" + encodeURIComponent(s.jobId) + "/cancel", {
+        var res = await request("/ppt/material-outline/jobs/" + encodeURIComponent(jobId) + "/cancel", {
           documentSessionId: s.documentSessionId
         }, { method: "POST" });
+        if (s.jobId !== jobId) return;
+        if (!res || !res.success || !res.data || res.data.status !== "cancelled") {
+          throw new Error("服务端尚未确认取消，继续查询任务状态。");
+        }
         s.busy = false;
         s.status = "cancelled";
         s.phase = "cancelled";
         s.phaseLabel = OUTLINE_PHASE_TEXT.cancelled;
+        s.error = "";
         persist(s);
         render();
         return res;
       } catch (err) {
-        s.busy = false;
-        s.status = "cancelled";
+        if (s.jobId !== jobId) return;
+        s.error = "取消失败：" + ((err && err.message) || "请稍后重试");
         persist(s);
         render();
+        schedulePoll(s, jobId);
       }
     }
 

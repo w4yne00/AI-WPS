@@ -210,7 +210,10 @@ PPT_SLIDE_ASSISTANT_JOB_STORE = PptSlideAssistantJobStore(
     PptSlideAssistant(document_file_store=PPT_DOCUMENT_FILE_STORE)
 )
 PPT_STRUCTURE_REVIEW_JOB_STORE = PptStructureReviewJobStore(PptStructureReviewer())
-PPT_MATERIAL_STORE = PptMaterialStore(word_base_dir=WORD_MATERIAL_IMPORT_SERVICE._store.base_dir, excel_base_dir=EXCEL_MATERIAL_STORE.base_dir)
+PPT_MATERIAL_STORE = PptMaterialStore(
+    word_store=WORD_MATERIAL_IMPORT_SERVICE._store,
+    excel_store=EXCEL_MATERIAL_STORE,
+)
 PPT_MATERIAL_OUTLINE_COORDINATOR = PptMaterialOutlineCoordinator(store=PPT_MATERIAL_STORE)
 
 

@@ -3,6 +3,8 @@ import atexit
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
+from app.api.excel import excel_material_store
+from app.api.word import material_import_service as word_material_import_service
 from app.core.models import (
     PptDocumentFileUploadRequest,
     PptSlideAssistantRequest,
@@ -16,8 +18,8 @@ from app.services.ppt.slide_assistant import PptSlideAssistant
 from app.services.ppt.slide_assistant_jobs import PptSlideAssistantJobStore
 from app.services.ppt.structure_review import PptStructureReviewer
 from app.services.ppt.structure_review_jobs import PptStructureReviewJobStore
-from app.services.ppt.material_store import ppt_material_store
-from app.services.ppt.material_outline import ppt_material_outline
+from app.services.ppt.material_store import PptMaterialStore
+from app.services.ppt.material_outline import PptMaterialOutlineCoordinator
 
 
 router = APIRouter()
@@ -26,6 +28,11 @@ ppt_slide_assistant = PptSlideAssistant(document_file_store=ppt_document_files)
 ppt_slide_jobs = PptSlideAssistantJobStore(ppt_slide_assistant)
 ppt_structure_reviewer = PptStructureReviewer()
 ppt_structure_review_jobs = PptStructureReviewJobStore(ppt_structure_reviewer)
+ppt_material_store = PptMaterialStore(
+    word_store=word_material_import_service._store,
+    excel_store=excel_material_store,
+)
+ppt_material_outline = PptMaterialOutlineCoordinator(store=ppt_material_store)
 
 
 def close_ppt_resources() -> None:
@@ -320,7 +327,7 @@ def post_ppt_material_conflicts(request: dict) -> dict:
     user_facts = str(request.get("userFacts") or "").strip()
     conflicts = ppt_material_outline.detect_conflicts(
         document_session_id=session_id,
-        user_facts=userFacts,
+        user_facts=user_facts,
     )
     return _outline_envelope({"conflicts": conflicts}, trace_id=trace_id, message="conflicts")
 

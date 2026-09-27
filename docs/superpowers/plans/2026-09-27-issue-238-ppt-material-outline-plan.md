@@ -126,7 +126,7 @@ def test_ppt_material_store_import_and_clone(tmp_path):
     ppt_dir = tmp_path / "ppt"
     word_store = WordMaterialStore(base_dir=word_dir)
     ppt_store = PptMaterialStore(base_dir=ppt_dir, word_base_dir=word_dir)
-    
+
     # 验证初始为空
     sources = ppt_store.list_reusable_sources()
     assert isinstance(sources, list)

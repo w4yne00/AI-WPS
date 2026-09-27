@@ -34,6 +34,7 @@ EXPECTED_TASKS = frozenset(
         "excel.material_ledger",
         "ppt.slide_assistant",
         "ppt.structure_review",
+        "ppt.material_outline",
     }
 )
 FORBIDDEN_OUTPUT_PATHS = {
@@ -389,6 +390,7 @@ def audit_experience_contract(root: Path, packages_root=None) -> None:
         "wps-ai-assistant-wpp_1.0.0": {
             "ppt.slide_assistant",
             "ppt.structure_review",
+        "ppt.material_outline",
         },
     }
     plugin_sources = {}
