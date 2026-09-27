@@ -599,6 +599,7 @@ class WordMaterialImportService:
             payload = request or {}
             old_sid = str(payload.get("oldDocumentSessionId") or payload.get("old_document_session_id") or "").strip()
             new_sid = str(payload.get("newDocumentSessionId") or payload.get("new_document_session_id") or "").strip()
+            new_ident = str(payload.get("newDocumentIdentity") or payload.get("new_document_identity") or "").strip()
             if not old_sid or not new_sid:
                 raise AdapterError("REQUEST_VALIDATION_FAILED", "迁移需提供旧文档会话编号与新文档会话编号。", status_code=422)
             self._check_composer_busy(old_sid)

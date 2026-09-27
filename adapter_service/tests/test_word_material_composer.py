@@ -1141,3 +1141,69 @@ def test_material_composer_concurrency_mutex_and_basis_snapshot(tmp_path):
     upd_after["documentSessionId"] = session_id
     upd_res = materials.update_material(mid, upd_after)
     assert upd_res["materialId"] == mid
+
+
+def test_word_material_api_endpoint_parity_for_update_delete_and_bind():
+    # 1. FastAPI TestClient
+    client = TestClient(app)
+    sid1 = "fastapi-doc-sess-1"
+    imp_pl = upload_payload(build_docx(), file_name="fastapi_doc.docx")
+    imp_pl["documentSessionId"] = sid1
+    res1 = client.post("/word/materials", json=imp_pl)
+    assert res1.status_code == 200
+    mid1 = res1.json()["data"]["materialId"]
+
+    # PUT /word/materials/{material_id}
+    upd_pl = upload_payload(build_docx(), file_name="fastapi_doc_v2.docx")
+    upd_pl["documentSessionId"] = sid1
+    res_upd = client.put(f"/word/materials/{mid1}", json=upd_pl)
+    assert res_upd.status_code == 200
+    assert res_upd.json()["data"]["fileName"] == "fastapi_doc_v2.docx"
+
+    # POST /word/materials/bind-document
+    sid2 = "fastapi-doc-sess-migrated"
+    res_bind = client.post("/word/materials/bind-document", json={
+        "oldDocumentSessionId": sid1,
+        "newDocumentSessionId": sid2,
+        "newDocumentIdentity": "full:/path/to/migrated.docx"
+    })
+    assert res_bind.status_code == 200
+    assert res_bind.json()["data"]["totalDocuments"] == 1
+
+    # DELETE /word/materials/{material_id}
+    res_del = client.delete(f"/word/materials/{mid1}?documentSessionId={sid2}")
+    assert res_del.status_code == 200
+    assert res_del.json()["data"]["totalDocuments"] == 0
+
+    # 2. Standalone Adapter
+    import standalone_adapter as standalone
+    from tests.test_word_material_import import _invoke_standalone
+
+    sid_sa1 = "sa-doc-sess-1"
+    sa_imp_pl = upload_payload(build_docx(), file_name="sa_doc.docx")
+    sa_imp_pl["documentSessionId"] = sid_sa1
+    sa_imp_res = _invoke_standalone(standalone, 'do_POST', '/word/materials', sa_imp_pl)
+    assert sa_imp_res["status"] == 200
+    sa_mid = sa_imp_res["body"]["data"]["materialId"]
+
+    # Standalone PUT
+    sa_upd_pl = upload_payload(build_docx(), file_name="sa_doc_v2.docx")
+    sa_upd_pl["documentSessionId"] = sid_sa1
+    sa_upd_res = _invoke_standalone(standalone, 'do_PUT', f'/word/materials/{sa_mid}', sa_upd_pl)
+    assert sa_upd_res["status"] == 200
+    assert sa_upd_res["body"]["data"]["fileName"] == "sa_doc_v2.docx"
+
+    # Standalone bind-document
+    sid_sa2 = "sa-doc-sess-migrated"
+    sa_bind_res = _invoke_standalone(standalone, 'do_POST', '/word/materials/bind-document', {
+        "oldDocumentSessionId": sid_sa1,
+        "newDocumentSessionId": sid_sa2,
+        "newDocumentIdentity": "full:/path/to/sa_migrated.docx"
+    })
+    assert sa_bind_res["status"] == 200
+    assert sa_bind_res["body"]["data"]["totalDocuments"] == 1
+
+    # Standalone DELETE
+    sa_del_res = _invoke_standalone(standalone, 'do_DELETE', f'/word/materials/{sa_mid}?documentSessionId={sid_sa2}', None)
+    assert sa_del_res["status"] == 200
+    assert sa_del_res["body"]["data"]["totalDocuments"] == 0

@@ -651,6 +651,24 @@ def view_word_material(material_id: str):
     return _material_envelope(data, trace_id=material_id, message="viewed")
 
 
+@router.put("/word/materials/{material_id}")
+def update_word_material(material_id: str, request: dict) -> dict:
+    data = material_import_service.update_material(material_id, request)
+    return _material_envelope(data, trace_id=material_id, message="updated")
+
+
+@router.delete("/word/materials/{material_id}")
+def delete_word_material(material_id: str, documentSessionId: str = "") -> dict:
+    data = material_import_service.delete_material(material_id, document_session_id=documentSessionId)
+    return _material_envelope(data, trace_id=material_id, message="deleted")
+
+
+@router.post("/word/materials/bind-document")
+def bind_word_materials_document(request: dict) -> dict:
+    data = material_import_service.bind_document(request)
+    return _material_envelope(data, message="bound")
+
+
 def _material_envelope(data: dict, trace_id: str = "", message: str = "completed") -> dict:
     return {
         "success": True,
