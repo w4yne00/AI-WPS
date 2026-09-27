@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
+from app.api.word import material_import_service as word_material_import_service
 from app.core.logging import get_logger
 from app.core.models import (
     ExcelAnalysisRequest,
@@ -17,6 +18,8 @@ from app.services.excel.formula_assistant import ExcelFormulaAssistant
 from app.services.excel.formula_assistant_jobs import ExcelFormulaAssistantJobStore
 from app.services.excel.smart_fill import ExcelSmartFill
 from app.services.excel.smart_fill_jobs import ExcelSmartFillJobStore
+from app.services.excel.material_store import ExcelMaterialStore
+from app.services.excel.material_ledger import ExcelMaterialLedgerCoordinator
 
 router = APIRouter()
 excel_analyzer = ExcelAnalyzer()
@@ -25,6 +28,8 @@ excel_formula_assistant = ExcelFormulaAssistant()
 excel_formula_assistant_jobs = ExcelFormulaAssistantJobStore(excel_formula_assistant)
 excel_smart_fill = ExcelSmartFill()
 excel_smart_fill_jobs = ExcelSmartFillJobStore(excel_smart_fill)
+excel_material_store = ExcelMaterialStore(word_store=word_material_import_service._store)
+excel_material_ledger = ExcelMaterialLedgerCoordinator(store=excel_material_store)
 logger = get_logger(__name__)
 
 
@@ -345,3 +350,124 @@ def commit_excel_smart_fill_write(job_id: str, request: ExcelSmartFillWriteCommi
         "data": result,
         "errors": [],
     }
+
+
+def _ledger_envelope(data: dict, trace_id: str = "", message: str = "completed") -> dict:
+    return {
+        "success": True,
+        "traceId": trace_id or str(data.get("jobId", data.get("materialId", ""))),
+        "taskType": "excel.material_ledger",
+        "message": message,
+        "data": data,
+        "errors": [],
+    }
+
+
+@router.get("/materials/reusable-sources")
+def get_reusable_sources() -> dict:
+    trace_id = new_trace_id("reusable-sources")
+    sources = excel_material_store.list_reusable_sources()
+    return _ledger_envelope({"sources": sources}, trace_id=trace_id, message="reusable_sources")
+
+
+@router.post("/excel/materials/clone-from-source")
+def clone_excel_material(request: dict) -> dict:
+    trace_id = new_trace_id("excel-material-clone")
+    data = excel_material_store.clone_from_source(
+        source_session_id=str(request.get("sourceSessionId") or "").strip(),
+        target_session_id=str(request.get("targetDocumentSessionId") or "").strip(),
+        target_doc_identity=str(request.get("targetDocumentIdentity") or "").strip(),
+    )
+    return _ledger_envelope(data, trace_id=trace_id, message="cloned")
+
+
+@router.post("/excel/materials/import")
+def import_excel_material(request: dict) -> dict:
+    trace_id = new_trace_id("excel-material-import")
+    data = excel_material_store.import_material(
+        session_id=str(request.get("documentSessionId") or "").strip(),
+        doc_identity=str(request.get("documentIdentity") or "").strip(),
+        file_name=str(request.get("fileName") or "").strip(),
+        content_base64=str(request.get("contentBase64") or "").strip(),
+    )
+    return _ledger_envelope(data, trace_id=trace_id, message="imported")
+
+
+@router.get("/excel/materials/catalog")
+def get_excel_materials_catalog(documentSessionId: str = "") -> dict:
+    trace_id = new_trace_id("excel-material-catalog")
+    data = excel_material_store.get_catalog(documentSessionId)
+    return _ledger_envelope(data, trace_id=trace_id, message="catalog")
+
+
+@router.put("/excel/materials/{material_id}")
+def update_excel_material(material_id: str, request: dict) -> dict:
+    data = excel_material_store.update_material(
+        session_id=str(request.get("documentSessionId") or "").strip(),
+        material_id=material_id,
+        file_name=str(request.get("fileName") or "").strip(),
+        content_base64=str(request.get("contentBase64") or "").strip(),
+    )
+    return _ledger_envelope(data, trace_id=material_id, message="updated")
+
+
+@router.delete("/excel/materials/{material_id}")
+def delete_excel_material(material_id: str, documentSessionId: str = "") -> dict:
+    data = excel_material_store.delete_material(
+        session_id=documentSessionId,
+        material_id=material_id,
+    )
+    return _ledger_envelope(data, trace_id=material_id, message="deleted")
+
+
+@router.post("/excel/materials/bind-document")
+def bind_excel_materials_document(request: dict) -> dict:
+    trace_id = new_trace_id("excel-material-bind")
+    data = excel_material_store.bind_document(
+        old_session_id=str(request.get("oldDocumentSessionId") or "").strip(),
+        new_session_id=str(request.get("newDocumentSessionId") or "").strip(),
+        new_doc_identity=str(request.get("newDocumentIdentity") or "").strip(),
+    )
+    return _ledger_envelope(data, trace_id=trace_id, message="bound")
+
+
+@router.get("/excel/material-ledger/conflicts")
+def get_excel_material_conflicts(documentSessionId: str = "", userFacts: str = "") -> dict:
+    trace_id = new_trace_id("excel-material-conflicts")
+    conflicts = excel_material_ledger.detect_conflicts(
+        document_session_id=documentSessionId,
+        user_facts=userFacts,
+    )
+    return _ledger_envelope({"conflicts": conflicts}, trace_id=trace_id, message="conflicts")
+
+
+@router.post("/excel/material-ledger/conflicts")
+def post_excel_material_conflicts(request: dict) -> dict:
+    trace_id = new_trace_id("excel-material-conflicts")
+    session_id = str(request.get("documentSessionId") or "").strip()
+    user_facts = str(request.get("userFacts") or "").strip()
+    conflicts = excel_material_ledger.detect_conflicts(
+        document_session_id=session_id,
+        user_facts=user_facts,
+    )
+    return _ledger_envelope({"conflicts": conflicts}, trace_id=trace_id, message="conflicts")
+
+
+@router.post("/excel/material-ledger/jobs")
+def start_excel_material_ledger_job(request: dict) -> dict:
+    trace_id = new_trace_id("excel-material-ledger")
+    job = excel_material_ledger.submit_job(request, trace_id=trace_id)
+    return _ledger_envelope(job, trace_id=job.get("traceId", trace_id), message=job.get("status", "accepted"))
+
+
+@router.get("/excel/material-ledger/jobs/{job_id}")
+def get_excel_material_ledger_job(job_id: str, documentSessionId: str = "") -> dict:
+    job = excel_material_ledger.query_job(job_id, document_session_id=documentSessionId)
+    return _ledger_envelope(job, trace_id=job.get("traceId", job_id), message=job.get("status", "completed"))
+
+
+@router.post("/excel/material-ledger/jobs/{job_id}/cancel")
+def cancel_excel_material_ledger_job(job_id: str, request: dict) -> dict:
+    session_id = str(request.get("documentSessionId") or "").strip()
+    job = excel_material_ledger.cancel_job(job_id, document_session_id=session_id)
+    return _ledger_envelope(job, trace_id=job.get("traceId", job_id), message=job.get("status", "cancelled"))

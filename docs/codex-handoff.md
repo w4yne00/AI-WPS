@@ -1,5 +1,22 @@
 # Codex Handoff - AI-WPS
 
+## PR #247 审查修复（2026-09-27）
+
+- 注册 `excel.material_ledger` 模型任务，使用已有 `ProviderClient.post_task` 支持直连与工作流；按提交时的模型配置快照调用，传递取消信号并检查完整输入预算。新增本地 HTTP 服务测试覆盖真实调用路径，模拟结果不作为真实模型质量证据。
+- 正式 Excel 窗格读取所选 DOCX 的实际文件名和内容；导入、更新、移除后重新查询发起工作簿目录。预览按结果中的 `headers/values/sources` 展示数据、缺项、疑似重复、文件名、章节与原文；复制使用同一结果快照，全程不写单元格。
+- 窗格进入时查询可复用来源并排除当前工作簿；提供资料更新、移除及事实差异选择。输入或资料变化后重新核对选择，后端只接受当前候选；用户补充事实仅允许实际存在的编号，空出处或伪造编号拒绝显示。
+- 更新资料继续使用现存片段最大编号，避免覆盖其他资料出处；表格容量重新计算，资料版本时间严格递增。克隆先完成临时副本再替换目标，拒绝自身复用，复制失败保留原目标；从 Word 复用时与来源存储写入共用锁。
+- 同一工作簿的资料变更与生成共用锁并检查活跃任务；同一任务编号可恢复，不同编号拒绝重复生成。前端轮询绑定提交会话，迟到响应不能覆盖其他工作簿或恢复已取消结果；取消失败明确提示，任务丢失提示重新提交，不无限轮询。不确定提交重试保持原任务编号与原请求。
+- Preview 交付清单补齐台账模块与提示词，任务清单更新为 11 项；保留既有交付审计与发布边界。本次不生成正式交付归档。
+- 自检：Docker Python 3.8 全量 `1631 passed / 55 skipped`，正式插件含真实 Chrome 台账窗格 `397 passed`，原型 `12 passed` 且构建成功；89 个生产及交付 Python 文件兼容扫描和差异检查通过。Preview 交付程序集的通用及 Preview 审计由全量交付测试覆盖。真实模型质量、真实 WPS 与麒麟真机验证仍待完成；麒麟文档记录的虚拟环境解释器本次核查已不存在。
+
+## Issue #236：Excel：从资料生成任务台账预览（2026-09-27）
+
+- 目标：在 Excel 主动导入或复用独立 DOCX 资料集，按自定义表头生成一行一项工作的只读台账，核对缺项、疑似重复与原始出处。写入由后续 Issue #237 承载。
+- 资料接口：`GET /materials/reusable-sources`、`POST /excel/materials/clone-from-source`、`POST /excel/materials/import`、`GET /excel/materials/catalog`、`PUT/DELETE /excel/materials/{material_id}`、`POST /excel/materials/bind-document`。
+- 任务接口：`GET/POST /excel/material-ledger/conflicts`、`POST /excel/material-ledger/jobs`、`GET /excel/material-ledger/jobs/{job_id}`、`POST /excel/material-ledger/jobs/{job_id}/cancel`。状态与取消请求携带 `documentSessionId`；任务请求沿用 64 KiB 上限。
+- 结果协议：`schemaVersion: excel.material_ledger.v1`、`headers`、`rows`；每行使用 `values/missingFields/isDuplicate/duplicateOfIndex/duplicateReason/fragmentIds/sources`，来源包含 `fileName/chapter/text`。结果保存 `basisMaterials` 与 `generatedAt`；资料更新或移除后预览提示重新生成。
+
 ## PR #246 审查修复（2026-09-27）
 
 - 删除回包直接刷新目录；更新、删除及导入的迟到成功或失败只影响发起会话。所有在途资料变更结束后重新读取服务端目录；核查中或查询失败时暂停草稿写回，预览、复制和明确的操作错误仍保留。

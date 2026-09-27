@@ -205,18 +205,27 @@ class MaterialComposerBodyLimitMiddleware(FullDocumentReviewBodyLimitMiddleware)
                     path.startswith("/word/material-composer/jobs/")
                     and path.endswith("/cancel")
                 )
+                or path == "/excel/material-ledger/jobs"
+                or path == "/excel/material-ledger/conflicts"
+                or (
+                    path.startswith("/excel/material-ledger/jobs/")
+                    and path.endswith("/cancel")
+                )
             )
         )
 
     async def _reject(self, scope, send, received: int, started_at: float) -> None:
         trace_id = WritingPolicyImportBodyLimitMiddleware._trace_id(scope)
-        message = "资料章节草稿请求超过 64 KiB 限制。"
+        path = str(scope.get("path", ""))
+        is_excel = path.startswith("/excel/")
+        task_type = "excel.material_ledger" if is_excel else "word.material_composer"
+        message = "从资料生成任务台账请求超过 64 KiB 限制。" if is_excel else "资料章节草稿请求超过 64 KiB 限制。"
         response = JSONResponse(
             status_code=413,
             content={
                 "success": False,
                 "traceId": trace_id,
-                "taskType": "word.material_composer",
+                "taskType": task_type,
                 "message": message,
                 "data": {},
                 "errors": [{
@@ -585,6 +594,10 @@ def _task_type_from_path(path: str) -> str:
         return "word.smart_imitation"
     if path == "/word/materials" or path.startswith("/word/materials/"):
         return "word.material_composer"
+    if path.startswith("/excel/material-ledger/"):
+        return "excel.material_ledger"
+    if path == "/excel/materials" or path.startswith("/excel/materials/"):
+        return "excel.material_ledger"
     if path.startswith("/excel/analysis/jobs/"):
         return "excel.analysis"
     if path.startswith("/excel/formula-assistant/jobs/"):
@@ -609,6 +622,13 @@ def _task_type_from_path(path: str) -> str:
         "/excel/formula-assistant/jobs": "excel.formula_assistant",
         "/excel/smart-fill": "excel.smart_fill",
         "/excel/smart-fill/jobs": "excel.smart_fill",
+        "/excel/material-ledger/jobs": "excel.material_ledger",
+        "/excel/material-ledger/conflicts": "excel.material_ledger",
+        "/excel/materials/clone-from-source": "excel.material_ledger",
+        "/excel/materials/import": "excel.material_ledger",
+        "/excel/materials/catalog": "excel.material_ledger",
+        "/excel/materials/bind-document": "excel.material_ledger",
+        "/materials/reusable-sources": "excel.material_ledger",
         "/ppt/slide-assistant/jobs": "ppt.slide_assistant",
         "/ppt/document-files": "ppt.slide_assistant",
         "/ppt/structure-review/jobs": "ppt.structure_review",

@@ -220,9 +220,9 @@ class DirectServiceStoreTests(unittest.TestCase):
                 default_model="qwen-max",
             )
 
-            # Initial list returns all 10 tasks with empty serviceId
+            # Initial list returns all 11 tasks with empty serviceId
             initial = store.list_task_model_selections()
-            self.assertEqual(len(initial["taskModelSelections"]), 10)
+            self.assertEqual(len(initial["taskModelSelections"]), 11)
             write_sel = next(
                 item for item in initial["taskModelSelections"]
                 if item["taskType"] == "word.smart_write"
@@ -257,7 +257,7 @@ class DirectServiceStoreTests(unittest.TestCase):
             word_selections = store.list_task_model_selections(host="word")
             self.assertEqual(len(word_selections["taskModelSelections"]), 5)
             excel_selections = store.list_task_model_selections(host="excel")
-            self.assertEqual(len(excel_selections["taskModelSelections"]), 3)
+            self.assertEqual(len(excel_selections["taskModelSelections"]), 4)
             ppt_selections = store.list_task_model_selections(host="ppt")
             self.assertEqual(len(ppt_selections["taskModelSelections"]), 2)
 

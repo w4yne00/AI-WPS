@@ -31,6 +31,7 @@ EXPECTED_TASKS = frozenset(
         "excel.analysis",
         "excel.formula_assistant",
         "excel.smart_fill",
+        "excel.material_ledger",
         "ppt.slide_assistant",
         "ppt.structure_review",
     }
@@ -383,6 +384,7 @@ def audit_experience_contract(root: Path, packages_root=None) -> None:
             "excel.analysis",
             "excel.formula_assistant",
             "excel.smart_fill",
+        "excel.material_ledger",
         },
         "wps-ai-assistant-wpp_1.0.0": {
             "ppt.slide_assistant",
