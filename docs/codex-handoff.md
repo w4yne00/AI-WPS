@@ -1,5 +1,29 @@
 # Codex Handoff - AI-WPS
 
+## Issue #237：Excel：确认后向空白区域写入台账（2026-09-27）
+
+- **目标与核心机制**：在 Excel 中将已确认的资料任务台账安全写入当前工作表的用户选定空白区域。
+- **目标区域解析与 100% 空白防御（Fail-Closed）**：
+  - `resolveExcelLedgerTargetRange`：支持单单元格选区自动按台账行数与列数推导包围盒（A1 记号法，如 `A2:D10`）；支持多单元格选区容量核验，若容量不足立即显式拒绝（不向外扩展）。
+  - `validateExcelLedgerTargetBlank`：对目标区域内的每一个单元格执行严格空白检查；目标区域必须 100% 为空白，若发现任何已有数据、公式（`HasFormula`）、合并单元格（`MergeCells`）、隐藏行/列（`EntireRow/EntireColumn.Hidden`）或保护单元格（`ProtectContents && Locked`），立即中断写入并提示具体冲突单元格地址与原因，严格不覆盖、不追加、不匹配已有行。
+  - 多工作簿安全核验：严格校验目标区域所在工作簿与生成台账时的工作簿会话一致（`documentSessionId`），拒绝跨工作簿写入。
+- **公式注入防御与缺项物理空白**：
+  - `sanitizeExcelLedgerCellValue`：针对所有可能被 Excel/WPS 误解释为公式或表达式的单元格值（以 `=+\-@` 开头），自动添加前导单引号 `'`，强制作为纯文本存储，杜绝公式注入漏洞与宏执行风险。
+  - 严格保持物理空白：台账中标记为缺项或空值字段严格写入物理空字符串 `""`，保持目标单元格完全为空白，绝不写入 `[缺项]` 等占位文字。
+- **逆向补偿回滚机制（Reverse Compensation Rollback）**：
+  - `writeExcelMaterialLedger`：在向单元格写入数据时，按写入顺序实时跟踪所有成功写入的单元格清单；
+  - 若在写入中途发生异常（如 COM 故障、工作表保护冲突），立即触发逆向补偿循环，按相反顺序将已写入单元格重置为空字符串 `""`；
+  - 若全部回滚成功，抛出标准错误码 `COMPENSATION_SUCCEEDED`（并提示“台账写入失败，已成功将已写入单元格恢复为空白”）；
+  - 若逆向补偿过程中发生次生异常，抛出错误码 `COMPENSATION_FAILED`，并在错误对象与提示中精确公开回滚失败的单元格地址列表（`rollbackFailures`），杜绝静默失败与数据污染。
+- **任务窗格确认交互与依据保护**：
+  - 在窗格中新增 `#ledger-write-section`，包含目标区域信息摘要（`#ledger-target-summary`）、选区空白状态检测按钮（`#btn-refresh-ledger-target`）、包含表头开关（`#ledger-include-headers-toggle`，默认勾选）与写入按钮（`#btn-write-ledger`）；
+  - 点击“确认写入工作表”前，通过显式确认弹窗（`window.confirm`）提示用户核对工作簿名称、工作表名称、目标区域地址与写入行数；用户取消时中止写入且零单元格变动；
+  - 依据失效熔断：若依据资料发生更新或移除（`ledger-basis-warning` 激活），写入按钮立即禁用；写入期间禁用按钮并提示进度，写入完成后更新状态。
+- **全量回归验证**：
+  - 正式插件契约与真实浏览器测试：`formal-plugin-kit/tests/` 共 418 项测试全部通过（418 passed，0 failed），包含单测、逆向回滚专项及真实 Chrome 视口下的台账生成、取消保护与写入确认浏览器测试；
+  - 原型套件 `wps-addon`：Vitest 12 passed，Vite 生产构建成功；
+  - Python 3.8 兼容扫描：212 个生产与交付 Python 文件通过（0 错误），`git diff --check` 0 警告；交付来源 provenance 核验通过。
+
 ## PR #247 审查修复（2026-09-27）
 
 - 注册 `excel.material_ledger` 模型任务，使用已有 `ProviderClient.post_task` 支持直连与工作流；按提交时的模型配置快照调用，传递取消信号并检查完整输入预算。新增本地 HTTP 服务测试覆盖真实调用路径，模拟结果不作为真实模型质量证据。
