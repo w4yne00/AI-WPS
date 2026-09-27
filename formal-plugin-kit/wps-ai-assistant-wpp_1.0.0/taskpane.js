@@ -2304,23 +2304,17 @@
         getSessionId: getPptOutlineSessionId,
         getConfirmedOutline: function () {
           var mo = ensureMaterialOutline();
-          if (!mo) return null;
-          var cur = mo.current();
-          var s = cur && mo.stateFor(cur.documentSessionId);
-          if (s && s.confirmationStatus === "confirmed" && s.result) {
-            return {
-              confirmed: true,
-              slides: s.result.slides || []
-            };
-          }
-          return null;
+          var cur = mo && mo.current();
+          if (!mo || !mo.hasConfirmedOutline() || cur.basisWarning) return null;
+          return Object.assign({}, mo.getConfirmedOutline(), {
+            confirmedAt: cur.confirmedAt,
+            instruction: cur.instruction,
+            userFacts: cur.userFacts
+          });
         },
         hasConfirmedOutline: function () {
           var mo = ensureMaterialOutline();
-          if (!mo) return false;
-          var cur = mo.current();
-          var s = cur && mo.stateFor(cur.documentSessionId);
-          return !!(s && s.confirmationStatus === "confirmed");
+          return !!(mo && mo.hasConfirmedOutline() && !mo.current().basisWarning);
         },
         render: renderTemplateBodyPageView,
         wpsApp: typeof wps !== "undefined" ? wps.WppApplication() : null
@@ -2369,6 +2363,21 @@
     var generateBtn = byId("btn-ppt-generate-template-page");
     var cancelBtn = byId("btn-ppt-cancel-template-page");
     var appendBtn = byId("btn-ppt-append-slide-confirm");
+    if (appendBtn) { appendBtn.hidden = true; appendBtn.disabled = !v.canAppend; }
+    if (select) select.disabled = v.status === "running" || v.recoveryRequired;
+    var recoveryBtn = byId("btn-ppt-template-recovery");
+    if (recoveryBtn) recoveryBtn.hidden = !v.recoveryRequired;
+    if (v.recoveryRequired) {
+      if (generateBtn) generateBtn.disabled = true;
+      if (cancelBtn) cancelBtn.hidden = true;
+      if (statusEl) {
+        statusEl.hidden = false;
+        statusEl.textContent = (v.error && v.error.message) ||
+          ("上次追加状态未确定，请在 WPS 核查并清理本次新增的第 " + (v.recoveryInfo && v.recoveryInfo.slideIndex) + " 页，再点击核查恢复。");
+      }
+      if (previewEl) previewEl.hidden = true;
+      return;
+    }
 
     if (v.status === "running") {
       if (generateBtn) {
@@ -2411,7 +2420,16 @@
             '<ul style="margin:0; padding-left:16px;">' +
             (v.result.keyPoints || []).map(function(p) { return '<li>' + helpers.escapeHtml(p) + '</li>'; }).join("") +
             '</ul>' +
-            (v.result.speakerNotes ? ('<div class="field-hint" style="margin-top:6px; font-size:11px;">演讲备注：' + helpers.escapeHtml(v.result.speakerNotes) + '</div>') : '');
+            (v.result.speakerNotes ? ('<div class="field-hint" style="margin-top:6px; font-size:11px;">演讲备注：' + helpers.escapeHtml(v.result.speakerNotes) + '</div>') : '') +
+            '<div class="field-hint" style="margin-top:8px;">依据：</div>' +
+            (v.result.sources || []).map(function (source) {
+              return '<div class="field-hint">' + helpers.escapeHtml(source.fileName || '用户补充事实') + ' · ' +
+                helpers.escapeHtml(source.chapter || '正文') + '<br>' + helpers.escapeHtml(source.text || '') + '</div>';
+            }).join('') +
+            ((v.result.sources || []).length ? '' : '<div class="field-hint">无出处引用，请核对。</div>') +
+            (v.result.missingItems || []).map(function (item) {
+              return '<div class="outline-missing-item">待补充：' + helpers.escapeHtml(item) + '</div>';
+            }).join('');
         }
       }
       if (appendBtn) appendBtn.hidden = v.writtenToSlide;
@@ -6026,24 +6044,7 @@
         ctrl.startGenerate({ pageIndex: pageIndex })
           .then(function (res) {
             if (res && res.status === "COMPLETED") {
-              var app = typeof wps !== "undefined" ? wps.WppApplication() : null;
-              var currentCount = (app && app.ActivePresentation && app.ActivePresentation.Slides && app.ActivePresentation.Slides.Count) || 0;
-              var title = (res.result && res.result.title) || "模板正文页";
-              var confirmMsg = "即将向当前演示文稿末尾（第 " + (currentCount + 1) + " 页）追加一张模板正文页：“" + title + "”。\n现有第 1 至 " + currentCount + " 页完全保持不变。\n\n确认追加？";
-              if (window.confirm(confirmMsg)) {
-                try {
-                  var writeRes = ctrl.appendSlide(app);
-                  if (writeRes && writeRes.success) {
-                    setStatus("已成功向末尾追加模板正文页（第 " + writeRes.slideIndex + " 页）！");
-                  } else {
-                    setStatus("写入失败：" + ((writeRes && writeRes.error) || "未知错误"));
-                  }
-                } catch (err) {
-                  setStatus("写入失败：" + (err.message || String(err)));
-                }
-              } else {
-                setStatus("已取消追加。内容已保留在预览区，可按需追加。");
-              }
+              setStatus("正文页已生成，请核对预览、依据与缺项后点击追加。");
             } else if (res && res.status === "OVERFLOW_REJECTED") {
               setStatus("正文页排版容量超限，已拦截写入。");
             }
@@ -6056,7 +6057,16 @@
     if (byId("btn-ppt-cancel-template-page")) {
       byId("btn-ppt-cancel-template-page").addEventListener("click", function () {
         var ctrl = ensureTemplateBodyPage();
-        if (ctrl) ctrl.cancelJob();
+        if (ctrl) ctrl.cancelJob().catch(function (err) { setStatus(err.message || String(err)); });
+      });
+    }
+    if (byId("btn-ppt-template-recovery")) {
+      byId("btn-ppt-template-recovery").addEventListener("click", function () {
+        var ctrl = ensureTemplateBodyPage();
+        try {
+          ctrl.verifyRecovery(typeof wps !== "undefined" ? wps.WppApplication() : null);
+          setStatus("已核查恢复原页数，可重新生成或追加。");
+        } catch (err) { setStatus(err.message || String(err)); }
       });
     }
     if (byId("btn-ppt-append-slide-confirm")) {
@@ -6066,13 +6076,14 @@
         var app = typeof wps !== "undefined" ? wps.WppApplication() : null;
         var currentCount = (app && app.ActivePresentation && app.ActivePresentation.Slides && app.ActivePresentation.Slides.Count) || 0;
         var state = ctrl.getState();
+        if (!state.canAppend) { setStatus("当前正文页不可追加，请核对文稿、大纲及恢复状态。"); return; }
         var title = (state.result && state.result.title) || "模板正文页";
-        var confirmMsg = "即将向当前演示文稿末尾（第 " + (currentCount + 1) + " 页）追加一张模板正文页：“" + title + "”。\n现有第 1 至 " + currentCount + " 页完全保持不变。\n\n确认追加？";
+        var confirmMsg = "即将向当前演示文稿末尾（第 " + (currentCount + 1) + " 页）追加一张模板正文页：“" + title + "”（" + ((state.result && state.result.keyPoints) || []).length + " 条要点）。\n现有第 1 至 " + currentCount + " 页完全保持不变。\n\n确认追加？";
         if (window.confirm(confirmMsg)) {
           try {
             var writeRes = ctrl.appendSlide(app);
             if (writeRes && writeRes.success) {
-              setStatus("已成功向末尾追加模板正文页（第 " + writeRes.slideIndex + " 页）！");
+              setStatus(writeRes.warning || ("已成功向末尾追加模板正文页（第 " + writeRes.slideIndex + " 页）！"));
             } else {
               setStatus("写入失败：" + ((writeRes && writeRes.error) || "未知错误"));
             }

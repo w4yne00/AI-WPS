@@ -1,10 +1,9 @@
 import json
 import re
 import secrets
-import threading
 from copy import deepcopy
 from datetime import datetime, timezone
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 from app.core.errors import AdapterError
 from app.services.ppt.material_store import PptMaterialStore, ppt_material_store
@@ -42,8 +41,10 @@ def evaluate_template_page_capacity(key_points: List[str]) -> dict:
     points = [str(p).strip() for p in (key_points or []) if str(p).strip()]
     point_count = len(points)
     total_chars = sum(len(p) for p in points)
-    # Estimate wrapped lines in a 11.5" container (~36 Chinese chars per line at 18-20pt)
-    estimated_lines = sum(max(1, (len(p) + 35) // 36) for p in points)
+    estimated_lines = sum(
+        max(1, (len(line) + 31) // 32)
+        for point in points for line in re.split(r"\r\n|\r|\n", point)
+    )
     is_overflow = (
         point_count > MAX_KEY_POINTS
         or total_chars > MAX_CHARACTERS
@@ -81,10 +82,6 @@ class PptTemplatePageCoordinator:
         self.store = store or ppt_material_store
         self.provider = provider or ProviderClient()
         self.coordinator = coordinator or get_long_task_coordinator()
-        self._lock = threading.Lock()
-        self._jobs: Dict[str, dict] = {}
-        self._client_job_map: Dict[str, str] = {}
-        self._active_sessions: Dict[str, str] = {}
 
     def submit_job(self, payload: dict, trace_id: str = "") -> dict:
         if not isinstance(payload, dict):
@@ -104,7 +101,12 @@ class PptTemplatePageCoordinator:
         elif not CLIENT_JOB_ID_PATTERN.match(client_job_id):
             raise AdapterError("REQUEST_VALIDATION_FAILED", "任务编号格式无效。", status_code=422)
 
-        page_index = int(payload.get("pageIndex") or payload.get("page_index") or 1)
+        try:
+            page_index = int(payload.get("pageIndex") or payload.get("page_index") or 1)
+        except (ValueError, TypeError):
+            raise AdapterError("REQUEST_VALIDATION_FAILED", "页码必须为正整数。", status_code=422)
+        if page_index < 1:
+            raise AdapterError("REQUEST_VALIDATION_FAILED", "页码必须为正整数。", status_code=422)
         page_role = str(payload.get("pageRole") or payload.get("page_role") or "content").strip()
         outline_title = str(payload.get("outlineTitle") or payload.get("outline_title") or "").strip()
         outline_key_points = payload.get("outlineKeyPoints") or payload.get("outline_key_points") or []
@@ -114,81 +116,60 @@ class PptTemplatePageCoordinator:
         instruction = str(payload.get("instruction") or "").strip()
         user_facts = str(payload.get("userFacts") or payload.get("user_facts") or "").strip()
 
-        with self._lock:
-            existing_job_id = self._client_job_map.get((session_id, client_job_id))
-            if existing_job_id and existing_job_id in self._jobs:
-                existing_job = self._jobs[existing_job_id]
-                if existing_job.get("requestPayload") == payload:
-                    return deepcopy(existing_job)
-                raise AdapterError(
-                    "PPT_TEMPLATE_PAGE_JOB_CONFLICT",
-                    "同一任务编号已用于不同请求，请使用新编号重试。",
-                    status_code=409,
-                )
-
-            active_job_id = self._active_sessions.get(session_id)
-            if active_job_id:
-                active_job = self._jobs.get(active_job_id)
-                if active_job and active_job.get("status") in ("queued", "running"):
-                    return deepcopy(active_job)
-
-            job_id = "ppt_tp_{0}".format(secrets.token_hex(12))
-            job = {
-                "jobId": job_id,
-                "clientJobId": client_job_id,
-                "taskType": TASK_TYPE,
-                "documentSessionId": session_id,
-                "traceId": trace_id or job_id,
-                "status": "queued",
-                "phase": "queued",
-                "createdAt": datetime.now(timezone.utc).isoformat(),
-                "result": None,
-                "error": None,
-                "requestPayload": payload,
-            }
-            self._jobs[job_id] = job
-            self._client_job_map[(session_id, client_job_id)] = job_id
-            self._active_sessions[session_id] = job_id
-
-        # Execute job
-        self._execute_job(
-            job_id,
-            session_id,
-            page_index,
-            page_role,
-            outline_title,
-            outline_key_points,
-            outline_fragment_ids,
-            instruction,
-            user_facts,
+        fingerprint = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+        existing = self.coordinator.get(client_job_id, task_type=TASK_TYPE)
+        if existing:
+            if self.coordinator.get_request_fingerprint(client_job_id, task_type=TASK_TYPE) != fingerprint:
+                raise AdapterError("PPT_TEMPLATE_PAGE_JOB_CONFLICT", "同一任务编号已用于不同请求，请使用新编号重试。", status_code=409)
+            return existing
+        with self.store._lock:
+            catalog = deepcopy(self.store.get_catalog(session_id))
+        snapshot = {
+            "catalog": catalog,
+            "systemPrompt": SystemPromptStore().load(TASK_TYPE)["content"],
+            "taskAuth": deepcopy(self.provider.resolve_task_auth(TASK_TYPE)),
+            "traceId": trace_id or client_job_id,
+            "pageIndex": page_index,
+            "pageRole": page_role,
+            "outlineTitle": outline_title,
+            "outlineKeyPoints": outline_key_points,
+            "outlineFragmentIds": outline_fragment_ids,
+            "instruction": instruction,
+            "userFacts": user_facts,
+        }
+        return self.coordinator.submit(
+            job_id=client_job_id,
+            trace_id=trace_id or client_job_id,
+            task_type=TASK_TYPE,
+            runner=self._run_job,
+            snapshot=snapshot,
+            request_fingerprint=fingerprint,
+            request_conflict_code="PPT_TEMPLATE_PAGE_JOB_CONFLICT",
+            failure_code="PPT_TEMPLATE_PAGE_FAILED",
+            failure_message="模板正文页生成失败，请检查模型结果或资料内容。",
+            public_metadata={"documentSessionId": session_id, "clientJobId": client_job_id, "taskType": TASK_TYPE},
+            safe_failure_codes={"PPT_TEMPLATE_PAGE_INVALID_SOURCE", "PPT_TEMPLATE_PAGE_INVALID_SCHEMA", "MODEL_CONFIG_INCOMPLETE", "MODEL_INPUT_OVER_BUDGET", "PROVIDER_TIMEOUT"},
+            priority_class=PRIORITY_INTERACTIVE,
+            allow_running_cancel=True,
         )
-        return deepcopy(self._jobs[job_id])
 
     def get_job(self, job_id: str, document_session_id: str = "") -> dict:
-        with self._lock:
-            job = self._jobs.get(job_id)
-            if not job:
-                raise AdapterError("PPT_TEMPLATE_PAGE_NOT_FOUND", "任务不存在或已过期。", status_code=404)
-            if document_session_id and job.get("documentSessionId") != document_session_id:
-                raise AdapterError("PPT_TEMPLATE_PAGE_SESSION_MISMATCH", "会话不匹配。", status_code=403)
-            return deepcopy(job)
+        job = self.coordinator.get(job_id, task_type=TASK_TYPE)
+        if not job:
+            raise AdapterError("PPT_TEMPLATE_PAGE_NOT_FOUND", "任务不存在或已过期。", status_code=404)
+        if document_session_id and job.get("documentSessionId") != document_session_id:
+            raise AdapterError("PPT_TEMPLATE_PAGE_SESSION_MISMATCH", "会话不匹配。", status_code=403)
+        return job
 
     query_job = get_job
 
+    def wait_job(self, job_id: str, document_session_id: str = "") -> dict:
+        self.get_job(job_id, document_session_id)
+        return self.coordinator.wait(job_id, task_type=TASK_TYPE)
+
     def cancel_job(self, job_id: str, document_session_id: str = "") -> dict:
-        with self._lock:
-            job = self._jobs.get(job_id)
-            if not job:
-                raise AdapterError("PPT_TEMPLATE_PAGE_NOT_FOUND", "任务不存在或已过期。", status_code=404)
-            if document_session_id and job.get("documentSessionId") != document_session_id:
-                raise AdapterError("PPT_TEMPLATE_PAGE_SESSION_MISMATCH", "会话不匹配。", status_code=403)
-            if job["status"] in ("queued", "running"):
-                job["status"] = "cancelled"
-                job["phase"] = "cancelled"
-                job["cancelledAt"] = datetime.now(timezone.utc).isoformat()
-            if self._active_sessions.get(job["documentSessionId"]) == job_id:
-                self._active_sessions.pop(job["documentSessionId"], None)
-            return deepcopy(job)
+        self.get_job(job_id, document_session_id)
+        return self.coordinator.request_cancel(job_id, task_type=TASK_TYPE)
 
     def _call_provider_model(
         self,
@@ -211,167 +192,151 @@ class PptTemplatePageCoordinator:
         )
         return extract_answer(body)
 
-    def _execute_job(
-        self,
-        job_id: str,
-        session_id: str,
-        page_index: int,
-        page_role: str,
-        outline_title: str,
-        outline_key_points: List[str],
-        outline_fragment_ids: List[int],
-        instruction: str,
-        user_facts: str,
-    ) -> None:
-        job = self._jobs[job_id]
-        job["status"] = "running"
-        job["phase"] = "preparing"
+    def _run_job(self, snapshot: dict, progress) -> dict:
+        def check_cancel():
+            if hasattr(progress, "cancel_requested") and progress.cancel_requested():
+                raise LongTaskCancelled()
 
-        try:
-            with self.store._lock:
-                catalog = self.store.get_catalog(session_id)
-                basis_materials = [
-                    {
-                        "materialId": doc.get("materialId", ""),
-                        "fileName": doc.get("fileName", "参考资料"),
-                        "updatedAt": doc.get("updatedAt", ""),
-                    }
-                    for doc in catalog.get("documents", [])
-                ]
+        check_cancel()
+        progress("preparing")
+        catalog = snapshot["catalog"]
+        system_prompt = snapshot["systemPrompt"]
+        page_index = snapshot["pageIndex"]
+        page_role = snapshot["pageRole"]
+        outline_title = snapshot["outlineTitle"]
+        outline_key_points = snapshot["outlineKeyPoints"]
+        outline_fragment_ids = snapshot["outlineFragmentIds"]
+        instruction = snapshot["instruction"]
+        user_facts = snapshot["userFacts"]
+        basis_materials = [
+            {"materialId": doc.get("materialId", ""), "fileName": doc.get("fileName", "参考资料"), "updatedAt": doc.get("updatedAt", "")}
+            for doc in catalog.get("documents", [])
+        ]
+        materials_payload = []
+        for fid, frag in (catalog.get("fragments") or {}).items():
+            materials_payload.append({
+                "fragmentId": frag.get("fragmentId", fid),
+                "fileName": frag.get("fileName", "参考资料"),
+                "text": frag.get("text", ""),
+            })
 
-            job["phase"] = "provider_processing"
-            prompt_item = SystemPromptStore().load(TASK_TYPE)
-            system_prompt = prompt_item["content"]
+        user_content = json.dumps({
+            "pageIndex": page_index,
+            "pageRole": page_role,
+            "outlineTitle": outline_title,
+            "outlineKeyPoints": outline_key_points,
+            "outlineFragmentIds": outline_fragment_ids,
+            "instruction": instruction,
+            "userFacts": user_facts,
+            "materials": materials_payload,
+        }, ensure_ascii=False)
 
-            materials_payload = []
-            for fid, frag in (catalog.get("fragments") or {}).items():
-                materials_payload.append({
-                    "fragmentId": frag.get("fragmentId", fid),
-                    "fileName": frag.get("fileName", "参考资料"),
-                    "text": frag.get("text", ""),
-                })
+        auth = snapshot["taskAuth"]
+        budget, _ = direct_model_input_budget(
+            int(auth.get("contextWindowTokens") or DEFAULT_CONTEXT_WINDOW_TOKENS),
+            int(auth.get("maxOutputTokens") or DEFAULT_RESERVED_OUTPUT_TOKENS),
+        )
+        if _estimate_direct_tokens(system_prompt, system_prompt + "\n" + user_content) > budget:
+            raise AdapterError("MODEL_INPUT_OVER_BUDGET", "资料超过单次模型预算，请缩小资料范围；未截断资料。", status_code=413)
+        check_cancel()
+        progress("provider_processing")
+        raw_answer = self._call_provider_model(system_prompt, user_content, task_auth=auth, trace_id=snapshot["traceId"], progress=progress)
+        check_cancel()
 
-            user_content = json.dumps({
-                "pageIndex": page_index,
-                "pageRole": page_role,
-                "outlineTitle": outline_title,
-                "outlineKeyPoints": outline_key_points,
-                "outlineFragmentIds": outline_fragment_ids,
-                "instruction": instruction,
-                "userFacts": user_facts,
-                "materials": materials_payload,
-            }, ensure_ascii=False)
+        progress("parsing")
+        parsed_data = _extract_json_payload(raw_answer)
+        if not isinstance(parsed_data, dict):
+            raise AdapterError(
+                "PPT_TEMPLATE_PAGE_INVALID_SCHEMA",
+                "模型未输出有效 JSON 格式对象。",
+                status_code=502,
+            )
 
-            raw_answer = self._call_provider_model(system_prompt, user_content, trace_id=job.get("traceId", ""))
+        if parsed_data.get("schemaVersion") != "ppt.template_page.v1":
+            raise AdapterError(
+                "PPT_TEMPLATE_PAGE_INVALID_SCHEMA",
+                "模型输出版本不匹配，预期 ppt.template_page.v1。",
+                status_code=502,
+            )
 
-            job["phase"] = "parsing"
-            parsed_data = _extract_json_payload(raw_answer)
-            if not isinstance(parsed_data, dict):
-                raise AdapterError(
-                    "PPT_TEMPLATE_PAGE_INVALID_SCHEMA",
-                    "模型未输出有效 JSON 格式对象。",
-                    status_code=502,
-                )
+        title = str(parsed_data.get("title") or outline_title or "第 {0} 页".format(page_index)).strip()
+        raw_points = parsed_data.get("keyPoints") or outline_key_points or []
+        if isinstance(raw_points, list):
+            key_points = [str(p).strip() for p in raw_points if str(p).strip()]
+        else:
+            key_points = [str(raw_points).strip()] if str(raw_points).strip() else []
 
-            if parsed_data.get("schemaVersion") != "ppt.template_page.v1":
-                raise AdapterError(
-                    "PPT_TEMPLATE_PAGE_INVALID_SCHEMA",
-                    "模型输出版本不匹配，预期 ppt.template_page.v1。",
-                    status_code=502,
-                )
+        speaker_notes = str(parsed_data.get("speakerNotes") or "").strip()
+        missing_items = [str(m).strip() for m in (parsed_data.get("missingItems") or []) if str(m).strip()]
+        fids = parsed_data.get("fragmentIds") or outline_fragment_ids or []
+        if not isinstance(fids, list):
+            fids = [fids] if fids else []
 
-            title = str(parsed_data.get("title") or outline_title or "第 {0} 页".format(page_index)).strip()
-            raw_points = parsed_data.get("keyPoints") or outline_key_points or []
-            if isinstance(raw_points, list):
-                key_points = [str(p).strip() for p in raw_points if str(p).strip()]
-            else:
-                key_points = [str(raw_points).strip()] if str(raw_points).strip() else []
+        existing_frags = catalog.get("fragments") or {}
+        chapters = _fragment_chapters(catalog)
+        _, user_fact_map = parse_user_facts(user_facts)
+        if user_fact_map:
+            user_fact_map["user"] = user_facts.strip()
 
-            speaker_notes = str(parsed_data.get("speakerNotes") or "").strip()
-            missing_items = [str(m).strip() for m in (parsed_data.get("missingItems") or []) if str(m).strip()]
-            fids = parsed_data.get("fragmentIds") or outline_fragment_ids or []
-            if not isinstance(fids, list):
-                fids = [fids] if fids else []
-
-            existing_frags = catalog.get("fragments") or {}
-            chapters = _fragment_chapters(catalog)
-            _, user_fact_map = parse_user_facts(user_facts)
-            if user_fact_map:
-                user_fact_map["user"] = user_facts.strip()
-
-            sources = []
-            for fid in fids:
-                clean_fid = str(fid).strip()
-                if clean_fid.lower() in user_fact_map:
-                    sources.append({
-                        "sourceId": clean_fid,
-                        "sourceType": "user",
-                        "fileName": "用户补充事实",
-                        "chapter": "用户补充",
-                        "text": user_fact_map[clean_fid.lower()],
-                    })
-                    continue
-
-                frag = None
-                if clean_fid in existing_frags:
-                    frag = existing_frags[clean_fid]
-                elif "frag-{0}".format(clean_fid) in existing_frags:
-                    frag = existing_frags["frag-{0}".format(clean_fid)]
-                elif clean_fid.startswith("frag-") and clean_fid[5:] in existing_frags:
-                    frag = existing_frags[clean_fid[5:]]
-
-                if not frag:
-                    raise AdapterError(
-                        "PPT_TEMPLATE_PAGE_INVALID_SOURCE",
-                        "模型引用的出处片段编号不存在（编号：{0}）。".format(clean_fid),
-                        status_code=502,
-                    )
-
-                chap = chapters.get((frag.get("materialId", ""), frag.get("blockId")), frag.get("heading") or "正文")
+        sources = []
+        for fid in fids:
+            clean_fid = str(fid).strip()
+            if clean_fid.lower() in user_fact_map:
                 sources.append({
-                    "sourceId": frag.get("fragmentId", clean_fid),
-                    "sourceType": "material",
-                    "materialId": frag.get("materialId", ""),
-                    "fileName": frag.get("fileName", "参考资料"),
-                    "chapter": chap,
-                    "text": frag.get("text", ""),
+                    "sourceId": clean_fid,
+                    "sourceType": "user",
+                    "fileName": "用户补充事实",
+                    "chapter": "用户补充",
+                    "text": user_fact_map[clean_fid.lower()],
                 })
+                continue
 
-            capacity = evaluate_template_page_capacity(key_points)
+            frag = None
+            if clean_fid in existing_frags:
+                frag = existing_frags[clean_fid]
+            elif "frag-{0}".format(clean_fid) in existing_frags:
+                frag = existing_frags["frag-{0}".format(clean_fid)]
+            elif clean_fid.startswith("frag-") and clean_fid[5:] in existing_frags:
+                frag = existing_frags[clean_fid[5:]]
 
-            result = {
-                "schemaVersion": "ppt.template_page.v1",
-                "pageIndex": page_index,
-                "pageRole": page_role,
-                "title": title,
-                "keyPoints": key_points,
-                "speakerNotes": speaker_notes,
-                "fragmentIds": fids,
-                "sources": sources,
-                "missingItems": missing_items,
-                "estimatedLines": capacity["estimated_lines"],
-                "totalCharacters": capacity["total_characters"],
-                "isOverflow": capacity["is_overflow"],
-                "basisMaterials": basis_materials,
-                "generatedAt": datetime.now(timezone.utc).isoformat(),
-            }
+            if not frag:
+                raise AdapterError(
+                    "PPT_TEMPLATE_PAGE_INVALID_SOURCE",
+                    "模型引用的出处片段编号不存在（编号：{0}）。".format(clean_fid),
+                    status_code=502,
+                )
 
-            job["status"] = "completed"
-            job["phase"] = "completed"
-            job["result"] = result
-            job["completedAt"] = datetime.now(timezone.utc).isoformat()
+            chap = chapters.get((frag.get("materialId", ""), frag.get("blockId")), frag.get("heading") or "正文")
+            sources.append({
+                "sourceId": frag.get("fragmentId", clean_fid),
+                "sourceType": "material",
+                "materialId": frag.get("materialId", ""),
+                "fileName": frag.get("fileName", "参考资料"),
+                "chapter": chap,
+                "text": frag.get("text", ""),
+            })
 
-        except Exception as e:
-            job["status"] = "failed"
-            job["phase"] = "failed"
-            err_code = getattr(e, "code", "PPT_TEMPLATE_PAGE_FAILED")
-            err_msg = getattr(e, "message", str(e))
-            job["error"] = {"code": err_code, "message": err_msg}
+        capacity = evaluate_template_page_capacity(key_points)
 
-        finally:
-            with self._lock:
-                if self._active_sessions.get(session_id) == job_id:
-                    self._active_sessions.pop(session_id, None)
+        result = {
+            "schemaVersion": "ppt.template_page.v1",
+            "pageIndex": page_index,
+            "pageRole": page_role,
+            "title": title,
+            "keyPoints": key_points,
+            "speakerNotes": speaker_notes,
+            "fragmentIds": fids,
+            "sources": sources,
+            "missingItems": missing_items,
+            "estimatedLines": capacity["estimated_lines"],
+            "totalCharacters": capacity["total_characters"],
+            "isOverflow": capacity["is_overflow"],
+            "basisMaterials": basis_materials,
+            "generatedAt": datetime.now(timezone.utc).isoformat(),
+        }
+
+        check_cancel()
+        return result
 
 
 ppt_template_page_coordinator = PptTemplatePageCoordinator()

@@ -33,7 +33,8 @@ def test_evaluate_template_page_capacity():
 @pytest.fixture
 def page_setup(tmp_path):
     store = PptMaterialStore(tmp_path)
-    coord = PptTemplatePageCoordinator(store=store)
+    from app.services.long_task_coordinator import LongTaskCoordinator
+    coord = PptTemplatePageCoordinator(store=store, coordinator=LongTaskCoordinator())
     return {"store": store, "coord": coord, "tmp_path": tmp_path}
 
 
@@ -115,7 +116,7 @@ def test_ppt_template_page_generation_lifecycle(page_setup, monkeypatch):
     assert job["taskType"] == "ppt.template_page"
 
     # Wait or check completed job
-    retrieved = coord.get_job(job["jobId"], "sess_ppt_test")
+    retrieved = coord.wait_job(job["jobId"], "sess_ppt_test")
     assert retrieved["status"] == "completed"
     res = retrieved["result"]
     assert res["schemaVersion"] == "ppt.template_page.v1"
@@ -161,6 +162,47 @@ def test_ppt_template_page_fake_fragment_id_rejected(page_setup, monkeypatch):
     }
 
     job = coord.submit_job(req)
-    retrieved = coord.get_job(job["jobId"], "sess_ppt_test")
+    retrieved = coord.wait_job(job["jobId"], "sess_ppt_test")
     assert retrieved["status"] == "failed"
     assert "出处片段编号不存在" in retrieved["error"]["message"]
+
+
+def test_explicit_newlines_count_against_template_capacity():
+    points = [('一\n' * 12).strip(), ('二\r\n' * 12).strip()]
+    capacity = evaluate_template_page_capacity(points)
+    assert capacity['estimated_lines'] == 24
+    assert capacity['is_overflow'] is True
+
+
+def test_submission_returns_before_provider_and_cancellation_survives_late_result(tmp_path):
+    import threading
+    from app.services.long_task_coordinator import LongTaskCoordinator
+    coord = PptTemplatePageCoordinator(store=PptMaterialStore(tmp_path), coordinator=LongTaskCoordinator())
+    entered, release, returned = threading.Event(), threading.Event(), threading.Event()
+    submitted = {}
+
+    def provider(*args, **kwargs):
+        entered.set()
+        assert release.wait(3), 'test provider was not released'
+        return json.dumps({'schemaVersion': 'ppt.template_page.v1', 'title': '标题', 'keyPoints': ['要点'], 'speakerNotes': '讲稿'})
+
+    coord._call_provider_model = provider
+
+    def submit():
+        submitted.update(coord.submit_job({'documentSessionId': 'sess', 'clientJobId': 'async_page'}))
+        returned.set()
+
+    worker = threading.Thread(target=submit)
+    worker.start()
+    try:
+        assert entered.wait(2)
+        assert returned.wait(0.5), 'submission blocked on provider'
+        job_id = submitted['jobId']
+        cancel = coord.cancel_job(job_id, 'sess')
+        assert cancel['status'] == 'cancelled' or cancel.get('cancelRequested')
+    finally:
+        release.set()
+        worker.join(3)
+    final = coord.wait_job(job_id, 'sess')
+    assert final['status'] == 'cancelled'
+    assert final.get('result') is None

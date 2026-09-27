@@ -440,10 +440,10 @@ test("appendTemplateBodySlide performs reverse rollback compensation on write er
 
   let deletedCalled = false;
   const mockPres = {
-    SlideMaster: { CustomLayouts: { Count: 0 } },
+    SlideMaster: { CustomLayouts: { Count: 1, Item: () => ({ Name: "标题和内容" }) } },
     Slides: {
       Count: 5,
-      Add: (index, layoutType) => {
+      AddSlide: (index, layoutType) => {
         mockPres.Slides.Count++;
         return {
           Index: index,
@@ -509,24 +509,8 @@ test("controller.appendSlide integrates with generator and prevents duplicate wr
     return { success: true };
   };
 
-  const mockPres = {
-    SlideMaster: { CustomLayouts: { Count: 0 } },
-    Slides: {
-      Count: 2,
-      Add: (idx, type) => {
-        mockPres.Slides.Count++;
-        const sTitle = { Name: "标题", TextFrame: { TextRange: { Text: "" } } };
-        const sBody = { Name: "内容", TextFrame: { TextRange: { Text: "" } } };
-        return {
-          Index: idx,
-          Shapes: {
-            Count: 2,
-            Item: (i) => (i === 1 ? sTitle : sBody),
-          },
-        };
-      },
-    },
-  };
+  const mockPres = regressionPresentation().pres;
+  mockPres.Slides.Count = 2;
 
   const mockApp = { ActivePresentation: mockPres };
 
@@ -566,4 +550,317 @@ test("taskpane.html contains template body page markup and script tags", async (
   assert.ok(htmlContent.includes('id="ppt-template-page-overflow-warning"'));
   assert.ok(htmlContent.includes('id="ppt-template-page-preview"'));
   assert.ok(htmlContent.includes('id="btn-ppt-append-slide-confirm"'));
+});
+
+function regressionPresentation(options = {}) {
+  const layout = { Name: '标题和内容' };
+  const shape = (type) => ({ PlaceholderFormat: { Type: type }, TextFrame: { TextRange: { Text: '', ParagraphFormat: { Bullet: { Type: 0 } } } } });
+  const title = shape(1), body = shape(2), notes = shape(2);
+  if (options.notesError) Object.defineProperty(notes.TextFrame.TextRange, 'Text', { get: () => '', set: () => { throw Error('notes write failed'); } });
+  if (options.silentBody) Object.defineProperty(body.TextFrame.TextRange, 'Text', { get: () => '', set: () => {} });
+  const shapes = options.noBody ? [title] : [title, body];
+  const pres = {
+    SlideMaster: { CustomLayouts: { Count: options.noLayout ? 0 : 1, Item: () => layout } },
+    Slides: { Count: 3 }
+  };
+  const created = [];
+  function add(index, selectedLayout) {
+    pres.Slides.Count++;
+    const slide = {
+      SlideIndex: index, CustomLayout: selectedLayout,
+      Shapes: { Count: shapes.length, Item: i => shapes[i - 1] },
+      NotesPage: { Shapes: { Count: 1, Item: () => notes } },
+      Delete() { if (options.deleteError) throw Error('delete failed'); pres.Slides.Count--; }
+    };
+    created.push(slide);
+    return slide;
+  }
+  pres.Slides.AddSlide = add;
+  pres.Slides.Add = add;
+  return { app: { ActivePresentation: pres }, pres, created, title, body, notes };
+}
+const regressionOutline = () => ({ confirmed: true, slides: [{ pageIndex: 2, pageRole: 'content', title: '架构', keyPoints: ['分层'] }] });
+const regressionResult = () => ({ title: '架构', keyPoints: ['分层', '隔离'], speakerNotes: '讲稿', sources: [{ fileName: '依据.docx', chapter: '第一章', text: '必须分层' }], missingItems: ['待补数据'] });
+function generationHarness(options = {}) {
+  const harness = createTestHarness({ confirmedOutline: regressionOutline() });
+  harness.h.requestHandler = async (url, body) => ({ success: true, data: url === '/ppt/template-page/jobs' ? { jobId: body.clientJobId } : { status: 'completed', result: regressionResult() } });
+  return { ...harness, controller: harness.h.createController({ pollIntervalMs: 1, ...options }) };
+}
+
+test('confirmed outline exposes template page card and renders only content candidates', () => {
+  const { context, controller } = generationHarness();
+  const nodes = {};
+  context.byId = id => nodes[id] || (nodes[id] = { style: {}, value: '' });
+  context.ensureTemplateBodyPage = () => controller;
+  context.helpers = require(path.join(root, 'taskpane-helpers.js'));
+  const source = fs.readFileSync(path.join(root, 'taskpane.js'), 'utf8');
+  const start = source.indexOf('  function renderTemplateBodyPageView(view) {');
+  vm.runInNewContext(source.slice(start, source.indexOf('  function copyText(', start)), context);
+  context.renderTemplateBodyPageView();
+  assert.equal(nodes['ppt-template-page-card'].hidden, false);
+  assert.match(nodes['ppt-template-page-select'].innerHTML, /第 2 页/);
+});
+
+test('template page preview exposes escaped sources and missing facts', async () => {
+  const { context, controller } = generationHarness();
+  await controller.startGenerate({ pageIndex: 2 });
+  const nodes = {};
+  context.byId = id => nodes[id] || (nodes[id] = { style: {}, value: '' });
+  context.ensureTemplateBodyPage = () => controller;
+  context.helpers = require(path.join(root, 'taskpane-helpers.js'));
+  const source = fs.readFileSync(path.join(root, 'taskpane.js'), 'utf8');
+  const start = source.indexOf('  function renderTemplateBodyPageView(view) {');
+  vm.runInNewContext(source.slice(start, source.indexOf('  function copyText(', start)), context);
+  const view = controller.getState();
+  view.result.sources[0].text = '<img src=x onerror=alert(1)>必须分层';
+  context.renderTemplateBodyPageView(view);
+  const html = nodes['ppt-template-page-preview-content'].innerHTML;
+  assert.match(html, /依据.docx/); assert.match(html, /第一章/); assert.match(html, /待补数据/);
+  assert.match(html, /&lt;img/); assert.doesNotMatch(html, /<img/);
+});
+
+test('generated page cannot be appended to a different presentation session', async () => {
+  const { h, controller } = generationHarness();
+  await controller.startGenerate({ pageIndex: 2 });
+  h.session = 'other-session';
+  const target = regressionPresentation();
+  assert.throws(() => controller.appendSlide(target.app), /会话|演示文稿/);
+  assert.equal(target.pres.Slides.Count, 3);
+});
+
+test('changed confirmed outline invalidates a generated page before writing', async () => {
+  const { h, controller } = generationHarness();
+  await controller.startGenerate({ pageIndex: 2 });
+  h.confirmedOutline.slides[0].title = '新的主题';
+  const target = regressionPresentation();
+  assert.throws(() => controller.appendSlide(target.app), /大纲|依据/);
+  assert.equal(target.pres.Slides.Count, 3);
+});
+
+test('failed submission leaves a retryable failed state', async () => {
+  const { h, controller } = generationHarness();
+  h.requestHandler = async () => { throw Error('POST timeout'); };
+  await assert.rejects(controller.startGenerate({ pageIndex: 2 }), /POST timeout/);
+  assert.equal(controller.getState().status, 'failed');
+});
+
+for (const [label, options] of [['missing body', { noBody: true }], ['notes error', { notesError: true }], ['silent write', { silentBody: true }]]) {
+  test('incomplete template page rolls back: ' + label, () => {
+    const { context } = createTestHarness();
+    const target = regressionPresentation(options);
+    const result = context.window.appendTemplateBodySlide(target.app, regressionResult());
+    assert.equal(result.success, false);
+    assert.equal(result.status, 'ROLLBACK_COMPENSATED');
+    assert.equal(target.pres.Slides.Count, 3);
+  });
+}
+
+test('missing fixed layout refuses all slide writes', () => {
+  const { context } = createTestHarness();
+  const target = regressionPresentation({ noLayout: true });
+  const result = context.window.appendTemplateBodySlide(target.app, regressionResult());
+  assert.equal(result.success, false);
+  assert.equal(target.pres.Slides.Count, 3);
+});
+
+test('failed rollback reports residual slide and blocks both append and regeneration', async () => {
+  const { controller } = generationHarness();
+  await controller.startGenerate({ pageIndex: 2 });
+  const target = regressionPresentation({ notesError: true, deleteError: true });
+  const result = controller.appendSlide(target.app);
+  assert.equal(result.success, false);
+  assert.equal(result.status, 'ROLLBACK_FAILED');
+  assert.equal(result.currentCount, 4);
+  assert.equal(result.slideIndex, 4);
+  assert.throws(() => controller.appendSlide(target.app), /核查|恢复/);
+  await assert.rejects(controller.startGenerate({ pageIndex: 2 }), /核查|恢复/);
+  assert.equal(target.pres.Slides.Count, 4);
+});
+
+test('explicit newlines count against eight physical text lines', () => {
+  const { context } = createTestHarness();
+  const points = ['一\n'.repeat(12).trim(), '二\r\n'.repeat(12).trim()];
+  const res = context.window.evaluateSlideTextCapacity(points);
+  assert.equal(res.estimatedLines, 24);
+  assert.equal(res.isOverflow, true);
+});
+
+test('write boundary independently refuses unflagged multiline overflow', () => {
+  const { context } = createTestHarness();
+  const target = regressionPresentation();
+  assert.throws(() => context.window.appendTemplateBodySlide(target.app, { ...regressionResult(), keyPoints: ['一\n'.repeat(12).trim()], isOverflow: false }), /容量|超限/);
+  assert.equal(target.pres.Slides.Count, 3);
+});
+
+test('generation finishes in preview without opening a write confirmation', async () => {
+  const { context, controller } = generationHarness();
+  let generation, handler, confirmations = 0;
+  const startGenerate = controller.startGenerate;
+  controller.startGenerate = (...args) => (generation = startGenerate(...args));
+  context.byId = id => id === 'btn-ppt-generate-template-page' ? { addEventListener: (_, fn) => { handler = fn; } } : { value: '2' };
+  context.ensureTemplateBodyPage = () => controller;
+  context.window.confirm = () => { confirmations++; return false; };
+  context.setStatus = () => {};
+  const source = fs.readFileSync(path.join(root, 'taskpane.js'), 'utf8');
+  const start = source.indexOf('    if (byId("btn-ppt-generate-template-page")) {');
+  vm.runInNewContext(source.slice(start, source.indexOf('    if (byId("btn-ppt-cancel-template-page")) {', start)), context);
+  handler(); await generation; await new Promise(setImmediate);
+  assert.equal(confirmations, 0);
+  assert.equal(controller.getState().status, 'completed');
+});
+
+test('late completed poll cannot revive a server-confirmed cancellation', async () => {
+  const { h, controller } = generationHarness();
+  let finishPoll, polled;
+  const startedPoll = new Promise(resolve => { polled = resolve; });
+  h.requestHandler = async (url, body) => {
+    if (url === '/ppt/template-page/jobs') return { success: true, data: { jobId: body.clientJobId } };
+    if (url.endsWith('/cancel')) return { success: true, data: { status: 'cancelled' } };
+    return new Promise(resolve => { finishPoll = resolve; polled(); });
+  };
+  const pending = controller.startGenerate({ pageIndex: 2 });
+  await startedPoll; await controller.cancelJob();
+  finishPoll({ success: true, data: { status: 'completed', result: regressionResult() } });
+  assert.equal((await pending).status, 'CANCELLED');
+  assert.equal(controller.getState().status, 'cancelled');
+  assert.equal(controller.getState().result, null);
+});
+
+test('failed cancellation is reported and is not mistaken for server cancellation', async () => {
+  const { h, controller } = generationHarness();
+  let finishPoll, polled;
+  const startedPoll = new Promise(resolve => { polled = resolve; });
+  h.requestHandler = async (url, body) => {
+    if (url === '/ppt/template-page/jobs') return { success: true, data: { jobId: body.clientJobId } };
+    if (url.endsWith('/cancel')) throw Error('cancel network failed');
+    return new Promise(resolve => { finishPoll = resolve; polled(); });
+  };
+  const pending = controller.startGenerate({ pageIndex: 2 });
+  await startedPoll;
+  await assert.rejects(controller.cancelJob(), /cancel network failed/);
+  assert.notEqual(controller.getState().status, 'cancelled');
+  finishPoll({ success: true, data: { status: 'completed', result: regressionResult() } });
+  await pending;
+});
+
+test('switching presentation hides previous generated preview', async () => {
+  const { h, controller } = generationHarness();
+  await controller.startGenerate({ pageIndex: 2 });
+  h.session = 'B';
+  assert.equal(controller.getState().result, null);
+});
+
+test('rollback recovery remains blocked after reopening and clears only after manual cleanup', async () => {
+  const { h, controller } = generationHarness();
+  await controller.startGenerate({ pageIndex: 2 });
+  const target = regressionPresentation({ notesError: true, deleteError: true });
+  controller.appendSlide(target.app);
+  const reopened = h.createController();
+  await assert.rejects(reopened.startGenerate({ pageIndex: 2 }), /核查|恢复/);
+  assert.throws(() => reopened.verifyRecovery(target.app), /页数|清理|恢复/);
+  assert.equal(target.pres.Slides.Count, 4);
+  target.pres.Slides.Count = 3; // User removed the residual slide in WPS.
+  reopened.verifyRecovery(target.app);
+  assert.equal(reopened.getState().recoveryRequired, false);
+});
+
+test('unable to save a pending write refuses slide mutations', async () => {
+  const { h } = generationHarness();
+  const controller = h.createController({ storage: { getItem() {}, setItem() { throw Error('storage full'); }, removeItem() {} } });
+  await controller.startGenerate({ pageIndex: 2 });
+  const target = regressionPresentation();
+  assert.throws(() => controller.appendSlide(target.app), /storage full/);
+  assert.equal(target.pres.Slides.Count, 3);
+});
+
+test('real DOM template page pane previews evidence before confirmation and appends only once', t => {
+  const { execFileSync } = require('node:child_process');
+  try { execFileSync('agent-browser', ['--version'], { stdio: 'ignore' }); }
+  catch (_) { t.skip('agent-browser unavailable'); return; }
+  const temp = fs.mkdtempSync('/private/tmp/pr250-pane-');
+  const run = (...args) => execFileSync('agent-browser', ['--session', 'pr250', ...args], {
+    encoding: 'utf8', timeout: 30000, env: { ...process.env, AGENT_BROWSER_SOCKET_DIR: temp }
+  });
+  function waitFor(expression) {
+    for (let attempt = 0; attempt < 30; attempt++) {
+      if (run('eval', expression).trim() === 'true') return;
+    }
+    assert.fail('browser condition was not reached: ' + expression);
+  }
+  const outline = { slides: [{ pageIndex: 1, pageRole: 'cover', title: '封面' }, { pageIndex: 2, pageRole: 'content', title: '架构', keyPoints: ['分层'] }], basisMaterials: [] };
+  const pageResult = regressionResult();
+  pageResult.sources[0].text = '<img src=x onerror="window.injected=true">必须分层';
+  const mock = `
+window.paneErrors=[];window.addEventListener('error',e=>paneErrors.push(e.message));
+window.injected=false;window.confirmCalls=0;window.allowAppend=false;
+window.confirm=()=>{confirmCalls++;return allowAppend;};
+window.mockPres={Name:'A.pptx',FullName:'/test/A.pptx',SlideMaster:{CustomLayouts:{Count:1,Item:()=>({Name:'标题和内容'})}},Slides:{Count:3}};
+window.writtenSlides=[];
+mockPres.Slides.AddSlide=function(index,layout){
+ const shape=t=>({PlaceholderFormat:{Type:t},TextFrame:{TextRange:{Text:''}}});
+ const title=shape(1),body=shape(2),notes=shape(2);
+ const slide={Shapes:{Count:2,Item:i=>[title,body][i-1]},NotesPage:{Shapes:{Count:1,Item:()=>notes}},Delete(){mockPres.Slides.Count--;}};
+ mockPres.Slides.Count++;writtenSlides.push(slide);return slide;
+};
+window.Application={ActivePresentation:mockPres};window.wps={WppApplication:()=>Application};
+window.fetch=async function(url,options){
+ const p=new URL(url).pathname,body=options&&options.body?JSON.parse(options.body):null;let data={};
+ if(p==='/health')data={status:'ok',modelTasksAllowed:true,configurationMutationsAllowed:true};
+ if(p==='/ppt/materials/catalog')data={totalDocuments:1,documents:[{materialId:'m1',fileName:'依据.docx'}]};
+ if(p==='/materials/reusable-sources')data={sources:[]};
+ if(p==='/ppt/material-outline/conflicts')data={conflicts:[]};
+ if(p==='/ppt/material-outline/jobs'||p==='/ppt/template-page/jobs')data={jobId:body.clientJobId,status:'running'};
+ if(p.startsWith('/ppt/material-outline/jobs/'))data={status:'completed',result:${JSON.stringify(outline)}};
+ if(p.startsWith('/ppt/template-page/jobs/'))data={status:'completed',result:${JSON.stringify(pageResult)}};
+ return {ok:true,status:200,json:async()=>({success:true,data})};
+};`;
+  let html = fs.readFileSync(path.join(root, 'taskpane.html'), 'utf8');
+  html = html.replace('</head>', '<script>' + mock + '</script></head>');
+  html = html.replace(/<script src="\.\/([^"?]+)[^"]*"><\/script>/g, (_, name) => {
+    let code = fs.readFileSync(path.join(root, name), 'utf8');
+    return '<script>' + code + '</script>';
+  });
+  html = html.replace(/<link rel="stylesheet"[^>]+>/, '<style>' + fs.readFileSync(path.join(root, 'taskpane.css'), 'utf8') + '</style>');
+  const page = path.join(temp, 'pane.html');
+  fs.writeFileSync(page, html);
+  try {
+    run('open', require('node:url').pathToFileURL(page).href + '?mode=pptMaterialOutline');
+    run('set', 'viewport', '360', '900');
+    waitFor('!document.querySelector("#btn-run-outline").disabled && document.querySelector("#outline-material-list").textContent.includes("依据.docx")');
+    run('fill', '#ppt-outline-instruction', '核对架构依据');
+    run('eval', 'document.querySelector("#btn-run-outline").click()');
+    waitFor('document.querySelectorAll("[data-title-page]").length === 2');
+    run('eval', 'document.querySelector("#btn-confirm-outline").click()');
+    waitFor('!document.querySelector("#ppt-template-page-card").hidden');
+    assert.equal(run('eval', 'document.querySelector("#ppt-template-page-select").options.length').trim(), '1');
+    run('eval', 'document.querySelector("#btn-ppt-generate-template-page").click()');
+    waitFor('!document.querySelector("#ppt-template-page-preview").hidden');
+    assert.equal(run('eval', 'confirmCalls').trim(), '0');
+    assert.match(run('get', 'text', '#ppt-template-page-preview-content'), /依据.docx.*第一章/s);
+    assert.match(run('get', 'text', '#ppt-template-page-preview-content'), /待补数据/);
+    assert.equal(run('eval', 'document.querySelectorAll("#ppt-template-page-preview-content img").length').trim(), '0');
+    run('eval', 'document.querySelector("#btn-ppt-append-slide-confirm").click()');
+    assert.equal(run('eval', 'mockPres.Slides.Count').trim(), '3');
+    run('eval', 'allowAppend=true');
+    run('eval', 'document.querySelector("#btn-ppt-append-slide-confirm").click()');
+    assert.equal(run('eval', 'mockPres.Slides.Count').trim(), '4');
+    assert.equal(run('eval', 'writtenSlides[0].NotesPage.Shapes.Item(1).TextFrame.TextRange.Text').trim(), '"讲稿"');
+    assert.equal(run('eval', 'document.querySelector("#btn-ppt-append-slide-confirm").hidden').trim(), 'true');
+    assert.equal(run('eval', 'JSON.stringify(paneErrors)').trim(), '"[]"');
+  } finally {
+    try { run('close'); } finally { fs.rmSync(temp, { recursive: true, force: true }); }
+  }
+});
+
+test('recovery block belongs to the affected presentation and does not poison another one', async () => {
+  const { h, controller } = generationHarness();
+  await controller.startGenerate({ pageIndex: 2 });
+  controller.appendSlide(regressionPresentation({ notesError: true, deleteError: true }).app);
+  h.session = 'other-presentation';
+  await controller.startGenerate({ pageIndex: 2 });
+  const target = regressionPresentation();
+  assert.equal(controller.appendSlide(target.app).success, true);
+  assert.equal(target.pres.Slides.Count, 4);
+  h.session = 'sess-ppt-template-1';
+  assert.equal(controller.getState().recoveryRequired, true);
 });
