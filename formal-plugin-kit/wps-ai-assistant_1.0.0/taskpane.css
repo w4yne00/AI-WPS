@@ -2531,6 +2531,12 @@ body[data-task-mode="smartWrite"] #result-output {
 #material-composer-result { white-space: pre-wrap; overflow-wrap: anywhere; }
 .material-composer-toc { border: 1px solid var(--border-color, #e0e0e0); border-radius: 8px; padding: 8px 12px; }
 .material-composer-toc-file { margin-top: 10px; display: grid; gap: 4px; }
+.material-composer-file-actions { display: inline-flex; gap: 6px; margin-left: 8px; }
+.material-composer-btn-update, .material-composer-btn-delete { font-size: 11px; padding: 1px 6px; border-radius: 4px; }
+.material-composer-btn-delete { color: #b91c1c; }
+.material-composer-basis-warning { margin: 10px 0; padding: 8px 12px; border-radius: 6px; font-size: 12px; line-height: 1.5; }
+.material-composer-basis-warning.basis-updated { border: 1px solid #f59e0b; background: rgba(254, 243, 199, .5); color: #92400e; }
+.material-composer-basis-warning.basis-removed { border: 1px solid #ef4444; background: rgba(254, 226, 226, .5); color: #991b1b; }
 .material-composer-toc-chapter { display: block; text-align: left; white-space: normal; }
 .material-composer-toc-level-2 { margin-left: 12px; }
 .material-composer-toc-level-3 { margin-left: 24px; }

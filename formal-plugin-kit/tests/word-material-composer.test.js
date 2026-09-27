@@ -32,6 +32,9 @@ function harness(shared) {
     }
   });
   h.saved = saved;
+  h.context = context;
+  h.renderComposer = context.window.renderMaterialComposer;
+  h.evaluateBasisStatus = context.window.evaluateBasisStatus;
   h.last = () => h.views[h.views.length - 1];
   return h;
 }
@@ -616,4 +619,133 @@ test('late conflict failure after a document switch is discarded while current f
   assert.equal(await pending.catch(error=>error),null);
   h.conflictResponse=Promise.reject(Error('当前请求失败'));
   await assert.rejects(h.api.checkConflicts({sectionTitle:'预算',instruction:'编写'}),/当前请求失败/);
+});
+
+test('evaluates basis status as updated when referenced material has newer updatedAt', async () => {
+  const h = harness();
+  h.api.setMaterial({
+    materialId: 'm1',
+    catalogSummary: {
+      totalDocuments: 1,
+      totalCharacters: 500,
+      documents: [{ materialId: 'm1', fileName: '资料1.docx', updatedAt: '2026-09-27T10:00:00Z' }],
+      toc: []
+    }
+  });
+  const compResult = {
+    ...result('doc-a'),
+    basisMaterials: [{ materialId: 'm1', fileName: '资料1.docx', updatedAt: '2026-09-27T10:00:00Z' }],
+    generatedAt: '2026-09-27T10:00:00Z'
+  };
+  h.response = { success: true, data: { jobId: 'job-a', status: 'completed', documentSessionId: 'doc-a', result: compResult } };
+  await h.api.start({ sectionTitle: '范围', instruction: '编写' });
+  assert.equal(h.last().status, 'succeeded');
+  assert.equal(h.last().basisStatus, 'current');
+
+  // Now catalog material is updated to 10:30:00Z
+  h.api.updateMaterialCatalog({
+    totalDocuments: 1,
+    totalCharacters: 600,
+    documents: [{ materialId: 'm1', fileName: '资料1.docx', updatedAt: '2026-09-27T10:30:00Z' }],
+    toc: []
+  });
+  assert.equal(h.last().basisStatus, 'updated');
+
+  // Applying text should throw because basis is updated
+  await assert.rejects(h.api.apply({ hasSelection: true }), /参考资料已更新/);
+
+  // Copying text should still work!
+  await h.api.copy();
+  assert.deepEqual(h.copied, ['正文']);
+});
+
+test('evaluates basis status as removed when referenced material is deleted from catalog', async () => {
+  const h = harness();
+  h.api.setMaterial({
+    materialId: 'm1',
+    catalogSummary: {
+      totalDocuments: 1,
+      totalCharacters: 500,
+      documents: [{ materialId: 'm1', fileName: '资料1.docx', updatedAt: '2026-09-27T10:00:00Z' }],
+      toc: []
+    }
+  });
+  const compResult = {
+    ...result('doc-a'),
+    basisMaterials: [{ materialId: 'm1', fileName: '资料1.docx', updatedAt: '2026-09-27T10:00:00Z' }],
+    generatedAt: '2026-09-27T10:00:00Z'
+  };
+  h.response = { success: true, data: { jobId: 'job-a', status: 'completed', documentSessionId: 'doc-a', result: compResult } };
+  await h.api.start({ sectionTitle: '范围', instruction: '编写' });
+  assert.equal(h.last().status, 'succeeded');
+
+  // Now material m1 is removed from catalog
+  h.api.updateMaterialCatalog({
+    totalDocuments: 0,
+    totalCharacters: 0,
+    documents: [],
+    toc: []
+  });
+  assert.equal(h.last().basisStatus, 'removed');
+
+  // Applying text should throw because basis is removed
+  await assert.rejects(h.api.apply({ hasSelection: true }), /已被移除/);
+
+  // Copying text still works
+  await h.api.copy();
+  assert.deepEqual(h.copied, ['正文']);
+});
+
+test('renderMaterialComposer displays warning badge and renders update/delete buttons', () => {
+  const h = harness();
+  const doc = {
+    createElement(tag) {
+      const el = { ownerDocument: null, tagName: tag, className: '', textContent: '', children: [], disabled: false, eventListeners: {} };
+      el.ownerDocument = doc;
+      el.appendChild = child => el.children.push(child);
+      el.addEventListener = (ev, fn) => { el.eventListeners[ev] = fn; };
+      return el;
+    }
+  };
+  doc.ownerDocument = doc;
+  const root = doc.createElement('div');
+
+  const compResult = {
+    ...result('doc-a'),
+    basisMaterials: [{ materialId: 'm1', fileName: '资料1.docx', updatedAt: '2026-09-27T10:00:00Z' }],
+    generatedAt: '2026-09-27T10:00:00Z'
+  };
+  const view = {
+    documentSessionId: 'doc-a',
+    status: 'succeeded',
+    result: compResult,
+    catalogSummary: {
+      totalDocuments: 1,
+      totalCharacters: 600,
+      documents: [{ materialId: 'm1', fileName: '资料1.docx', updatedAt: '2026-09-27T10:30:00Z' }],
+      toc: []
+    },
+    basisStatus: 'updated'
+  };
+
+  let updatedMid = '';
+  let deletedMid = '';
+  h.renderComposer(root, view, null, null, mid => { updatedMid = mid; }, mid => { deletedMid = mid; });
+
+  // Warning badge present
+  const warning = root.children.find(c => c.className && c.className.includes('material-composer-basis-warning'));
+  assert.ok(warning, 'warning badge must be rendered');
+  assert.ok(warning.textContent.includes('参考资料已更新'));
+
+  // Update and delete buttons rendered
+  const toc = root.children.find(c => c.className && c.className.includes('material-composer-toc'));
+  assert.ok(toc);
+  const fileSec = toc.children.find(c => c.className && c.className.includes('material-composer-toc-file'));
+  assert.ok(fileSec);
+  const btnUpdate = fileSec.children.find(c => c.className && c.className.includes('material-composer-btn-update')) ||
+    fileSec.children.flatMap(c => c.children || []).find(c => c.className && c.className.includes('material-composer-btn-update'));
+  assert.ok(btnUpdate, 'update button must exist');
+  assert.equal(btnUpdate.disabled, false);
+  btnUpdate.eventListeners['click']({ stopPropagation() {} });
+  assert.equal(updatedMid, 'm1');
 });

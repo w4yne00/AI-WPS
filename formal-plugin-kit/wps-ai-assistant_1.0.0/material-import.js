@@ -78,8 +78,47 @@ function readMaterialFile(file) {
   });
 }
 
+function submitMaterialUpdate(options) {
+  var settings = options || {};
+  var request = settings.request;
+  if (typeof request !== "function") {
+    return Promise.reject(new Error("资料更新请求入口不可用。"));
+  }
+  var materialId = settings.materialId;
+  if (!materialId) {
+    return Promise.reject(new Error("缺少资料编号。"));
+  }
+  return Promise.resolve(request("/word/materials/" + encodeURIComponent(materialId), {
+    fileName: settings.fileName || "",
+    mimeType: settings.mimeType || "",
+    sizeBytes: settings.sizeBytes || 0,
+    contentBase64: settings.contentBase64 || "",
+    documentSessionId: settings.documentSessionId || ""
+  }, { method: "PUT" })).then(function (response) {
+    return response && response.data ? response.data : response;
+  });
+}
+
+function submitMaterialDelete(options) {
+  var settings = options || {};
+  var request = settings.request;
+  if (typeof request !== "function") {
+    return Promise.reject(new Error("资料移除请求入口不可用。"));
+  }
+  var materialId = settings.materialId;
+  if (!materialId) {
+    return Promise.reject(new Error("缺少资料编号。"));
+  }
+  var query = "?documentSessionId=" + encodeURIComponent(settings.documentSessionId || "");
+  return Promise.resolve(request("/word/materials/" + encodeURIComponent(materialId) + query, null, { method: "DELETE" })).then(function (response) {
+    return response && response.data ? response.data : response;
+  });
+}
+
 if (typeof window !== "undefined") {
   window.submitMaterialImport = submitMaterialImport;
+  window.submitMaterialUpdate = submitMaterialUpdate;
+  window.submitMaterialDelete = submitMaterialDelete;
   window.renderMaterialReading = renderMaterialReading;
   window.readMaterialFile = readMaterialFile;
 }

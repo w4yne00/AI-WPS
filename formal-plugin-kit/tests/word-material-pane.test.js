@@ -13,6 +13,7 @@ function load(name, context) {
     if (!('materialComposerWriteAttempted' in context)) context.materialComposerWriteAttempted = false;
     if (!('materialComposerAppliedMessage' in context)) context.materialComposerAppliedMessage = '';
     if (!('lastMaterialComposerView' in context)) context.lastMaterialComposerView = null;
+    if (!('materialComposerTargetSnapshot' in context)) context.materialComposerTargetSnapshot = null;
   }
   const start = source.indexOf('function ' + name + '(');
   assert.ok(start >= 0, 'missing function ' + name);
@@ -165,8 +166,10 @@ window.fetch=async function(url,options){
     const errors = run('eval','JSON.stringify(window.paneErrors)');
     assert.ok(errors.includes('[]'),errors);
     run('eval',`(async()=>{var input=document.getElementById('material-import-file');var dt=new DataTransfer();dt.items.add(new File(['docx'],'资料.docx'));input.files=dt.files;input.dispatchEvent(new Event('change'));})();`);
+    run('wait','--text','资料目录');
     run('scrollintoview','.material-composer-toc summary');
     run('click','.material-composer-toc summary');
+    run('scrollintoview','.material-composer-toc-chapter');
     run('click','.material-composer-toc-chapter');
     assert.equal(run('eval',`document.getElementById('material-section-title').value`).trim(), '"实施安排"');
     run('fill','#material-instruction','简要说明责任和工期');
@@ -557,4 +560,86 @@ test('late conflict failure cannot replace a new document or edited input notice
     await pending;
     assert.equal(nodes['material-composer-status'].textContent,'当前提示，请保留');
   }
+});
+
+test('renderMaterialComposerView disables apply and warns when basisStatus is updated or removed', () => {
+  const nodes = {
+    'material-composer-status': { textContent: '' },
+    'material-import-file': { disabled: false },
+    'material-section-title': { value: '第一章', disabled: false },
+    'material-instruction': { value: '要求', disabled: false },
+    'btn-material-selection': { disabled: false },
+    'btn-material-generate': { disabled: false },
+    'btn-material-cancel': { disabled: false },
+    'btn-material-copy': { disabled: false },
+    'btn-material-apply': { textContent: '', disabled: false },
+    'material-composer-result': {}
+  };
+  const range = { Start: 2, End: 8, Text: '选区内容' };
+  const snapshot = { documentSessionId: 'doc-a', sectionTitle: '第一章', start: 2, end: 8, selectedText: '选区内容' };
+  const doc = { Selection: { Range: range } };
+  const view = load('renderMaterialComposerView', {
+    getMaterialComposerSessionId: () => 'doc-a',
+    getActiveDocument: () => doc,
+    getWritableSelection: () => doc.Selection,
+    getSelectionText: () => '选区内容',
+    materialComposerTargetSnapshot: snapshot,
+    byId: id => nodes[id],
+    window: { renderMaterialComposer() {} }
+  });
+
+  view({
+    documentSessionId: 'doc-a',
+    status: 'succeeded',
+    busy: false,
+    result: { plainText: '正文' },
+    input: { sectionTitle: '第一章' },
+    basisStatus: 'updated'
+  });
+  assert.equal(nodes['btn-material-apply'].disabled, true);
+  assert.ok(nodes['material-composer-status'].textContent.includes('参考资料已更新'));
+
+  view({
+    documentSessionId: 'doc-a',
+    status: 'succeeded',
+    busy: false,
+    result: { plainText: '正文' },
+    input: { sectionTitle: '第一章' },
+    basisStatus: 'removed'
+  });
+  assert.equal(nodes['btn-material-apply'].disabled, true);
+  assert.ok(nodes['material-composer-status'].textContent.includes('已被移除'));
+});
+
+test('applyMaterialComposerResult pauses write-back when basis is updated or removed', async () => {
+  const doc = {
+    Selection: { Range: { Start: 2, End: 5, Text: '旧内容' } },
+    Content: { Start: 0, End: 7, Text: '前缀旧内容后缀' }
+  };
+  const nodes = {
+    'material-section-title': { value: '第一章' },
+    'material-composer-status': { textContent: '' },
+    'btn-material-apply': { disabled: false }
+  };
+  let applied = false;
+  const applyFn = load('applyMaterialComposerResult', {
+    getActiveDocument: () => doc,
+    getMaterialComposerSessionId: () => 'doc-a',
+    getWritableSelection: d => d.Selection,
+    getSelectionText: d => d.Selection.Range.Text,
+    materialComposerTargetSnapshot: { documentSessionId: 'doc-a', sectionTitle: '第一章', start: 2, end: 5, selectedText: '旧内容' },
+    lastMaterialComposerView: { documentSessionId: 'doc-a', status: 'succeeded', basisStatus: 'updated', result: { plainText: '正文' } },
+    byId: id => nodes[id],
+    ensureMaterialComposer: () => ({
+      apply: async () => {
+        applied = true;
+        return { ok: true, mode: 'replace' };
+      }
+    })
+  });
+
+  await applyFn();
+  assert.equal(applied, false);
+  assert.equal(nodes['btn-material-apply'].disabled, true);
+  assert.ok(nodes['material-composer-status'].textContent.includes('参考资料已更新'));
 });
