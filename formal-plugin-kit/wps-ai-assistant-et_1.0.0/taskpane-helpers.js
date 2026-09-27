@@ -5751,12 +5751,153 @@
     };
   }
 
+  function sanitizeExcelLedgerCellValue(val) {
+    if (val === null || typeof val === "undefined") {
+      return "";
+    }
+    if (typeof val === "number") {
+      return val;
+    }
+    var str = String(val);
+    if (!str) {
+      return "";
+    }
+    if (/^[=+\-@]/.test(str)) {
+      return "'" + str;
+    }
+    return str;
+  }
+
+  function writeExcelMaterialLedger(app, result, options) {
+    if (!app) {
+      throw new Error("WPS 表格应用对象不可用。");
+    }
+    var res = result || {};
+    var rows = Array.isArray(res.rows) ? res.rows : [];
+    var headers = Array.isArray(res.headers) ? res.headers : [];
+    if (!rows.length || !headers.length) {
+      throw new Error("台账结果为空，无法执行写入。");
+    }
+    var opts = options || {};
+    var includeHeaders = opts.includeHeaders !== false;
+    var rowCount = rows.length + (includeHeaders ? 1 : 0);
+    var colCount = headers.length;
+
+    var rangeInfo = resolveExcelLedgerTargetRange(app, rowCount, colCount, opts);
+    var inspection = validateExcelLedgerTargetBlank(app, rangeInfo, opts);
+
+    var cellMap = {};
+    inspection.cells.forEach(function (c) {
+      cellMap[c.row + "," + c.col] = c;
+    });
+
+    var writePlans = [];
+    var curRow = rangeInfo.startRow;
+    var cIdx;
+    var rIdx;
+
+    if (includeHeaders) {
+      for (cIdx = 0; cIdx < headers.length; cIdx += 1) {
+        var hCol = rangeInfo.startCol + cIdx;
+        var hItem = cellMap[curRow + "," + hCol];
+        writePlans.push({
+          row: curRow,
+          col: hCol,
+          address: hItem ? hItem.address : formatExcelA1Address(curRow, hCol, curRow, hCol),
+          cell: hItem ? hItem.cell : null,
+          rawValue: headers[cIdx],
+          sanitizedValue: sanitizeExcelLedgerCellValue(headers[cIdx])
+        });
+      }
+      curRow += 1;
+    }
+
+    for (rIdx = 0; rIdx < rows.length; rIdx += 1) {
+      var rowData = rows[rIdx] || {};
+      var vals = rowData.values || {};
+      var missing = Array.isArray(rowData.missingFields) ? rowData.missingFields : [];
+
+      for (cIdx = 0; cIdx < headers.length; cIdx += 1) {
+        var colName = headers[cIdx];
+        var cellVal = vals[colName];
+        if (missing.indexOf(colName) >= 0 || cellVal === null || typeof cellVal === "undefined") {
+          cellVal = "";
+        }
+        var targetCol = rangeInfo.startCol + cIdx;
+        var cellItem = cellMap[curRow + "," + targetCol];
+        writePlans.push({
+          row: curRow,
+          col: targetCol,
+          address: cellItem ? cellItem.address : formatExcelA1Address(curRow, targetCol, curRow, targetCol),
+          cell: cellItem ? cellItem.cell : null,
+          rawValue: cellVal,
+          sanitizedValue: sanitizeExcelLedgerCellValue(cellVal)
+        });
+      }
+      curRow += 1;
+    }
+
+    var writtenList = [];
+    try {
+      writePlans.forEach(function (plan) {
+        if (!plan.cell) {
+          throw new Error("单元格不可用：" + plan.address);
+        }
+        var entry = {
+          cell: plan.cell,
+          address: plan.address,
+          previousValue: ""
+        };
+        plan.cell.Value2 = plan.sanitizedValue;
+        writtenList.push(entry);
+      });
+    } catch (writeErr) {
+      var rollbackFailures = [];
+      writtenList.slice().reverse().forEach(function (entry) {
+        try {
+          entry.cell.Value2 = "";
+          var afterVal = entry.cell.Value2;
+          if (afterVal !== null && afterVal !== "" && typeof afterVal !== "undefined") {
+            rollbackFailures.push(entry.address);
+          }
+        } catch (rbErr) {
+          rollbackFailures.push(entry.address);
+        }
+      });
+
+      var compErr;
+      if (rollbackFailures.length > 0) {
+        compErr = new Error("台账写入失败，且部分单元格无法自动恢复空白，需要人工核对：" + rollbackFailures.join("、"));
+        compErr.code = "COMPENSATION_FAILED";
+        compErr.rollbackFailures = rollbackFailures;
+        compErr.cause = writeErr;
+        throw compErr;
+      } else {
+        compErr = new Error("台账写入失败，已成功将已写入单元格恢复为空白。" + (writeErr && writeErr.message ? " " + writeErr.message : ""));
+        compErr.code = "COMPENSATION_SUCCEEDED";
+        compErr.rollbackFailures = [];
+        compErr.cause = writeErr;
+        throw compErr;
+      }
+    }
+
+    return {
+      success: true,
+      writtenCount: writePlans.length,
+      targetAddress: rangeInfo.targetAddress,
+      sheetName: rangeInfo.sheetName,
+      includeHeaders: includeHeaders
+    };
+  }
+
   return {
     normalizeText: normalizeText,
     escapeHtml: escapeHtml,
     readSelectionHeaders: readSelectionHeaders,
     resolveExcelLedgerTargetRange: resolveExcelLedgerTargetRange,
     validateExcelLedgerTargetBlank: validateExcelLedgerTargetBlank,
+    sanitizeExcelLedgerCellValue: sanitizeExcelLedgerCellValue,
+    writeExcelMaterialLedger: writeExcelMaterialLedger,
 
     renderMarkdown: renderMarkdown,
     buildExcelAnalysisMarkdown: buildExcelAnalysisMarkdown,

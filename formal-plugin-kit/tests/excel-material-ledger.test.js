@@ -564,6 +564,7 @@ function createMockGridApp(config) {
   const docSessionId = opts.documentSessionId || 'sess-excel-doc-1';
   const grid = opts.cells || {};
   const sheetProtected = Boolean(opts.sheetProtected);
+  const cellStore = {};
 
   function cellKey(r, c) {
     return `${r},${c}`;
@@ -571,19 +572,33 @@ function createMockGridApp(config) {
 
   function getCell(r, c) {
     const k = cellKey(r, c);
-    const cellData = grid[k] || {};
-    return {
-      Row: r,
-      Column: c,
-      Value2: cellData.Value2 !== undefined ? cellData.Value2 : (cellData.Value !== undefined ? cellData.Value : null),
-      Value: cellData.Value !== undefined ? cellData.Value : (cellData.Value2 !== undefined ? cellData.Value2 : null),
-      HasFormula: Boolean(cellData.HasFormula || cellData.Formula || cellData.formula),
-      Formula: cellData.Formula || cellData.formula || '',
-      MergeCells: Boolean(cellData.MergeCells || cellData.mergeCells),
-      EntireRow: { Hidden: Boolean(cellData.rowHidden) },
-      EntireColumn: { Hidden: Boolean(cellData.colHidden) },
-      Locked: cellData.Locked !== undefined ? Boolean(cellData.Locked) : true
-    };
+    if (!cellStore[k]) {
+      const cellData = grid[k] || {};
+      let val = cellData.Value2 !== undefined ? cellData.Value2 : (cellData.Value !== undefined ? cellData.Value : null);
+      cellStore[k] = {
+        Row: r,
+        Column: c,
+        get Value2() {
+          if (typeof cellData.onRead === 'function') cellData.onRead();
+          return val;
+        },
+        set Value2(newVal) {
+          if (typeof cellData.onWrite === 'function') {
+            cellData.onWrite(newVal);
+          }
+          val = newVal;
+        },
+        get Value() { return val; },
+        set Value(newVal) { val = newVal; },
+        HasFormula: Boolean(cellData.HasFormula || cellData.Formula || cellData.formula),
+        Formula: cellData.Formula || cellData.formula || '',
+        MergeCells: Boolean(cellData.MergeCells || cellData.mergeCells),
+        EntireRow: { Hidden: Boolean(cellData.rowHidden) },
+        EntireColumn: { Hidden: Boolean(cellData.colHidden) },
+        Locked: cellData.Locked !== undefined ? Boolean(cellData.Locked) : true
+      };
+    }
+    return cellStore[k];
   }
 
   const selectionRow = opts.selectionRow || 2;
@@ -617,6 +632,9 @@ function createMockGridApp(config) {
       Cells: {
         Item: (r, c) => getCell(r, c)
       }
+    },
+    getCellValue(r, c) {
+      return getCell(r, c).Value2;
     }
   };
   return app;
@@ -700,4 +718,150 @@ test('validateExcelLedgerTargetBlank rejects cells with existing values, formula
     helpers.validateExcelLedgerTargetBlank(normalApp, range1, { documentSessionId: 'sess-different-workbook' });
   }, /工作簿/);
 });
+
+test('sanitizeExcelLedgerCellValue escapes formulas and keeps missing fields blank', () => {
+  assert.strictEqual(helpers.sanitizeExcelLedgerCellValue('=SUM(A1)'), "'=SUM(A1)");
+  assert.strictEqual(helpers.sanitizeExcelLedgerCellValue('+123'), "'+123");
+  assert.strictEqual(helpers.sanitizeExcelLedgerCellValue('-cmd'), "'-cmd");
+  assert.strictEqual(helpers.sanitizeExcelLedgerCellValue('@macro'), "'@macro");
+  assert.strictEqual(helpers.sanitizeExcelLedgerCellValue(''), '');
+  assert.strictEqual(helpers.sanitizeExcelLedgerCellValue(null), '');
+  assert.strictEqual(helpers.sanitizeExcelLedgerCellValue(undefined), '');
+  assert.strictEqual(helpers.sanitizeExcelLedgerCellValue('正常文本'), '正常文本');
+  assert.strictEqual(helpers.sanitizeExcelLedgerCellValue(42), 42);
+});
+
+test('writeExcelMaterialLedger successfully writes headers and rows to blank area', () => {
+  const app = createMockGridApp({ selectionRow: 2, selectionCol: 1, selectionRowCount: 1, selectionColCount: 1 });
+  const result = {
+    headers: ['工作事项', '责任部门'],
+    rows: [
+      { values: { '工作事项': '任务1', '责任部门': '技术部' }, missingFields: [] },
+      { values: { '工作事项': '任务2', '责任部门': null }, missingFields: ['责任部门'] }
+    ]
+  };
+
+  const report = helpers.writeExcelMaterialLedger(app, result, {
+    includeHeaders: true,
+    documentSessionId: 'sess-excel-doc-1'
+  });
+
+  assert.strictEqual(report.success, true);
+  assert.strictEqual(report.writtenCount, 6);
+  assert.strictEqual(report.targetAddress, 'A2:B4');
+  assert.strictEqual(report.sheetName, 'Sheet1');
+  assert.strictEqual(report.includeHeaders, true);
+
+  // Row 2: Headers
+  assert.strictEqual(app.getCellValue(2, 1), '工作事项');
+  assert.strictEqual(app.getCellValue(2, 2), '责任部门');
+  // Row 3: Data row 1
+  assert.strictEqual(app.getCellValue(3, 1), '任务1');
+  assert.strictEqual(app.getCellValue(3, 2), '技术部');
+  // Row 4: Data row 2 (missing field must be blank '')
+  assert.strictEqual(app.getCellValue(4, 1), '任务2');
+  assert.strictEqual(app.getCellValue(4, 2), '');
+});
+
+test('writeExcelMaterialLedger supports includeHeaders: false and formula injection defense', () => {
+  const app = createMockGridApp({ selectionRow: 2, selectionCol: 1, selectionRowCount: 1, selectionColCount: 1 });
+  const result = {
+    headers: ['工作事项', '金额'],
+    rows: [
+      { values: { '工作事项': '=SUM(A1:A10)', '金额': '+5000' }, missingFields: [] }
+    ]
+  };
+
+  const report = helpers.writeExcelMaterialLedger(app, result, {
+    includeHeaders: false,
+    documentSessionId: 'sess-excel-doc-1'
+  });
+
+  assert.strictEqual(report.success, true);
+  assert.strictEqual(report.writtenCount, 2);
+  assert.strictEqual(report.targetAddress, 'A2:B2');
+  assert.strictEqual(report.includeHeaders, false);
+
+  // Formulas escaped with leading single quote
+  assert.strictEqual(app.getCellValue(2, 1), "'=SUM(A1:A10)");
+  assert.strictEqual(app.getCellValue(2, 2), "'+5000");
+});
+
+test('writeExcelMaterialLedger rolls back on mid-write failure (COMPENSATION_SUCCEEDED)', () => {
+  const app = createMockGridApp({
+    selectionRow: 2,
+    selectionCol: 1,
+    cells: {
+      '3,2': {
+        onWrite: () => {
+          throw new Error('COM write error at cell 3,2');
+        }
+      }
+    }
+  });
+
+  const result = {
+    headers: ['工作事项', '责任部门'],
+    rows: [
+      { values: { '工作事项': '任务1', '责任部门': '技术部' }, missingFields: [] }
+    ]
+  };
+
+  assert.throws(() => {
+    helpers.writeExcelMaterialLedger(app, result, {
+      includeHeaders: true,
+      documentSessionId: 'sess-excel-doc-1'
+    });
+  }, (err) => {
+    assert.strictEqual(err.code, 'COMPENSATION_SUCCEEDED');
+    assert.ok(err.message.includes('台账写入失败，已成功将已写入单元格恢复为空白'));
+    return true;
+  });
+
+  // Verify previously written cells (A2, B2, A3) have been restored to ''
+  assert.strictEqual(app.getCellValue(2, 1), '');
+  assert.strictEqual(app.getCellValue(2, 2), '');
+  assert.strictEqual(app.getCellValue(3, 1), '');
+});
+
+test('writeExcelMaterialLedger reports COMPENSATION_FAILED if rollback fails', () => {
+  let failRollback = false;
+  const app = createMockGridApp({
+    selectionRow: 2,
+    selectionCol: 1,
+    cells: {
+      '2,1': {
+        onWrite: (val) => {
+          if (failRollback && val === '') {
+            throw new Error('Rollback failed at 2,1');
+          }
+        }
+      },
+      '2,2': {
+        onWrite: () => {
+          failRollback = true;
+          throw new Error('Write failed at 2,2');
+        }
+      }
+    }
+  });
+
+  const result = {
+    headers: ['工作事项', '责任部门'],
+    rows: [{ values: { '工作事项': '任务1', '责任部门': '技术部' }, missingFields: [] }]
+  };
+
+  assert.throws(() => {
+    helpers.writeExcelMaterialLedger(app, result, {
+      includeHeaders: true,
+      documentSessionId: 'sess-excel-doc-1'
+    });
+  }, (err) => {
+    assert.strictEqual(err.code, 'COMPENSATION_FAILED');
+    assert.ok(Array.isArray(err.rollbackFailures));
+    assert.ok(err.rollbackFailures.includes('A2'));
+    return true;
+  });
+});
+
 
