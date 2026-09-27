@@ -3298,8 +3298,12 @@
     if (!materialLedger && typeof window.createMaterialLedger === "function") {
       materialLedger = window.createMaterialLedger({
         request: request,
+        helpers: helpers,
         storage: window.localStorage,
         getSessionId: getCurrentExcelDocumentSession,
+        getApp: function () {
+          return typeof getEtApplication === "function" ? getEtApplication() : (window.Application || null);
+        },
         render: renderMaterialLedgerView,
         copyText: function (text) {
           if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -3512,9 +3516,67 @@
           drawer.hidden = true;
         }
       }
+
+      var writeSection = byId("ledger-write-section");
+      if (writeSection) {
+        writeSection.hidden = false;
+      }
+      var targetSummary = byId("ledger-target-summary");
+      if (targetSummary) {
+        if (view.targetRangeInfo) {
+          targetSummary.textContent = "目标位置：" + (view.targetRangeInfo.sheetName ? view.targetRangeInfo.sheetName + "!" : "") +
+            view.targetRangeInfo.targetAddress + " (" + view.targetRangeInfo.rowCount + " 行 " + view.targetRangeInfo.colCount + " 列)";
+        } else {
+          targetSummary.textContent = "目标位置：请选定空白区域起始单元格并点击“检测选区”";
+        }
+      }
+      var targetValidation = byId("ledger-target-validation");
+      if (targetValidation) {
+        if (view.writeStatus === "ready") {
+          targetValidation.textContent = "✓ 目标区域完全空白，可安全写入";
+          targetValidation.className = "ledger-target-validation is-valid";
+        } else if (view.writeError) {
+          targetValidation.textContent = "✗ " + view.writeError;
+          targetValidation.className = "ledger-target-validation is-invalid";
+        } else {
+          targetValidation.textContent = "";
+          targetValidation.className = "ledger-target-validation";
+        }
+      }
+      var headersToggle = byId("ledger-include-headers-toggle");
+      if (headersToggle) {
+        headersToggle.checked = view.includeHeaders !== false;
+      }
+      var btnWrite = byId("btn-write-ledger");
+      if (btnWrite) {
+        var hasBasisWarning = Boolean(basisWarning && !basisWarning.hidden);
+        btnWrite.disabled = Boolean(view.writing) || view.writeStatus !== "ready" || hasBasisWarning;
+        if (view.writing) {
+          btnWrite.textContent = "正在写入工作表...";
+        } else if (view.writeStatus === "success") {
+          btnWrite.textContent = "已完成写入";
+        } else {
+          btnWrite.textContent = "确认写入工作表";
+        }
+      }
+      var writeStatusEl = byId("ledger-write-status");
+      if (writeStatusEl) {
+        if (view.writeStatus === "success" && view.writeReport) {
+          writeStatusEl.textContent = "成功写入 " + view.writeReport.writtenCount + " 个单元格至 " + view.writeReport.targetAddress;
+          writeStatusEl.className = "ledger-write-status is-success";
+        } else if (view.writeStatus === "error" && view.writeError) {
+          writeStatusEl.textContent = view.writeError;
+          writeStatusEl.className = "ledger-write-status is-error";
+        } else {
+          writeStatusEl.textContent = "";
+          writeStatusEl.className = "ledger-write-status";
+        }
+      }
     } else {
       if (ledgerResultBox) ledgerResultBox.hidden = true;
       if (markdownOutput) markdownOutput.hidden = false;
+      var writeSectionEl = byId("ledger-write-section");
+      if (writeSectionEl) writeSectionEl.hidden = true;
     }
   }
 
@@ -8575,6 +8637,54 @@
       byId("btn-close-drawer").addEventListener("click", function () {
         var ctrl = ensureMaterialLedger();
         if (ctrl) ctrl.closeSourceDrawer();
+      });
+    }
+    if (byId("btn-refresh-ledger-target")) {
+      byId("btn-refresh-ledger-target").addEventListener("click", function () {
+        var ctrl = ensureMaterialLedger();
+        var app = typeof getEtApplication === "function" ? getEtApplication() : (window.Application || null);
+        if (ctrl && app) {
+          ctrl.inspectTargetRange(app);
+        }
+      });
+    }
+    if (byId("ledger-include-headers-toggle")) {
+      byId("ledger-include-headers-toggle").addEventListener("change", function (e) {
+        var ctrl = ensureMaterialLedger();
+        var app = typeof getEtApplication === "function" ? getEtApplication() : (window.Application || null);
+        if (ctrl) {
+          ctrl.setIncludeHeaders(e.target.checked);
+          if (app) {
+            ctrl.inspectTargetRange(app);
+          }
+        }
+      });
+    }
+    if (byId("btn-write-ledger")) {
+      byId("btn-write-ledger").addEventListener("click", function () {
+        var ctrl = ensureMaterialLedger();
+        if (!ctrl) return;
+        var s = ctrl.getState();
+        if (!s || !s.targetRangeInfo) return;
+        var app = typeof getEtApplication === "function" ? getEtApplication() : (window.Application || null);
+        var wbName = (app && app.ActiveWorkbook && app.ActiveWorkbook.Name) || "当前工作簿";
+        var sheetName = s.targetRangeInfo.sheetName || "当前工作表";
+        var address = s.targetRangeInfo.targetAddress;
+        var rowCount = s.targetRangeInfo.rowCount;
+        var includeHeadersText = s.includeHeaders ? "包含表头" : "不含表头";
+        var msg = "请确认向工作表写入任务台账：\n\n" +
+          "工作簿：" + wbName + "\n" +
+          "工作表：" + sheetName + "\n" +
+          "目标区域：" + address + "\n" +
+          "写入行数：" + rowCount + " 行（" + includeHeadersText + "）\n\n" +
+          "注意：目标区域将填入台账数据，确认写入吗？";
+        if (typeof window !== "undefined" && typeof window.confirm === "function") {
+          var confirmed = window.confirm(msg);
+          if (!confirmed) {
+            return;
+          }
+        }
+        ctrl.writeToSheet(app).catch(function () {});
       });
     }
     byId("btn-resubmit-interrupted-job").addEventListener("click", runExcelAnalysisAction);

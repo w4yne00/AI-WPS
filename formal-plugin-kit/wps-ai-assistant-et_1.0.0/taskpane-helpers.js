@@ -5673,10 +5673,13 @@
     if (opts.documentSessionId) {
       var currentSessionId = "";
       var wb = app.ActiveWorkbook || (app.Application && app.Application.ActiveWorkbook) || app;
-      if (wb && wb.wps_doc_session_id) {
+      var sessionFromHelper = typeof getDocumentSessionId === "function" ? getDocumentSessionId(wb) : "";
+      if (opts.documentSessionId === sessionFromHelper) {
+        currentSessionId = sessionFromHelper;
+      } else if (wb && wb.wps_doc_session_id) {
         currentSessionId = wb.wps_doc_session_id;
-      } else if (typeof getDocumentSessionId === "function") {
-        currentSessionId = getDocumentSessionId(wb);
+      } else {
+        currentSessionId = sessionFromHelper;
       }
       if (currentSessionId && currentSessionId !== opts.documentSessionId) {
         throw new Error("当前活动工作簿与台账生成工作簿不一致，已拒绝跨工作簿写入。");

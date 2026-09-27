@@ -961,5 +961,193 @@ test('ledger controller writeToSheet rejects when result is not completed', asyn
   }, /没有可写入的已完成台账/);
 });
 
+test('taskpane HTML contains ledger write section and target controls', () => {
+  const html = fs.readFileSync(path.join(root, 'taskpane.html'), 'utf8');
+  assert.ok(html.includes('id="ledger-write-section"'), 'taskpane.html should contain #ledger-write-section');
+  assert.ok(html.includes('id="ledger-target-summary"'), 'taskpane.html should contain #ledger-target-summary');
+  assert.ok(html.includes('id="ledger-target-validation"'), 'taskpane.html should contain #ledger-target-validation');
+  assert.ok(html.includes('id="btn-refresh-ledger-target"'), 'taskpane.html should contain #btn-refresh-ledger-target');
+  assert.ok(html.includes('id="ledger-include-headers-toggle"'), 'taskpane.html should contain #ledger-include-headers-toggle');
+  assert.ok(html.includes('id="btn-write-ledger"'), 'taskpane.html should contain #btn-write-ledger');
+  assert.ok(html.includes('id="ledger-write-status"'), 'taskpane.html should contain #ledger-write-status');
+});
 
+test('renderMaterialLedgerView renders write section and target controls on completed result', () => {
+  const pane = ledgerPaneHarness();
+  pane.render({
+    headers: ['工作事项', '责任部门'],
+    result: {
+      headers: ['工作事项', '责任部门'],
+      rows: [{ values: { '工作事项': '任务1' }, missingFields: [] }]
+    },
+    targetRangeInfo: {
+      sheetName: 'Sheet1',
+      targetAddress: 'A2:B3',
+      rowCount: 2,
+      colCount: 2
+    },
+    includeHeaders: true,
+    writeStatus: 'ready',
+    writeError: ''
+  });
 
+  const writeSection = pane.byId('ledger-write-section');
+  assert.strictEqual(writeSection.hidden, false);
+  const summary = pane.byId('ledger-target-summary');
+  assert.ok(summary.textContent.includes('A2:B3'));
+  const btnWrite = pane.byId('btn-write-ledger');
+  assert.strictEqual(btnWrite.disabled, false);
+  const validation = pane.byId('ledger-target-validation');
+  assert.ok(validation.textContent.includes('可安全写入'));
+});
+
+test('renderMaterialLedgerView hides write section when result is not present', () => {
+  const pane = ledgerPaneHarness();
+  pane.render({
+    headers: ['工作事项'],
+    result: null
+  });
+  const writeSection = pane.byId('ledger-write-section');
+  assert.strictEqual(writeSection.hidden, true);
+});
+
+test('renderMaterialLedgerView disables write button when basis warning is active', () => {
+  const pane = ledgerPaneHarness();
+  pane.render({
+    headers: ['工作事项'],
+    result: {
+      headers: ['工作事项'],
+      basisMaterials: [{ materialId: 'm1', updatedAt: 'v1' }],
+      rows: [{ values: { '工作事项': '任务1' }, missingFields: [] }]
+    },
+    catalogSummary: {
+      documents: [{ materialId: 'm1', updatedAt: 'v2' }]
+    },
+    targetRangeInfo: {
+      sheetName: 'Sheet1',
+      targetAddress: 'A2:A3',
+      rowCount: 2,
+      colCount: 1
+    },
+    writeStatus: 'ready'
+  });
+
+  const basisWarning = pane.byId('ledger-basis-warning');
+  assert.strictEqual(basisWarning.hidden, false);
+  const btnWrite = pane.byId('btn-write-ledger');
+  assert.strictEqual(btnWrite.disabled, true);
+});
+
+test('renderMaterialLedgerView shows error state when writeStatus is error', () => {
+  const pane = ledgerPaneHarness();
+  pane.render({
+    headers: ['工作事项'],
+    result: {
+      headers: ['工作事项'],
+      rows: [{ values: { '工作事项': '任务1' }, missingFields: [] }]
+    },
+    writeStatus: 'error',
+    writeError: '目标区域包含已有数据 (A2)'
+  });
+
+  const validation = pane.byId('ledger-target-validation');
+  assert.ok(validation.textContent.includes('包含已有数据'));
+  const btnWrite = pane.byId('btn-write-ledger');
+  assert.strictEqual(btnWrite.disabled, true);
+});
+
+test('real ledger pane writes ledger to worksheet cells upon confirmation and prevents write on cancel', t => {
+  const { execFileSync } = require('node:child_process');
+  const os = require('node:os');
+  try { execFileSync('agent-browser', ['--version'], { stdio: 'ignore' }); }
+  catch (_) { t.skip('agent-browser unavailable'); return; }
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'excel-ledger-write-'));
+  const run = (...args) => execFileSync('agent-browser', ['--session', 'excel-ledger-write', ...args], {
+    encoding: 'utf8', env: { ...process.env, AGENT_BROWSER_SOCKET_DIR: temp }
+  });
+  const mock = `
+window.paneErrors=[];window.addEventListener('error',e=>paneErrors.push(e.message));
+window.confirmResult = false;
+window.confirmCalls = 0;
+window.confirm = function(msg) { window.confirmCalls++; return window.confirmResult; };
+window.requests=[];window.cellWrites=0;
+var cellStore = {};
+function getCell(r, c) {
+  var k = r + ',' + c;
+  if (!cellStore[k]) {
+    var val = '';
+    cellStore[k] = {
+      Row: r, Column: c,
+      get Value2() { return val; },
+      set Value2(v) { window.cellWrites++; val = v; },
+      get Value() { return val; },
+      set Value(v) { val = v; },
+      HasFormula: false, Formula: '', MergeCells: false,
+      EntireRow: { Hidden: false }, EntireColumn: { Hidden: false }, Locked: false
+    };
+  }
+  return cellStore[k];
+}
+var sheet = {
+  Name: 'Sheet1',
+  ProtectContents: false,
+  Cells: { Item: getCell },
+  Range: function() { return { Item: getCell }; }
+};
+window.Application = {
+  Selection: { Row: 2, Column: 1, Rows: { Count: 1 }, Columns: { Count: 1 }, Cells: { Item: getCell } },
+  ActiveSheet: sheet,
+  ActiveWorkbook: {
+    Name: '台账测试.xlsx',
+    FullName: '/test/台账测试.xlsx',
+    ActiveSheet: sheet,
+    Worksheets: { Item: () => sheet }
+  }
+};
+window.catalog={totalDocuments:1,totalCharacters:50,documents:[{materialId:'m1',fileName:'台账依据.docx',updatedAt:'v1'}]};
+window.fetch=async function(url,options){
+  var p=new URL(url).pathname;
+  if(p==='/health') return {ok:true,status:200,json:async()=>({success:true,data:{status:'ok',modelTasksAllowed:true,configurationMutationsAllowed:true}})};
+  if(p==='/materials/reusable-sources') return {ok:true,status:200,json:async()=>({success:true,data:{sources:[]}})};
+  if(p==='/excel/materials/catalog') return {ok:true,status:200,json:async()=>({success:true,data:catalog})};
+  if(p==='/excel/material-ledger/conflicts') return {ok:true,status:200,json:async()=>({success:true,data:{conflicts:[]}})};
+  if(p==='/excel/material-ledger/jobs') return {ok:true,status:200,json:async()=>({
+    success:true,data:{jobId:'job-write-1',status:'completed',result:{
+      headers:['工作事项','责任部门'],basisMaterials:[{materialId:'m1',updatedAt:'v1'}],
+      rows:[{values:{'工作事项':'设备采购','责任部门':'采办部'},missingFields:[]}]
+    }}
+  })};
+  return {ok:true,status:200,json:async()=>({success:true,data:{}})};
+};`;
+  let html = fs.readFileSync(path.join(root, 'taskpane.html'), 'utf8');
+  html = html.replace('</head>', '<script>' + mock + '</script></head>');
+  html = html.replace(/<script src="\.\/([^"?]+)[^"]*"><\/script>/g,
+    (_, name) => '<script>' + fs.readFileSync(path.join(root, name), 'utf8') + '</script>');
+  html = html.replace(/<link rel="stylesheet"[^>]+>/, '<style>' + fs.readFileSync(path.join(root, 'taskpane.css'), 'utf8') + '</style>');
+  const page = path.join(temp, 'pane.html');
+  fs.writeFileSync(page, html);
+  try {
+    run('open', require('node:url').pathToFileURL(page).href + '?mode=excelLedger');
+    run('set', 'viewport', '320', '900');
+    run('wait', '--text', '台账依据.docx');
+    run('scrollintoview', '#btn-run-primary');
+    run('click', '#btn-run-primary');
+    run('wait', '--text', '设备采购');
+    run('wait', '--text', '写入工作表');
+    run('scrollintoview', '#btn-write-ledger');
+    run('click', '#btn-refresh-ledger-target');
+    run('wait', '--text', '可安全写入');
+    run('click', '#btn-write-ledger');
+    assert.equal(run('eval', 'window.confirmCalls').trim(), '1');
+    assert.equal(run('eval', 'window.cellWrites').trim(), '0');
+    run('eval', 'window.confirmResult = true');
+    run('click', '#btn-write-ledger');
+    run('wait', '--text', '成功写入');
+    assert.equal(run('eval', 'window.confirmCalls').trim(), '2');
+    assert.equal(run('eval', 'window.cellWrites').trim(), '4');
+    assert.equal(run('eval', 'JSON.stringify(window.paneErrors)').trim(), '"[]"');
+  } finally {
+    try { run('close'); } catch (_) {}
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
