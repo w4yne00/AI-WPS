@@ -558,7 +558,7 @@ test("taskpane.html contains template body page markup and script tags", async (
   const htmlPath = path.join(root, "taskpane.html");
   const htmlContent = fs.readFileSync(htmlPath, "utf8");
 
-  assert.ok(htmlContent.includes('<script src="./template-body-page.js?v=0.23.1-alpha"></script>'));
+  assert.ok(htmlContent.includes('src="./template-body-page.js'), "taskpane.html must load template-body-page.js");
   assert.ok(htmlContent.includes('id="ppt-template-page-card"'));
   assert.ok(htmlContent.includes('id="ppt-template-page-select"'));
   assert.ok(htmlContent.includes('id="btn-ppt-generate-template-page"'));
