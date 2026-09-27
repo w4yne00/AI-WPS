@@ -245,6 +245,92 @@ class WordMaterialStore:
                 "toc": catalog.get("toc", []) if c_file.exists() else []
             }
 
+    def delete_material(
+        self,
+        session_id: str,
+        material_id: str,
+        catalog: Optional[dict] = None,
+    ) -> None:
+        with self._lock:
+            d = self._get_dir_for_session(session_id) if session_id else None
+            if not d and self.base_dir.exists():
+                for sub_d in self.base_dir.iterdir():
+                    if sub_d.is_dir() and (sub_d / "files" / "{0}.docx".format(material_id)).exists():
+                        d = sub_d
+                        break
+            if not d or not d.exists():
+                return
+
+            docx_file = d / "files" / "{0}.docx".format(material_id)
+            if docx_file.exists():
+                docx_file.unlink()
+
+            mat_file = d / "materials" / "{0}.json".format(material_id)
+            if mat_file.exists():
+                mat_file.unlink()
+
+            now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            manifest_file = d / "manifest.json"
+            if manifest_file.exists():
+                try:
+                    manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
+                    manifest["documents"] = [
+                        doc for doc in manifest.get("documents", [])
+                        if doc.get("materialId") != material_id
+                    ]
+                    manifest["totalDocuments"] = len(manifest["documents"])
+                    manifest["totalCharacters"] = sum(
+                        doc.get("readableCharacterCount", 0)
+                        for doc in manifest["documents"]
+                    )
+                    if catalog is not None:
+                        manifest["totalTableCells"] = catalog.get("totalTableCells", 0)
+                    manifest["updatedAt"] = now_iso
+                    tmp_m = d / "manifest.json.tmp"
+                    tmp_m.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+                    tmp_m.replace(manifest_file)
+                except Exception:
+                    pass
+
+            cache_file = d / "catalog_cache.json"
+            if catalog is not None:
+                tmp_c = d / "catalog_cache.json.tmp"
+                tmp_c.write_text(json.dumps(catalog, ensure_ascii=False, indent=2), encoding="utf-8")
+                tmp_c.replace(cache_file)
+            elif cache_file.exists():
+                try:
+                    cat = json.loads(cache_file.read_text(encoding="utf-8"))
+                    cat["documents"] = [
+                        doc for doc in cat.get("documents", [])
+                        if doc.get("materialId") != material_id
+                    ]
+                    cat["toc"] = [
+                        t for t in cat.get("toc", [])
+                        if t.get("materialId") != material_id
+                    ]
+                    cat["blocks"] = [
+                        b for b in cat.get("blocks", [])
+                        if b.get("materialId") != material_id
+                    ]
+                    cat["fragmentsList"] = [
+                        f for f in cat.get("fragmentsList", [])
+                        if f.get("materialId") != material_id
+                    ]
+                    cat["fragments"] = {
+                        k: v for k, v in cat.get("fragments", {}).items()
+                        if v.get("materialId") != material_id
+                    }
+                    cat["totalDocuments"] = len(cat["documents"])
+                    cat["totalCharacters"] = sum(
+                        doc.get("readableCharacterCount", 0)
+                        for doc in cat["documents"]
+                    )
+                    tmp_c = d / "catalog_cache.json.tmp"
+                    tmp_c.write_text(json.dumps(cat, ensure_ascii=False, indent=2), encoding="utf-8")
+                    tmp_c.replace(cache_file)
+                except Exception:
+                    pass
+
 
 class WordMaterialImportService:
     def __init__(self, state_dir: Optional[Path] = None) -> None:
@@ -335,12 +421,16 @@ class WordMaterialImportService:
             block["fileName"] = file_name
             block["materialId"] = material_id
 
+        now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         doc_summary = {
             "materialId": material_id,
             "fileName": file_name,
             "readableCharacterCount": char_count,
+            "extractedTableCells": doc_cells,
             "blocksCount": len(reading["blocks"]),
             "fragmentsCount": len(reading["fragments"]),
+            "importedAt": now_iso,
+            "updatedAt": now_iso,
         }
 
         doc_toc = []
@@ -407,6 +497,8 @@ class WordMaterialImportService:
             "unreadRegions": reading["unreadRegions"],
             "blocks": reading["blocks"],
             "fragments": reading["fragments"],
+            "importedAt": now_iso,
+            "updatedAt": now_iso,
             "catalogSummary": catalog_summary,
         }
         self._materials[material_id] = view
@@ -497,6 +589,279 @@ class WordMaterialImportService:
                     if mid in self._materials:
                         self._materials[mid]["documentSessionId"] = new_sid
             return summary
+
+    def update_material(self, material_id: str, request: dict) -> dict:
+        with self._import_lock:
+            return self._update_material(material_id, request)
+
+    def _update_material(self, material_id: str, request: dict) -> dict:
+        old_view = self._materials.get(material_id)
+        if old_view is None:
+            old_view = self._store.load_material_view(material_id)
+            if old_view is not None:
+                self._materials[material_id] = old_view
+        if old_view is None:
+            raise AdapterError(
+                "MATERIAL_NOT_FOUND",
+                "资料不存在或已过期，请重新导入。",
+                status_code=404,
+            )
+
+        payload = request or {}
+        req_session_id = str(payload.get("documentSessionId") or payload.get("document_session_id") or "").strip()
+        mat_session_id = str(old_view.get("documentSessionId") or "").strip()
+        if req_session_id and mat_session_id and req_session_id != mat_session_id:
+            raise AdapterError(
+                "MATERIAL_NOT_FOUND",
+                "资料不存在或不属于当前会话。",
+                status_code=404,
+            )
+        session_id = req_session_id or mat_session_id
+        doc_identity = str(
+            payload.get("documentIdentity")
+            or payload.get("document_identity")
+            or ""
+        ).strip()
+
+        session_cat = self.get_session_catalog(session_id) if session_id else None
+        if session_cat and not any(d.get("materialId") == material_id for d in session_cat.get("documents", [])):
+            raise AdapterError(
+                "MATERIAL_NOT_FOUND",
+                "资料不存在或不属于当前会话。",
+                status_code=404,
+            )
+
+        file_name = str(payload.get("fileName") or payload.get("file_name") or old_view.get("fileName") or "")
+        content = _decode_upload(payload.get("contentBase64") or payload.get("content_base64"))
+        _reject_wrong_type(file_name, str(payload.get("mimeType") or payload.get("mime_type") or ""))
+
+        try:
+            validated = validate_docx_bytes(content)
+        except DocxSecurityError as exc:
+            raise _security_error(exc) from exc
+
+        current_cells = session_cat.get("totalTableCells", 0) if session_cat else 0
+        old_cells = old_view.get("limits", {}).get("extractedTableCells", 0)
+        remaining_cells = MATERIAL_IMPORT_MAX_TABLE_CELLS - (current_cells - old_cells)
+
+        start_fragment_index = 1
+        if session_cat:
+            other_frags = [f for f in session_cat.get("fragmentsList", []) if f.get("materialId") != material_id]
+            start_fragment_index = len(other_frags) + 1
+
+        reading = _read_document(
+            validated.document_xml,
+            validated.style_names,
+            content,
+            remaining_table_cells=remaining_cells,
+            start_fragment_index=start_fragment_index,
+        )
+        char_count = reading["limits"]["readableCharacterCount"]
+        doc_cells = reading["limits"].get("extractedTableCells", 0)
+
+        old_chars = old_view.get("limits", {}).get("readableCharacterCount", 0)
+        if session_cat:
+            current_chars = session_cat.get("totalCharacters", 0)
+            new_total_chars = current_chars - old_chars + char_count
+            if new_total_chars > MATERIAL_IMPORT_MAX_READABLE_CHARACTERS:
+                raise AdapterError(
+                    "MATERIAL_TEXT_OVER_LIMIT",
+                    "可读取文字超过本阶段实施参数上限，已拒绝导入，未截断内容。",
+                    status_code=413,
+                )
+            new_total_cells = current_cells - old_cells + doc_cells
+            if new_total_cells > MATERIAL_IMPORT_MAX_TABLE_CELLS:
+                raise AdapterError(
+                    "MATERIAL_TABLE_OVER_LIMIT",
+                    "表格展开规模超过本阶段实施参数上限，已拒绝导入，未截断内容。",
+                    status_code=413,
+                )
+        else:
+            if char_count > MATERIAL_IMPORT_MAX_READABLE_CHARACTERS:
+                raise AdapterError(
+                    "MATERIAL_TEXT_OVER_LIMIT",
+                    "可读取文字超过本阶段实施参数上限，已拒绝导入，未截断内容。",
+                    status_code=413,
+                )
+            if doc_cells > MATERIAL_IMPORT_MAX_TABLE_CELLS:
+                raise AdapterError(
+                    "MATERIAL_TABLE_OVER_LIMIT",
+                    "表格展开规模超过本阶段实施参数上限，已拒绝导入，未截断内容。",
+                    status_code=413,
+                )
+
+        now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        for frag in reading["fragments"]:
+            frag["fileName"] = file_name
+            frag["materialId"] = material_id
+
+        for block in reading["blocks"]:
+            block["fileName"] = file_name
+            block["materialId"] = material_id
+
+        doc_summary = {
+            "materialId": material_id,
+            "fileName": file_name,
+            "readableCharacterCount": char_count,
+            "extractedTableCells": doc_cells,
+            "blocksCount": len(reading["blocks"]),
+            "fragmentsCount": len(reading["fragments"]),
+            "importedAt": old_view.get("importedAt") or now_iso,
+            "updatedAt": now_iso,
+        }
+
+        doc_toc = []
+        for block in reading["blocks"]:
+            if block.get("kind") == "heading":
+                doc_toc.append({
+                    "materialId": material_id,
+                    "fileName": file_name,
+                    "headingLevel": block.get("level", 1),
+                    "sectionTitle": block.get("text", ""),
+                    "blockId": block.get("blockId", ""),
+                })
+
+        if session_cat:
+            docs = []
+            found = False
+            for d in session_cat.get("documents", []):
+                if d.get("materialId") == material_id:
+                    docs.append(doc_summary)
+                    found = True
+                else:
+                    docs.append(d)
+            if not found:
+                docs.append(doc_summary)
+            session_cat["documents"] = docs
+            session_cat["toc"] = [t for t in session_cat.get("toc", []) if t.get("materialId") != material_id] + doc_toc
+            session_cat["blocks"] = [b for b in session_cat.get("blocks", []) if b.get("materialId") != material_id] + reading["blocks"]
+            session_cat["fragmentsList"] = [f for f in session_cat.get("fragmentsList", []) if f.get("materialId") != material_id]
+            session_cat["fragments"] = {k: v for k, v in session_cat.get("fragments", {}).items() if v.get("materialId") != material_id}
+            for frag in reading["fragments"]:
+                f_item = dict(frag)
+                f_item["fileName"] = file_name
+                session_cat["fragments"][frag["fragmentId"]] = f_item
+                session_cat["fragmentsList"].append(f_item)
+            session_cat["totalCharacters"] = sum(d.get("readableCharacterCount", 0) for d in session_cat["documents"])
+            session_cat["totalTableCells"] = sum(d.get("extractedTableCells", 0) for d in session_cat["documents"])
+            session_cat["totalDocuments"] = len(session_cat["documents"])
+            catalog_summary = {
+                "totalDocuments": session_cat["totalDocuments"],
+                "totalCharacters": session_cat["totalCharacters"],
+                "documents": list(session_cat["documents"]),
+                "toc": list(session_cat["toc"]),
+            }
+        else:
+            catalog_summary = {
+                "totalDocuments": 1,
+                "totalCharacters": char_count,
+                "documents": [doc_summary],
+                "toc": doc_toc,
+            }
+
+        view = {
+            "materialId": material_id,
+            "taskType": TASK_TYPE,
+            "fileName": file_name,
+            "documentSessionId": session_id,
+            "sourceFileUnchanged": True,
+            "targetDocumentUnchanged": True,
+            "understandsAllContent": False,
+            "limits": reading["limits"],
+            "disclosure": reading["disclosure"],
+            "unreadRegions": reading["unreadRegions"],
+            "blocks": reading["blocks"],
+            "fragments": reading["fragments"],
+            "importedAt": old_view.get("importedAt") or now_iso,
+            "updatedAt": now_iso,
+            "catalogSummary": catalog_summary,
+        }
+        self._materials[material_id] = view
+
+        cat_for_store = session_cat if session_cat else {
+            "documentSessionId": session_id,
+            "totalDocuments": 1,
+            "totalCharacters": char_count,
+            "totalTableCells": doc_cells,
+            "documents": [doc_summary],
+            "toc": doc_toc,
+            "blocks": reading["blocks"],
+            "fragments": {frag["fragmentId"]: frag for frag in reading["fragments"]},
+            "fragmentsList": reading["fragments"],
+        }
+        self._store.save_material(
+            session_id=session_id,
+            doc_identity=doc_identity,
+            material_id=material_id,
+            file_name=file_name,
+            raw_docx_bytes=content,
+            reading=reading,
+            view=view,
+            catalog=cat_for_store,
+        )
+        return view
+
+    def delete_material(self, material_id: str, document_session_id: str = "") -> dict:
+        with self._import_lock:
+            return self._delete_material(material_id, document_session_id)
+
+    def _delete_material(self, material_id: str, document_session_id: str = "") -> dict:
+        mat = self._materials.get(material_id)
+        if mat is None:
+            mat = self._store.load_material_view(material_id)
+        if mat is None:
+            raise AdapterError(
+                "MATERIAL_NOT_FOUND",
+                "资料不存在或已过期，请重新导入。",
+                status_code=404,
+            )
+
+        req_session_id = document_session_id.strip() if document_session_id else ""
+        mat_session_id = str(mat.get("documentSessionId") or "").strip()
+        if req_session_id and mat_session_id and req_session_id != mat_session_id:
+            raise AdapterError(
+                "MATERIAL_NOT_FOUND",
+                "资料不存在或不属于当前会话。",
+                status_code=404,
+            )
+        session_id = req_session_id or mat_session_id
+        session_cat = self.get_session_catalog(session_id) if session_id else None
+
+        if session_cat and not any(d.get("materialId") == material_id for d in session_cat.get("documents", [])):
+            raise AdapterError(
+                "MATERIAL_NOT_FOUND",
+                "资料不存在或不属于当前会话。",
+                status_code=404,
+            )
+
+        self._materials.pop(material_id, None)
+
+        if session_cat:
+            session_cat["documents"] = [d for d in session_cat.get("documents", []) if d.get("materialId") != material_id]
+            session_cat["toc"] = [t for t in session_cat.get("toc", []) if t.get("materialId") != material_id]
+            session_cat["blocks"] = [b for b in session_cat.get("blocks", []) if b.get("materialId") != material_id]
+            session_cat["fragmentsList"] = [f for f in session_cat.get("fragmentsList", []) if f.get("materialId") != material_id]
+            session_cat["fragments"] = {k: v for k, v in session_cat.get("fragments", {}).items() if v.get("materialId") != material_id}
+            session_cat["totalDocuments"] = len(session_cat["documents"])
+            session_cat["totalCharacters"] = sum(d.get("readableCharacterCount", 0) for d in session_cat["documents"])
+            session_cat["totalTableCells"] = sum(d.get("extractedTableCells", 0) for d in session_cat["documents"])
+
+        self._store.delete_material(session_id, material_id, session_cat)
+
+        if session_cat:
+            return {
+                "totalDocuments": session_cat["totalDocuments"],
+                "totalCharacters": session_cat["totalCharacters"],
+                "documents": list(session_cat["documents"]),
+                "toc": list(session_cat["toc"]),
+            }
+        return {
+            "totalDocuments": 0,
+            "totalCharacters": 0,
+            "documents": [],
+            "toc": [],
+        }
 
 
 def _decode_upload(value) -> bytes:

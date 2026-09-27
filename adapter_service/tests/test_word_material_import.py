@@ -443,3 +443,162 @@ def test_word_material_store_persists_and_restores_catalog_across_instances(tmp_
     assert cat2["documents"][0]["fileName"] == "立项.docx"
     assert len(cat2["toc"]) >= 1
 
+
+def test_word_material_update_and_remove_lifecycle(tmp_path):
+    import pytest
+    from app.core.errors import AdapterError
+    from app.services.word.material_import import WordMaterialImportService
+
+    service = WordMaterialImportService(state_dir=tmp_path / "state")
+    session_id = "doc_session_upd_1"
+    doc1 = build_docx(document_xml=_paragraph_document("第一章\n原始文本内容一百字。"))
+    res1 = service.import_material({
+        "fileName": "doc1.docx",
+        "contentBase64": base64.b64encode(doc1).decode("ascii"),
+        "documentSessionId": session_id
+    })
+    mid = res1["materialId"]
+    orig_chars = res1["catalogSummary"]["totalCharacters"]
+
+    # 1. Update with new docx
+    doc2 = build_docx(document_xml=_paragraph_document("第一章\n更新后的文本内容两百字，包含新增细节。"))
+    upd_res = service.update_material(mid, {
+        "fileName": "doc1_v2.docx",
+        "contentBase64": base64.b64encode(doc2).decode("ascii"),
+        "documentSessionId": session_id
+    })
+    assert upd_res["materialId"] == mid
+    assert upd_res["fileName"] == "doc1_v2.docx"
+    assert upd_res["catalogSummary"]["totalDocuments"] == 1
+    assert upd_res["catalogSummary"]["totalCharacters"] > orig_chars
+    assert "updatedAt" in upd_res
+
+    # 2. Delete material
+    del_res = service.delete_material(mid, document_session_id=session_id)
+    assert del_res["totalDocuments"] == 0
+    assert del_res["totalCharacters"] == 0
+
+    # 3. Check 404 after delete
+    with pytest.raises(AdapterError) as exc_info:
+        service.view_material(mid)
+    assert exc_info.value.code == "MATERIAL_NOT_FOUND"
+
+
+def test_word_material_update_over_limit_preserves_original(tmp_path):
+    import pytest
+    from app.core.errors import AdapterError
+    from app.services.word.material_import import WordMaterialImportService
+
+    service = WordMaterialImportService(state_dir=tmp_path / "state")
+    session_id = "doc_session_limit_1"
+    doc1 = build_docx(document_xml=_paragraph_document("第一章\n原始文本内容五十字。"))
+    res1 = service.import_material({
+        "fileName": "doc1.docx",
+        "contentBase64": base64.b64encode(doc1).decode("ascii"),
+        "documentSessionId": session_id
+    })
+    mid = res1["materialId"]
+    orig_chars = res1["catalogSummary"]["totalCharacters"]
+
+    # Try updating with > 100,000 characters
+    huge_text = "甲" * 100005
+    doc_huge = build_docx(document_xml=_paragraph_document(huge_text))
+    with pytest.raises(AdapterError) as exc_info:
+        service.update_material(mid, {
+            "fileName": "doc1_huge.docx",
+            "contentBase64": base64.b64encode(doc_huge).decode("ascii"),
+            "documentSessionId": session_id
+        })
+    assert exc_info.value.code == "MATERIAL_TEXT_OVER_LIMIT"
+    assert exc_info.value.status_code == 413
+
+    # Verify original unchanged
+    view = service.view_material(mid)
+    assert view["fileName"] == "doc1.docx"
+    assert view["catalogSummary"]["totalCharacters"] == orig_chars
+
+
+def test_word_material_update_and_delete_error_guards(tmp_path):
+    import pytest
+    from app.core.errors import AdapterError
+    from app.services.word.material_import import WordMaterialImportService
+
+    service = WordMaterialImportService(state_dir=tmp_path / "state")
+    session_id = "doc_session_guard_1"
+    doc1 = build_docx(document_xml=_paragraph_document("第一章\n原始文本。"))
+    res1 = service.import_material({
+        "fileName": "doc1.docx",
+        "contentBase64": base64.b64encode(doc1).decode("ascii"),
+        "documentSessionId": session_id
+    })
+    mid = res1["materialId"]
+
+    # Non-existent material
+    with pytest.raises(AdapterError) as exc:
+        service.delete_material("non_existent_mat", document_session_id=session_id)
+    assert exc.value.code == "MATERIAL_NOT_FOUND"
+
+    with pytest.raises(AdapterError) as exc:
+        service.update_material("non_existent_mat", {
+            "fileName": "x.docx",
+            "contentBase64": base64.b64encode(doc1).decode("ascii"),
+            "documentSessionId": session_id
+        })
+    assert exc.value.code == "MATERIAL_NOT_FOUND"
+
+    # Wrong session
+    with pytest.raises(AdapterError) as exc:
+        service.delete_material(mid, document_session_id="wrong_session")
+    assert exc.value.code == "MATERIAL_NOT_FOUND"
+
+    with pytest.raises(AdapterError) as exc:
+        service.update_material(mid, {
+            "fileName": "x.docx",
+            "contentBase64": base64.b64encode(doc1).decode("ascii"),
+            "documentSessionId": "wrong_session"
+        })
+    assert exc.value.code == "MATERIAL_NOT_FOUND"
+
+
+def test_word_material_update_and_delete_persistence_across_instances(tmp_path):
+    import pytest
+    from app.core.errors import AdapterError
+    from app.services.word.material_import import WordMaterialImportService
+
+    state_dir = tmp_path / "state"
+    service1 = WordMaterialImportService(state_dir=state_dir)
+    session_id = "doc_session_persist_1"
+    doc1 = build_docx(document_xml=_paragraph_document("第一章 基础\n初版文字内容。"))
+    res1 = service1.import_material({
+        "fileName": "doc1.docx",
+        "contentBase64": base64.b64encode(doc1).decode("ascii"),
+        "documentSessionId": session_id
+    })
+    mid = res1["materialId"]
+
+    # Update in instance 1
+    doc2 = build_docx(document_xml=_paragraph_document("第一章 基础\n改版文字内容详情。"))
+    service1.update_material(mid, {
+        "fileName": "doc1_revised.docx",
+        "contentBase64": base64.b64encode(doc2).decode("ascii"),
+        "documentSessionId": session_id
+    })
+
+    # Read from new instance 2
+    service2 = WordMaterialImportService(state_dir=state_dir)
+    view2 = service2.view_material(mid)
+    assert view2["fileName"] == "doc1_revised.docx"
+    cat2 = service2.get_catalog(session_id)
+    assert cat2["totalDocuments"] == 1
+    assert cat2["documents"][0]["fileName"] == "doc1_revised.docx"
+
+    # Delete in instance 2
+    service2.delete_material(mid, document_session_id=session_id)
+
+    # Read from new instance 3
+    service3 = WordMaterialImportService(state_dir=state_dir)
+    cat3 = service3.get_catalog(session_id)
+    assert cat3["totalDocuments"] == 0
+    with pytest.raises(AdapterError) as exc:
+        service3.view_material(mid)
+    assert exc.value.code == "MATERIAL_NOT_FOUND"
