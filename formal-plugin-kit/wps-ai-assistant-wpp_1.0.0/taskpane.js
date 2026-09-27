@@ -2240,16 +2240,19 @@
           statusLine.style.color = "#166534";
           if (confirmBtn) confirmBtn.textContent = "大纲已确认";
           renderTemplateBodyPageView();
+          renderTemplateDeckView();
         } else if (v.confirmationStatus === "needs_reconfirmation") {
           statusLine.textContent = "大纲状态：已修改，需重新确认";
           statusLine.style.color = "#b45309";
           if (confirmBtn) confirmBtn.textContent = "重新确认大纲";
           if (byId("ppt-template-page-card")) byId("ppt-template-page-card").hidden = true;
+          if (byId("ppt-template-deck-card")) byId("ppt-template-deck-card").hidden = true;
         } else {
           statusLine.textContent = "大纲状态：已生成，等待确认";
           statusLine.style.color = "#1e40af";
           if (confirmBtn) confirmBtn.textContent = "确认大纲";
           if (byId("ppt-template-page-card")) byId("ppt-template-page-card").hidden = true;
+          if (byId("ppt-template-deck-card")) byId("ppt-template-deck-card").hidden = true;
         }
       }
     } else {
@@ -2269,6 +2272,7 @@
         if (confirmBtn) confirmBtn.textContent = "确认大纲";
       }
       if (byId("ppt-template-page-card")) byId("ppt-template-page-card").hidden = true;
+      if (byId("ppt-template-deck-card")) byId("ppt-template-deck-card").hidden = true;
     }
 
     // Drawer rendering
@@ -2462,6 +2466,81 @@
       if (statusEl) statusEl.hidden = true;
       if (overflowEl) overflowEl.hidden = true;
       if (previewEl) previewEl.hidden = true;
+    }
+  }
+
+  var templateDeck = null;
+
+  function ensureTemplateDeck() {
+    if (!templateDeck && typeof window.createTemplateDeck === "function") {
+      templateDeck = window.createTemplateDeck({
+        request: request,
+        storage: window.localStorage,
+        getSessionId: getPptOutlineSessionId,
+        getConfirmedOutline: function () {
+          var mo = ensureMaterialOutline();
+          var cur = mo && mo.current();
+          if (!mo || !mo.hasConfirmedOutline() || cur.basisWarning) return null;
+          return Object.assign({}, mo.getConfirmedOutline(), {
+            confirmedAt: cur.confirmedAt,
+            instruction: cur.instruction,
+            userFacts: cur.userFacts
+          });
+        },
+        hasConfirmedOutline: function () {
+          var mo = ensureMaterialOutline();
+          return !!(mo && mo.hasConfirmedOutline() && !mo.current().basisWarning);
+        },
+        render: renderTemplateDeckView,
+        confirm: function (message) { return window.confirm(message); },
+        wpsApp: typeof wps !== "undefined" ? wps.WppApplication() : null
+      });
+    }
+    return templateDeck;
+  }
+
+  function renderTemplateDeckView(view) {
+    var card = byId("ppt-template-deck-card");
+    if (!card) return;
+    var ctrl = ensureTemplateDeck();
+    if (!ctrl || !(ctrl.hasConfirmedOutline && ctrl.hasConfirmedOutline())) {
+      card.hidden = true;
+      return;
+    }
+    card.hidden = false;
+    var v = view || ctrl.getState();
+    var statusEl = byId("ppt-template-deck-status");
+    var previewEl = byId("ppt-template-deck-preview");
+    var confirmBtn = byId("btn-ppt-confirm-template-deck");
+    var appendBtn = byId("btn-ppt-append-template-deck");
+    var lines = [];
+    if (v.excludedNotice) lines.push(helpers.escapeHtml(v.excludedNotice));
+    if (v.pageCountMessage) lines.push(helpers.escapeHtml(v.pageCountMessage));
+    (v.pages || []).forEach(function (page) {
+      var label = { cover: "封面", agenda: "目录", transition: "章节页", content: "正文页" }[page.pageRole] || page.pageRole;
+      lines.push("<p><strong>" + helpers.escapeHtml(label) + "</strong> " + helpers.escapeHtml(page.title || "") +
+        (page.isOverflow ? "（超出容量，可精简或拆页）" : "") + "</p>");
+      if (page.isOverflow) {
+        lines.push("<button type=\"button\" data-deck-action=\"simplify\" data-page-id=\"" + helpers.escapeHtml(page.pageId) + "\">精简</button>");
+        lines.push("<button type=\"button\" data-deck-action=\"split\" data-page-id=\"" + helpers.escapeHtml(page.pageId) + "\">拆页</button>");
+      }
+    });
+    if (v.elapsedMs) lines.push("<p>生成耗时：" + helpers.escapeHtml(String(v.elapsedMs)) + " 毫秒</p>");
+    if (v.unverified && v.unverified.length) lines.push("<p>未验证：" + helpers.escapeHtml(v.unverified.join("、")) + "</p>");
+    if (v.status === "partial" && v.error) lines.push("<p>" + helpers.escapeHtml(v.error.message || "") + "</p>");
+    if (statusEl) {
+      statusEl.hidden = !v.error;
+      statusEl.textContent = v.error ? (v.error.message || "") : "";
+    }
+    if (previewEl) {
+      previewEl.hidden = !(v.pages && v.pages.length);
+      // pageId/title already passed through helpers.escapeHtml; tags below are fixed controls.
+      previewEl.innerHTML = lines.join("");
+    }
+    if (confirmBtn) confirmBtn.hidden = !(v.pages && v.pages.length) || v.contentConfirmed;
+    if (appendBtn) {
+      appendBtn.hidden = !v.contentConfirmed;
+      appendBtn.disabled = !v.contentConfirmed;
     }
   }
 
@@ -6091,6 +6170,63 @@
             setStatus("写入失败：" + (err.message || String(err)));
           }
         }
+      });
+    }
+    if (byId("btn-ppt-generate-template-deck")) {
+      byId("btn-ppt-generate-template-deck").addEventListener("click", function () {
+        var ctrl = ensureTemplateDeck();
+        if (!ctrl) return;
+        ctrl.startGenerate().then(function () {
+          setStatus("整套内容已生成，请核对后再确认。");
+        }).catch(function (err) {
+          setStatus(err.message || String(err));
+        });
+      });
+    }
+    if (byId("btn-ppt-confirm-template-deck")) {
+      byId("btn-ppt-confirm-template-deck").addEventListener("click", function () {
+        var ctrl = ensureTemplateDeck();
+        if (!ctrl) return;
+        try {
+          ctrl.confirmContent();
+          setStatus("整套内容已确认，可追加到末尾。");
+        } catch (err) {
+          setStatus(err.message || String(err));
+        }
+      });
+    }
+    if (byId("btn-ppt-append-template-deck")) {
+      byId("btn-ppt-append-template-deck").addEventListener("click", function () {
+        var ctrl = ensureTemplateDeck();
+        if (!ctrl) return;
+        var app = typeof wps !== "undefined" ? wps.WppApplication() : null;
+        try {
+          var written = ctrl.append(app);
+          if (written && written.completed) setStatus("整套页面已追加到末尾，原页面未修改。");
+          else if (written && written.status === "CONFIRM_DECLINED") setStatus("已取消追加。");
+          else setStatus((written && written.error) || "整套追加未完成，请按已追加范围恢复后重试。");
+        } catch (err) {
+          setStatus(err.message || String(err));
+        }
+      });
+    }
+    if (byId("ppt-template-deck-preview")) {
+      byId("ppt-template-deck-preview").addEventListener("click", function (event) {
+        var button = event.target;
+        var action = button && button.getAttribute && button.getAttribute("data-deck-action");
+        var pageId = button && button.getAttribute && button.getAttribute("data-page-id");
+        var ctrl = ensureTemplateDeck();
+        if (!action || !pageId || !ctrl) return;
+        if (action === "split") {
+          try {
+            var split = ctrl.splitPage(pageId);
+            setStatus(split.message || "已拆页，请重新确认。");
+          } catch (err) { setStatus(err.message || String(err)); }
+          return;
+        }
+        ctrl.simplifyPage(pageId).then(function () {
+          setStatus("已按精简要求重新生成该页，请重新确认。");
+        }).catch(function (err) { setStatus(err.message || String(err)); });
       });
     }
     byId("task-model-config-trigger").addEventListener("click", handleTaskModelConfigTriggerClick);

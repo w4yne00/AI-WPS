@@ -167,6 +167,52 @@ def test_ppt_template_page_fake_fragment_id_rejected(page_setup, monkeypatch):
     assert "出处片段编号不存在" in retrieved["error"]["message"]
 
 
+def test_agenda_and_cover_use_template_slots_without_truncation(page_setup, monkeypatch):
+    coord = page_setup["coord"]
+    store = page_setup["store"]
+    monkeypatch.setattr(store, "get_catalog", lambda s: {"documents": [], "fragments": {}, "blocks": []})
+
+    class DummyProvider:
+        def resolve_task_auth(self, *args, **kwargs):
+            return {"providerBaseUrl": "http://mock", "apiKey": "mock_key"}
+
+        def post_task(self, *args, **kwargs):
+            role = json.loads(kwargs.get("user_content") or args[1])["pageRole"]
+            points = ["架构", "路径", "保障", "多余目录"] if role == "agenda" else ["副标题", "不应静默丢弃"]
+            return {"answer": json.dumps({
+                "schemaVersion": "ppt.template_page.v1",
+                "title": "目录" if role == "agenda" else "封面",
+                "keyPoints": points,
+                "speakerNotes": "讲稿",
+                "fragmentIds": [],
+                "missingItems": [],
+            })}
+
+    coord.provider = DummyProvider()
+    agenda = coord.wait_job(coord.submit_job({
+        "documentSessionId": "sess_role",
+        "clientJobId": "agenda_slots",
+        "pageIndex": 2,
+        "pageRole": "agenda",
+        "outlineTitle": "目录",
+        "outlineKeyPoints": ["架构", "路径", "保障", "多余目录"],
+    })["jobId"], "sess_role")
+    assert agenda["status"] == "completed"
+    assert agenda["result"]["isOverflow"] is True
+    assert len(agenda["result"]["keyPoints"]) == 4
+
+    cover = coord.wait_job(coord.submit_job({
+        "documentSessionId": "sess_role",
+        "clientJobId": "cover_slots",
+        "pageIndex": 1,
+        "pageRole": "cover",
+        "outlineTitle": "封面",
+        "outlineKeyPoints": ["副标题"],
+    })["jobId"], "sess_role")
+    assert cover["result"]["isOverflow"] is True
+    assert cover["result"]["keyPoints"] == ["副标题", "不应静默丢弃"]
+
+
 def test_explicit_newlines_count_against_template_capacity():
     points = [('一\n' * 12).strip(), ('二\r\n' * 12).strip()]
     capacity = evaluate_template_page_capacity(points)
