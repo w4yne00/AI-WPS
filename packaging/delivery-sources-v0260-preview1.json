@@ -168,6 +168,26 @@
       "type": "file",
       "source": "formal-plugin-kit/wps-ai-assistant-et_1.0.0/material-ledger.js",
       "target": "packages/wps-ai-assistant-et_1.0.0/material-ledger.js"
+    },
+    {
+      "type": "file",
+      "source": "adapter_service/app/services/ppt/material_store.py",
+      "target": "packages/adapter-start-kit/adapter_service/app/services/ppt/material_store.py"
+    },
+    {
+      "type": "file",
+      "source": "adapter_service/app/services/ppt/material_outline.py",
+      "target": "packages/adapter-start-kit/adapter_service/app/services/ppt/material_outline.py"
+    },
+    {
+      "type": "file",
+      "source": "adapter_service/system_prompts/ppt-material-outline.md",
+      "target": "packages/adapter-start-kit/adapter_service/system_prompts/ppt-material-outline.md"
+    },
+    {
+      "type": "file",
+      "source": "formal-plugin-kit/wps-ai-assistant-wpp_1.0.0/material-outline.js",
+      "target": "packages/wps-ai-assistant-wpp_1.0.0/material-outline.js"
     }
   ]
 }

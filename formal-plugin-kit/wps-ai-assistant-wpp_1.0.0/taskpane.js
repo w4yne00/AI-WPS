@@ -5,6 +5,7 @@
   var FRONTEND_BUILD_VERSION = "0.23.1-alpha";
   var PPT_WORKFLOW_TASK_TYPE = "ppt.slide_assistant";
   var PPT_STRUCTURE_WORKFLOW_TASK_TYPE = "ppt.structure_review";
+  var PPT_MATERIAL_OUTLINE_WORKFLOW_TASK_TYPE = "ppt.material_outline";
   var TASK_API_KEY_DEFS = [
     { taskType: "ppt.slide_assistant", label: "智能总结" },
     { taskType: "ppt.structure_review", label: "结构审查" }
@@ -519,10 +520,12 @@
   }
 
   function homeTaskTitle() {
+    if (state.taskMode === "pptMaterialOutline") return "资料大纲";
     return state.taskMode === "pptStructureReview" ? "结构审查" : "智能总结";
   }
 
   function homeWorkflowTaskType() {
+    if (state.taskMode === "pptMaterialOutline") return PPT_MATERIAL_OUTLINE_WORKFLOW_TASK_TYPE;
     return state.taskMode === "pptStructureReview"
       ? PPT_STRUCTURE_WORKFLOW_TASK_TYPE
       : PPT_WORKFLOW_TASK_TYPE;
@@ -537,28 +540,47 @@
   }
 
   function setHomeTaskMode(mode) {
+    var isOutline = mode === "pptMaterialOutline";
     var structureMode = mode === "pptStructureReview";
     var historyView = byId("ppt-history-view");
-    state.taskMode = structureMode ? "pptStructureReview" : "pptSlideAssistant";
+    state.taskMode = isOutline ? "pptMaterialOutline" : (structureMode ? "pptStructureReview" : "pptSlideAssistant");
     state.workflowTaskType = homeWorkflowTaskType();
-    byId("summary-source-segments").hidden = structureMode;
-    byId("summary-controls").hidden = structureMode;
+
+    byId("summary-source-segments").hidden = isOutline || structureMode;
+    byId("summary-controls").hidden = isOutline || structureMode;
+    byId("structure-review-controls").hidden = !structureMode;
+    var outlineControls = byId("ppt-material-outline-controls");
+    if (outlineControls) outlineControls.hidden = !isOutline;
+
+    var outlineResult = byId("outline-result-section");
     if (state.historyOpen) {
       byId("summary-result-section").hidden = true;
       byId("structure-result-section").hidden = true;
+      if (outlineResult) outlineResult.hidden = true;
       if (historyView) {
         historyView.hidden = false;
       }
       loadAndRenderHistory();
     } else {
-      byId("summary-result-section").hidden = structureMode;
-      byId("structure-result-section").hidden = !structureMode;
+      byId("summary-result-section").hidden = isOutline || structureMode;
+      byId("structure-result-section").hidden = isOutline || !structureMode;
+      if (outlineResult) outlineResult.hidden = !isOutline;
       if (historyView) {
         historyView.hidden = true;
       }
     }
-    byId("structure-review-controls").hidden = !structureMode;
     document.body.setAttribute("data-task-mode", state.taskMode);
+    var titleEl = byId("task-title");
+    if (titleEl) {
+      titleEl.textContent = homeTaskTitle();
+    }
+    if (isOutline) {
+      var controller = ensureMaterialOutline();
+      if (controller) {
+        controller.refreshCatalog();
+        controller.refreshReusableSources();
+      }
+    }
   }
 
   function request(path, payload, options) {
@@ -1991,6 +2013,281 @@
       button.removeAttribute("disabled");
       setStatus("取消排队任务失败：" + error.message);
     });
+  }
+
+  var materialOutline = null;
+  var pptOutlineUploadTarget = null;
+  var pptOutlineBindings = [];
+  var renderedOutlineResult = null;
+  var renderedOutlineSessionId = "";
+  var renderedOutlineInputSessionId = "";
+
+  function getPptOutlineDocumentIdentity(presentation) {
+    var fullName = presentation && (presentation.FullName || presentation.fullName);
+    if (typeof fullName === "function") fullName = fullName.call(presentation);
+    var path = safeText(fullName).replace(/\\/g, "/");
+    return /^(?:\/|[A-Za-z]:\/|[A-Za-z][A-Za-z0-9+.-]*:\/\/)/.test(path) ? "full:" + path : "";
+  }
+
+  function getPptOutlineSessionId() {
+    var presentation = getActivePresentation();
+    var sessionId = helpers.getDocumentSessionId(presentation);
+    if (!presentation) return sessionId;
+    var binding = pptOutlineBindings.filter(function (item) { return item.presentation === presentation; })[0];
+    if (!binding) {
+      binding = { presentation: presentation, boundSessionId: sessionId, inFlight: false, retryAt: 0 };
+      pptOutlineBindings.push(binding);
+    }
+    if (materialOutline && binding.boundSessionId !== sessionId && !binding.inFlight && Date.now() >= binding.retryAt) {
+      var oldSessionId = binding.boundSessionId;
+      binding.inFlight = true;
+      materialOutline.bindDocument(oldSessionId, getPptOutlineDocumentIdentity(presentation), sessionId).then(function () {
+        binding.boundSessionId = sessionId;
+        binding.inFlight = false;
+        binding.retryAt = 0;
+        renderMaterialOutlineView();
+      }).catch(function (error) {
+        binding.inFlight = false;
+        binding.retryAt = Date.now() + 1500;
+        if (getActivePresentation() === presentation) {
+          setStatus("资料绑定失败：" + ((error && error.message) || "请稍后重试") + "，原演示文稿资料已保留。");
+        }
+      });
+    }
+    return binding.boundSessionId;
+  }
+
+  function syncPptOutlinePresentation() {
+    if (state.taskMode === "pptMaterialOutline") {
+      var ctrl = ensureMaterialOutline();
+      if (ctrl) {
+        var sessionId = ctrl.current().documentSessionId;
+        if (syncPptOutlinePresentation.sessionId !== sessionId) {
+          syncPptOutlinePresentation.sessionId = sessionId;
+          ctrl.refreshCatalog();
+          ctrl.refreshReusableSources();
+          ctrl.poll();
+          renderMaterialOutlineView();
+        }
+      }
+    }
+    setTimeout(syncPptOutlinePresentation, 1000);
+  }
+
+  function beginPptOutlineMaterialUpload(materialId) {
+    pptOutlineUploadTarget = {
+      materialId: materialId || "",
+      documentSessionId: getPptOutlineSessionId()
+    };
+    var input = byId("ppt-outline-file-input");
+    if (input) input.click();
+  }
+
+  function ensureMaterialOutline() {
+    if (!materialOutline && typeof window.createMaterialOutline === "function") {
+      materialOutline = window.createMaterialOutline({
+        request: request,
+        storage: window.localStorage,
+        getSessionId: getPptOutlineSessionId,
+        render: renderMaterialOutlineView,
+        copyText: function (text) {
+          copyText(text, "逐页大纲已复制到剪贴板。");
+        }
+      });
+    }
+    return materialOutline;
+  }
+
+  function renderMaterialOutlineView(view) {
+    if (state.taskMode !== "pptMaterialOutline") {
+      return;
+    }
+    var v = view || (ensureMaterialOutline() && ensureMaterialOutline().stateFor(ensureMaterialOutline().current().documentSessionId));
+    if (!v) return;
+
+    [
+      ["ppt-outline-audience", v.audience],
+      ["ppt-outline-slide-count", v.slideCount],
+      ["ppt-outline-instruction", v.instruction],
+      ["ppt-outline-user-facts", v.userFacts]
+    ].forEach(function (field) {
+      var input = byId(field[0]);
+      if (input && typeof field[1] !== "undefined" &&
+          (document.activeElement !== input || renderedOutlineInputSessionId !== v.documentSessionId)) {
+        var value = String(field[1]);
+        if (input.value !== value) input.value = value;
+      }
+    });
+    renderedOutlineInputSessionId = v.documentSessionId;
+
+    var countLabel = byId("outline-material-count-label");
+    if (countLabel) {
+      countLabel.textContent = v.catalogLabel || "未添加资料";
+    }
+
+    var reusableSelect = byId("outline-reusable-select");
+    if (reusableSelect && v.reusableSources) {
+      var currentVal = reusableSelect.value;
+      reusableSelect.innerHTML = '<option value="">-- 选择可复用资料 --</option>';
+      v.reusableSources.forEach(function (src) {
+        var opt = document.createElement("option");
+        opt.value = src.sourceSessionId;
+        opt.textContent = (src.displayName || src.sourceSessionId) + " (" + (src.totalDocuments || 1) + " 份资料)";
+        reusableSelect.appendChild(opt);
+      });
+      reusableSelect.value = currentVal;
+    }
+
+    var materialList = byId("outline-material-list");
+    if (materialList) {
+      materialList.innerHTML = ((v.catalogSummary && v.catalogSummary.documents) || []).map(function (mat) {
+        var id = helpers.escapeHtml(mat.materialId);
+        return '<div class="outline-material-item"><span>' + helpers.escapeHtml(mat.fileName) +
+          '（' + Number(mat.readableCharacterCount || 0) + ' 字）</span>' +
+          '<div><button type="button" class="text-action" data-outline-update="' + id + '"' + (v.busy ? ' disabled' : '') + '>更新</button> ' +
+          '<button type="button" class="text-action" data-outline-remove="' + id + '"' + (v.busy ? ' disabled' : '') + '>移除</button></div></div>';
+      }).join("");
+    }
+
+    var conflictBox = byId("outline-conflicts");
+    if (conflictBox) {
+      conflictBox.hidden = !(v.conflicts && v.conflicts.length);
+      conflictBox.innerHTML = (v.conflicts || []).map(function (conflict) {
+        var chosen = (v.conflictResolutions || []).filter(function (choice) { return choice.conflictId === conflict.conflictId; })[0];
+        return '<fieldset style="border:1px solid #e5e7eb; border-radius:6px; padding:6px 8px; margin-bottom:6px;"><legend style="font-size:12px; font-weight:600;">' + helpers.escapeHtml(conflict.topic || conflict.difference) + '</legend>' +
+          conflict.options.map(function (option) {
+            return '<label class="field-hint" style="display:block; margin:2px 0;"><input type="radio" name="outline-conflict-' + helpers.escapeHtml(conflict.conflictId) +
+              '" data-outline-conflict="' + helpers.escapeHtml(conflict.conflictId) + '" value="' + helpers.escapeHtml(option.optionId) + '"' +
+              (chosen && chosen.chosenCandidateId === option.optionId ? ' checked' : '') + (v.busy ? ' disabled' : '') + '> ' +
+              helpers.escapeHtml(option.sourceName + '：' + option.value) + '</label>';
+          }).join("") + '</fieldset>';
+      }).join("");
+    }
+
+    var runBtn = byId("btn-run-outline");
+    if (runBtn) {
+      runBtn.disabled = v.busy;
+      runBtn.textContent = v.busy ? (v.phaseLabel || "正在生成...") : "生成逐页大纲";
+    }
+    var cancelBtn = byId("btn-cancel-outline-job");
+    if (cancelBtn) {
+      cancelBtn.hidden = !v.busy;
+    }
+
+    var basisWarn = byId("outline-basis-warning");
+    if (basisWarn) {
+      basisWarn.hidden = !v.basisWarning;
+      if (v.basisWarning) {
+        basisWarn.textContent = "警告：作为本大纲生成依据的参考资料已被修改或移除，请核对并重新确认大纲。";
+      }
+    }
+
+    var resultOutput = byId("outline-result-output");
+    var slideListEl = byId("outline-slide-list");
+    var copyMdBtn = byId("btn-copy-outline-markdown");
+    var confirmBtn = byId("btn-confirm-outline");
+    var statusLine = byId("outline-confirmation-status-line");
+
+    if (v.result && v.result.slides && v.result.slides.length) {
+      if (resultOutput) {
+        resultOutput.hidden = !v.error;
+        resultOutput.textContent = v.error || "";
+      }
+      if (slideListEl) {
+        slideListEl.hidden = false;
+        var activeInput = document.activeElement;
+        var editingTitle = activeInput && activeInput.getAttribute && activeInput.getAttribute("data-title-page") &&
+          slideListEl.contains && slideListEl.contains(activeInput) &&
+          renderedOutlineResult === v.result && renderedOutlineSessionId === v.documentSessionId;
+        var roleNames = {
+          cover: "封面页", agenda: "目录页", transition: "过渡页",
+          content: "内容页", summary: "总结页", backcover: "封底页"
+        };
+        if (!editingTitle) slideListEl.innerHTML = v.result.slides.map(function (slide) {
+          var role = slide.pageRole || "content";
+          var roleLabel = roleNames[role] || role;
+          var keyPointsHtml = (slide.keyPoints || []).map(function (p) {
+            return '<li>' + helpers.escapeHtml(p) + '</li>';
+          }).join("");
+          var missingHtml = (slide.missingItems || []).map(function (m) {
+            return '<div class="outline-missing-item">〔待补充：' + helpers.escapeHtml(m) + '〕</div>';
+          }).join("");
+          var sourcesCount = (slide.sources || []).length;
+          var sourcesBtnHtml = sourcesCount > 0 ?
+            '<button type="button" class="text-action" data-drawer-page="' + helpers.escapeHtml(slide.pageIndex) + '">查看出处 (' + sourcesCount + ' 项)</button>' :
+            '<span class="field-hint" style="font-size:11px;">无出处引用</span>';
+
+          return '<div class="outline-slide-card" data-page-card="' + helpers.escapeHtml(slide.pageIndex) + '">' +
+            '<div class="outline-slide-header">' +
+              '<strong>第 ' + helpers.escapeHtml(slide.pageIndex) + ' 页</strong>' +
+              '<span class="outline-role-badge ' + helpers.escapeHtml(role) + '">' + helpers.escapeHtml(roleLabel) + '</span>' +
+            '</div>' +
+            '<input class="outline-slide-title-input" data-title-page="' + helpers.escapeHtml(slide.pageIndex) + '" value="' + helpers.escapeHtml(slide.title || "") + '" />' +
+            '<ul class="outline-slide-keypoints">' + keyPointsHtml + '</ul>' +
+            missingHtml +
+            '<div style="margin-top:6px; display:flex; justify-content:flex-end;">' + sourcesBtnHtml + '</div>' +
+          '</div>';
+        }).join("");
+        renderedOutlineResult = v.result;
+        renderedOutlineSessionId = v.documentSessionId;
+      }
+      if (copyMdBtn) copyMdBtn.disabled = false;
+      if (confirmBtn) confirmBtn.disabled = false;
+
+      if (statusLine) {
+        if (v.confirmationStatus === "confirmed") {
+          statusLine.textContent = "大纲状态：已确认（可用于生成正文）";
+          statusLine.style.color = "#166534";
+          if (confirmBtn) confirmBtn.textContent = "大纲已确认";
+        } else if (v.confirmationStatus === "needs_reconfirmation") {
+          statusLine.textContent = "大纲状态：已修改，需重新确认";
+          statusLine.style.color = "#b45309";
+          if (confirmBtn) confirmBtn.textContent = "重新确认大纲";
+        } else {
+          statusLine.textContent = "大纲状态：已生成，等待确认";
+          statusLine.style.color = "#1e40af";
+          if (confirmBtn) confirmBtn.textContent = "确认大纲";
+        }
+      }
+    } else {
+      if (resultOutput) {
+        resultOutput.hidden = false;
+        resultOutput.textContent = v.error || (v.busy ? (v.phaseLabel || "正在生成...") : "等待运行。");
+      }
+      if (slideListEl) {
+        slideListEl.hidden = true;
+        slideListEl.innerHTML = "";
+      }
+      if (copyMdBtn) copyMdBtn.disabled = true;
+      if (confirmBtn) confirmBtn.disabled = true;
+      if (statusLine) {
+        statusLine.textContent = "大纲状态：待生成";
+        statusLine.style.color = "";
+        if (confirmBtn) confirmBtn.textContent = "确认大纲";
+      }
+    }
+
+    // Drawer rendering
+    var drawer = byId("outline-source-drawer");
+    var drawerContent = byId("outline-drawer-content");
+    if (drawer && drawerContent) {
+      if (v.activeDrawerPageIndex !== null && v.activeDrawerPageIndex !== undefined && v.result && v.result.slides) {
+        var activeSlide = v.result.slides.find(function (s) { return s.pageIndex === v.activeDrawerPageIndex; });
+        if (activeSlide && activeSlide.sources && activeSlide.sources.length) {
+          drawer.hidden = false;
+          drawerContent.innerHTML = activeSlide.sources.map(function (src) {
+            return '<div style="margin-bottom:6px; padding:4px 6px; background:#fff; border-radius:4px; font-size:11px;">' +
+              '<strong>《' + helpers.escapeHtml(src.fileName || "资料") + '》- ' + helpers.escapeHtml(src.chapter || "正文") + '</strong>' +
+              '<p style="margin:2px 0 0; color:#4b5563;">' + helpers.escapeHtml(src.text || "") + '</p>' +
+            '</div>';
+          }).join("");
+        } else {
+          drawer.hidden = true;
+        }
+      } else {
+        drawer.hidden = true;
+      }
+    }
   }
 
   function copyText(text, successMessage, feedback) {
@@ -4848,6 +5145,11 @@
 
   function resumeJob() {
     var active;
+    if (state.taskMode === "pptMaterialOutline") {
+      var ctrl = ensureMaterialOutline();
+      if (ctrl) ctrl.poll();
+      return;
+    }
     if (state.taskMode === "pptStructureReview") {
       resumeStructureReviewJob();
       return;
@@ -5026,15 +5328,20 @@
 
   function switchHistoryView(open) {
     state.historyOpen = Boolean(open);
+    var isOutline = state.taskMode === "pptMaterialOutline";
     var isStructure = state.taskMode === "pptStructureReview";
     var summarySection = byId("summary-result-section");
     var structureSection = byId("structure-result-section");
+    var outlineSection = byId("outline-result-section");
     var historyView = byId("ppt-history-view");
     if (summarySection) {
-      summarySection.hidden = state.historyOpen || isStructure;
+      summarySection.hidden = state.historyOpen || isOutline || isStructure;
     }
     if (structureSection) {
-      structureSection.hidden = state.historyOpen || !isStructure;
+      structureSection.hidden = state.historyOpen || isOutline || !isStructure;
+    }
+    if (outlineSection) {
+      outlineSection.hidden = state.historyOpen || !isOutline;
     }
     if (historyView) {
       historyView.hidden = !state.historyOpen;
@@ -5044,7 +5351,9 @@
       updateHistoryBadge();
       loadAndRenderHistory();
     } else {
-      if (isStructure) {
+      if (isOutline) {
+        renderMaterialOutlineView();
+      } else if (isStructure) {
         if (state.structureResult) {
           renderStructureResult(state.structureResult);
         }
@@ -5393,6 +5702,164 @@
       );
     });
     byId("result-output").addEventListener("click", handleDocumentResultCopy);
+    if (byId("btn-import-outline-material")) {
+      byId("btn-import-outline-material").addEventListener("click", function () {
+        beginPptOutlineMaterialUpload();
+      });
+    }
+    if (byId("ppt-outline-file-input")) {
+      byId("ppt-outline-file-input").addEventListener("change", function (e) {
+        var file = e.target && e.target.files && e.target.files[0];
+        if (file) {
+          var ctrl = ensureMaterialOutline();
+          var target = pptOutlineUploadTarget || { materialId: "", documentSessionId: getPptOutlineSessionId() };
+          if (ctrl) {
+            ctrl.importMaterial(file, target.materialId, "", target.documentSessionId).catch(function (error) {
+              setStatus((error && error.message) || "导入资料失败");
+            });
+          }
+          pptOutlineUploadTarget = null;
+          e.target.value = "";
+        }
+      });
+    }
+    if (byId("outline-reusable-select")) {
+      byId("outline-reusable-select").addEventListener("change", function (e) {
+        var sourceSessionId = e.target.value;
+        if (sourceSessionId) {
+          var ctrl = ensureMaterialOutline();
+          if (ctrl) {
+            ctrl.cloneFromSource(sourceSessionId).catch(function (error) {
+              setStatus((error && error.message) || "复用资料失败");
+            });
+          }
+        }
+      });
+    }
+    if (byId("outline-material-list")) {
+      byId("outline-material-list").addEventListener("click", function (e) {
+        var target = e.target;
+        var updateId = target && target.getAttribute("data-outline-update");
+        var removeId = target && target.getAttribute("data-outline-remove");
+        if (updateId) {
+          beginPptOutlineMaterialUpload(updateId);
+        }
+        if (removeId && window.confirm("移除这份资料？")) {
+          var ctrl = ensureMaterialOutline();
+          if (ctrl) {
+            ctrl.deleteMaterial(removeId).catch(function (error) {
+              setStatus((error && error.message) || "移除资料失败");
+            });
+          }
+        }
+      });
+    }
+    if (byId("outline-conflicts")) {
+      byId("outline-conflicts").addEventListener("change", function (e) {
+        var target = e.target;
+        var conflictId = target && target.getAttribute("data-outline-conflict");
+        var ctrl = ensureMaterialOutline();
+        if (!conflictId || !ctrl) return;
+        var view = ctrl.current();
+        var conflict = (view.conflicts || []).find(function (item) { return item.conflictId === conflictId; });
+        var option = conflict && (conflict.options || []).find(function (item) { return item.optionId === target.value; });
+        if (option) {
+          ctrl.setConflictResolution(conflictId, option.optionId, option.value);
+        }
+      });
+    }
+    if (byId("ppt-outline-audience")) {
+      byId("ppt-outline-audience").addEventListener("input", function (e) {
+        var ctrl = ensureMaterialOutline();
+        if (ctrl) ctrl.setAudience(e.target.value);
+      });
+    }
+    if (byId("ppt-outline-slide-count")) {
+      byId("ppt-outline-slide-count").addEventListener("change", function (e) {
+        var ctrl = ensureMaterialOutline();
+        if (ctrl) ctrl.setSlideCount(e.target.value);
+      });
+    }
+    if (byId("ppt-outline-instruction")) {
+      byId("ppt-outline-instruction").addEventListener("input", function (e) {
+        var ctrl = ensureMaterialOutline();
+        if (ctrl) ctrl.setInstruction(e.target.value);
+      });
+    }
+    if (byId("ppt-outline-user-facts")) {
+      byId("ppt-outline-user-facts").addEventListener("input", function (e) {
+        var ctrl = ensureMaterialOutline();
+        if (ctrl) {
+          ctrl.setUserFacts(e.target.value);
+          ctrl.detectConflicts();
+        }
+      });
+    }
+    if (byId("btn-run-outline")) {
+      byId("btn-run-outline").addEventListener("click", function () {
+        var ctrl = ensureMaterialOutline();
+        if (ctrl) ctrl.submit();
+      });
+    }
+    if (byId("btn-cancel-outline-job")) {
+      byId("btn-cancel-outline-job").addEventListener("click", function () {
+        var ctrl = ensureMaterialOutline();
+        if (ctrl) ctrl.cancel();
+      });
+    }
+    if (byId("btn-confirm-outline")) {
+      byId("btn-confirm-outline").addEventListener("click", function () {
+        var ctrl = ensureMaterialOutline();
+        if (ctrl) {
+          var confirmed = ctrl.confirmOutline();
+          if (confirmed) {
+            setStatus("逐页大纲已确认！下游可基于该大纲生成幻灯片内容。");
+          }
+        }
+      });
+    }
+    if (byId("btn-copy-outline-markdown")) {
+      byId("btn-copy-outline-markdown").addEventListener("click", function () {
+        var ctrl = ensureMaterialOutline();
+        if (ctrl) ctrl.copyOutlineMarkdown();
+      });
+    }
+    if (byId("outline-slide-list")) {
+      byId("outline-slide-list").addEventListener("input", function (e) {
+        var target = e.target;
+        var pageAttr = target && target.getAttribute("data-title-page");
+        if (pageAttr) {
+          var pageIndex = parseInt(pageAttr, 10);
+          var ctrl = ensureMaterialOutline();
+          if (ctrl && !isNaN(pageIndex)) {
+            ctrl.updateSlideTitle(pageIndex, target.value);
+          }
+        }
+      });
+      byId("outline-slide-list").addEventListener("click", function (e) {
+        var target = e.target;
+        var pageAttr = target && target.getAttribute("data-drawer-page");
+        if (pageAttr) {
+          var pageIndex = parseInt(pageAttr, 10);
+          var ctrl = ensureMaterialOutline();
+          if (ctrl && !isNaN(pageIndex)) {
+            var s = ctrl.current();
+            s.activeDrawerPageIndex = pageIndex;
+            renderMaterialOutlineView(s);
+          }
+        }
+      });
+    }
+    if (byId("btn-close-outline-drawer")) {
+      byId("btn-close-outline-drawer").addEventListener("click", function () {
+        var ctrl = ensureMaterialOutline();
+        if (ctrl) {
+          var s = ctrl.current();
+          s.activeDrawerPageIndex = null;
+          renderMaterialOutlineView(s);
+        }
+      });
+    }
     byId("task-model-config-trigger").addEventListener("click", handleTaskModelConfigTriggerClick);
     byId("task-model-config-trigger").addEventListener("keydown", handleTaskModelConfigKeydown);
     byId("task-model-config-menu").addEventListener("click", handleTaskModelConfigMenuClick);
@@ -5530,7 +5997,11 @@
   function initialize() {
     var requestedMode = queryMode();
     var initialView = requestedMode === "settings" ? "settings" : "home";
-    setHomeTaskMode(requestedMode === "pptStructureReview" ? "pptStructureReview" : "pptSlideAssistant");
+    setHomeTaskMode(
+      requestedMode === "pptStructureReview"
+        ? "pptStructureReview"
+        : (requestedMode === "pptMaterialOutline" ? "pptMaterialOutline" : "pptSlideAssistant")
+    );
     bindEvents();
     setSourceMode("slide");
     state.settingsRefreshController = helpers.createSettingsRefreshController({
@@ -5541,6 +6012,7 @@
       }
     });
     switchView(initialView);
+    syncPptOutlinePresentation();
     if (initialView === "home") {
       refreshSettings({ silent: true });
     }

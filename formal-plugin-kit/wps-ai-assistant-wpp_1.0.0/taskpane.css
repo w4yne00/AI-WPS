@@ -1350,6 +1350,100 @@ button.ghost-action:hover {
   gap: 8px;
 }
 
+/* Material Outline Styles */
+.outline-source-strip {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.outline-material-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px;
+  background: var(--surface-soft, #f9fafb);
+  border: 1px solid var(--border-color, #e5e7eb);
+  border-radius: 6px;
+  margin-bottom: 4px;
+  font-size: 12px;
+}
+
+.outline-params-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.outline-slide-card {
+  border: 1px solid var(--border-color, #e5e7eb);
+  border-radius: 8px;
+  padding: 10px;
+  margin-bottom: 10px;
+  background: var(--surface, #ffffff);
+}
+
+.outline-slide-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.outline-role-badge {
+  display: inline-block;
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 500;
+  background: #e0e7ff;
+  color: #3730a3;
+}
+
+.outline-role-badge.cover { background: #dbeafe; color: #1e40af; }
+.outline-role-badge.agenda { background: #ede9fe; color: #5b21b6; }
+.outline-role-badge.transition { background: #fef3c7; color: #92400e; }
+.outline-role-badge.content { background: #e0e7ff; color: #3730a3; }
+.outline-role-badge.summary { background: #dcfce7; color: #166534; }
+.outline-role-badge.backcover { background: #f3f4f6; color: #374151; }
+
+.outline-slide-title-input {
+  width: 100%;
+  padding: 4px 8px;
+  font-size: 13px;
+  font-weight: 600;
+  border: 1px solid var(--border-color, #e5e7eb);
+  border-radius: 4px;
+  margin-bottom: 6px;
+  box-sizing: border-box;
+}
+
+.outline-slide-keypoints {
+  margin: 0 0 6px 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: var(--text, #374151);
+}
+
+.outline-slide-keypoints li {
+  margin-bottom: 3px;
+}
+
+.outline-missing-item {
+  color: #b45309;
+  font-size: 11px;
+  margin-top: 4px;
+}
+
+.outline-source-drawer {
+  background: var(--surface-soft, #f9fafb);
+  border: 1px solid var(--border-color, #e5e7eb);
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin: 8px 0;
+}
+
 /* Shared restrained settings and interaction treatment. */
 .model-interface-card,
 .workflow-settings-card,

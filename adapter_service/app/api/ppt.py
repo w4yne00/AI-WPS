@@ -3,6 +3,8 @@ import atexit
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
+from app.api.excel import excel_material_store
+from app.api.word import material_import_service as word_material_import_service
 from app.core.models import (
     PptDocumentFileUploadRequest,
     PptSlideAssistantRequest,
@@ -16,6 +18,8 @@ from app.services.ppt.slide_assistant import PptSlideAssistant
 from app.services.ppt.slide_assistant_jobs import PptSlideAssistantJobStore
 from app.services.ppt.structure_review import PptStructureReviewer
 from app.services.ppt.structure_review_jobs import PptStructureReviewJobStore
+from app.services.ppt.material_store import PptMaterialStore
+from app.services.ppt.material_outline import PptMaterialOutlineCoordinator
 
 
 router = APIRouter()
@@ -24,6 +28,11 @@ ppt_slide_assistant = PptSlideAssistant(document_file_store=ppt_document_files)
 ppt_slide_jobs = PptSlideAssistantJobStore(ppt_slide_assistant)
 ppt_structure_reviewer = PptStructureReviewer()
 ppt_structure_review_jobs = PptStructureReviewJobStore(ppt_structure_reviewer)
+ppt_material_store = PptMaterialStore(
+    word_store=word_material_import_service._store,
+    excel_store=excel_material_store,
+)
+ppt_material_outline = PptMaterialOutlineCoordinator(store=ppt_material_store)
 
 
 def close_ppt_resources() -> None:
@@ -227,3 +236,117 @@ def cancel_ppt_structure_review_job(job_id: str, resume: bool = False):
         "data": job,
         "errors": [],
     }
+
+
+def _outline_envelope(data: dict, trace_id: str = "", message: str = "completed") -> dict:
+    return {
+        "success": True,
+        "traceId": trace_id or str(data.get("jobId", data.get("materialId", ""))),
+        "taskType": "ppt.material_outline",
+        "message": message,
+        "data": data,
+        "errors": [],
+    }
+
+
+@router.post("/ppt/materials/clone-from-source")
+def clone_ppt_material(request: dict) -> dict:
+    trace_id = new_trace_id("ppt-material-clone")
+    data = ppt_material_store.clone_from_source(
+        source_session_id=str(request.get("sourceSessionId") or "").strip(),
+        target_session_id=str(request.get("targetDocumentSessionId") or "").strip(),
+        target_doc_identity=str(request.get("targetDocumentIdentity") or "").strip(),
+    )
+    return _outline_envelope(data, trace_id=trace_id, message="cloned")
+
+
+@router.post("/ppt/materials/import")
+def import_ppt_material(request: dict) -> dict:
+    trace_id = new_trace_id("ppt-material-import")
+    data = ppt_material_store.import_material(
+        session_id=str(request.get("documentSessionId") or "").strip(),
+        doc_identity=str(request.get("documentIdentity") or "").strip(),
+        file_name=str(request.get("fileName") or "").strip(),
+        content_base64=str(request.get("contentBase64") or "").strip(),
+    )
+    return _outline_envelope(data, trace_id=trace_id, message="imported")
+
+
+@router.get("/ppt/materials/catalog")
+def get_ppt_materials_catalog(documentSessionId: str = "") -> dict:
+    trace_id = new_trace_id("ppt-material-catalog")
+    data = ppt_material_store.get_catalog(documentSessionId)
+    return _outline_envelope(data, trace_id=trace_id, message="catalog")
+
+
+@router.put("/ppt/materials/{material_id}")
+def update_ppt_material(material_id: str, request: dict) -> dict:
+    data = ppt_material_store.update_material(
+        session_id=str(request.get("documentSessionId") or "").strip(),
+        material_id=material_id,
+        file_name=str(request.get("fileName") or "").strip(),
+        content_base64=str(request.get("contentBase64") or "").strip(),
+    )
+    return _outline_envelope(data, trace_id=material_id, message="updated")
+
+
+@router.delete("/ppt/materials/{material_id}")
+def delete_ppt_material(material_id: str, documentSessionId: str = "") -> dict:
+    data = ppt_material_store.delete_material(
+        session_id=documentSessionId,
+        material_id=material_id,
+    )
+    return _outline_envelope(data, trace_id=material_id, message="deleted")
+
+
+@router.post("/ppt/materials/bind-document")
+def bind_ppt_materials_document(request: dict) -> dict:
+    trace_id = new_trace_id("ppt-material-bind")
+    data = ppt_material_store.bind_document(
+        old_session_id=str(request.get("oldDocumentSessionId") or "").strip(),
+        new_session_id=str(request.get("newDocumentSessionId") or "").strip(),
+        new_doc_identity=str(request.get("newDocumentIdentity") or "").strip(),
+    )
+    return _outline_envelope(data, trace_id=trace_id, message="bound")
+
+
+@router.get("/ppt/material-outline/conflicts")
+def get_ppt_material_conflicts(documentSessionId: str = "", userFacts: str = "") -> dict:
+    trace_id = new_trace_id("ppt-material-conflicts")
+    conflicts = ppt_material_outline.detect_conflicts(
+        document_session_id=documentSessionId,
+        user_facts=userFacts,
+    )
+    return _outline_envelope({"conflicts": conflicts}, trace_id=trace_id, message="conflicts")
+
+
+@router.post("/ppt/material-outline/conflicts")
+def post_ppt_material_conflicts(request: dict) -> dict:
+    trace_id = new_trace_id("ppt-material-conflicts")
+    session_id = str(request.get("documentSessionId") or "").strip()
+    user_facts = str(request.get("userFacts") or "").strip()
+    conflicts = ppt_material_outline.detect_conflicts(
+        document_session_id=session_id,
+        user_facts=user_facts,
+    )
+    return _outline_envelope({"conflicts": conflicts}, trace_id=trace_id, message="conflicts")
+
+
+@router.post("/ppt/material-outline/jobs")
+def start_ppt_material_outline_job(request: dict) -> dict:
+    trace_id = new_trace_id("ppt-material-outline")
+    job = ppt_material_outline.submit_job(request, trace_id=trace_id)
+    return _outline_envelope(job, trace_id=job.get("traceId", trace_id), message=job.get("status", "accepted"))
+
+
+@router.get("/ppt/material-outline/jobs/{job_id}")
+def get_ppt_material_outline_job(job_id: str, documentSessionId: str = "") -> dict:
+    job = ppt_material_outline.query_job(job_id, document_session_id=documentSessionId)
+    return _outline_envelope(job, trace_id=job.get("traceId", job_id), message=job.get("status", "completed"))
+
+
+@router.post("/ppt/material-outline/jobs/{job_id}/cancel")
+def cancel_ppt_material_outline_job(job_id: str, request: dict) -> dict:
+    session_id = str(request.get("documentSessionId") or "").strip()
+    job = ppt_material_outline.cancel_job(job_id, document_session_id=session_id)
+    return _outline_envelope(job, trace_id=job.get("traceId", job_id), message=job.get("status", "cancelled"))

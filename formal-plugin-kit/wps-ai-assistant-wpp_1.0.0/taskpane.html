@@ -155,6 +155,79 @@
             <button id="btn-copy-recommended-outline" class="ghost-action" type="button" disabled>复制推荐目录</button>
           </div>
         </section>
+
+        <section id="ppt-material-outline-controls" class="controls" hidden>
+          <div class="outline-source-strip" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+            <span id="outline-material-count-label" class="field-hint">未添加资料</span>
+            <div class="outline-source-actions">
+              <button id="btn-import-outline-material" class="ghost-action" type="button">导入资料</button>
+              <input id="ppt-outline-file-input" type="file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" style="display:none;" />
+            </div>
+          </div>
+          <div id="outline-reusable-section" class="outline-reusable-section" style="margin-bottom: 8px;">
+            <label class="field" for="outline-reusable-select">
+              <span>复用其他文档资料</span>
+              <select id="outline-reusable-select">
+                <option value="">-- 选择可复用资料 --</option>
+              </select>
+            </label>
+          </div>
+          <div id="outline-material-list" class="outline-material-list" aria-live="polite"></div>
+          <div id="outline-conflicts" class="outline-conflicts" hidden style="margin-top: 8px;"></div>
+          <div class="outline-params-grid" style="margin-top: 8px;">
+            <label class="field" for="ppt-outline-audience">
+              <span>汇报对象</span>
+              <input id="ppt-outline-audience" type="text" value="公司高管与业务领导" placeholder="例如：公司高管与业务领导" />
+            </label>
+            <label class="field" for="ppt-outline-slide-count">
+              <span>预定页数</span>
+              <select id="ppt-outline-slide-count">
+                <option value="4">4 页</option>
+                <option value="6">6 页</option>
+                <option value="8" selected>8 页</option>
+                <option value="10">10 页</option>
+                <option value="12">12 页</option>
+                <option value="15">15 页</option>
+                <option value="20">20 页</option>
+              </select>
+            </label>
+          </div>
+          <label class="field" for="ppt-outline-instruction" style="margin-top: 6px;">
+            <span>重点要求</span>
+            <textarea id="ppt-outline-instruction" rows="2" placeholder="例如：面向管理层，突出核心成效与未来规划。"></textarea>
+          </label>
+          <label class="field" for="ppt-outline-user-facts" style="margin-top: 6px;">
+            <span>补充事实</span>
+            <textarea id="ppt-outline-user-facts" rows="2" placeholder="选填。补充资料未提及的关键事实或数字。"></textarea>
+          </label>
+          <div class="action-bar task-job-actions">
+            <button id="btn-run-outline" type="button">生成逐页大纲</button>
+            <button id="btn-cancel-outline-job" class="ghost-action" type="button" hidden>取消任务</button>
+          </div>
+        </section>
+
+        <section id="outline-result-section" class="result-panel" hidden>
+          <div class="panel-head">
+            <h2 id="outline-result-title">大纲预览</h2>
+            <div class="result-actions">
+              <button id="btn-copy-outline-markdown" class="ghost-action" type="button" disabled>复制大纲 (Markdown)</button>
+            </div>
+          </div>
+          <p id="outline-basis-warning" class="field-hint" hidden style="color: #b45309; margin: 4px 0 8px;"></p>
+          <div id="outline-result-output" class="result-output outline-result-output">等待运行。</div>
+          <div id="outline-slide-list" class="outline-slide-list"></div>
+          <div id="outline-source-drawer" class="outline-source-drawer" hidden>
+            <div class="drawer-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+              <h4 id="outline-drawer-title" style="margin: 0; font-size: 13px;">出处原文核对</h4>
+              <button id="btn-close-outline-drawer" class="icon-button" type="button" style="border:none; background:none; cursor:pointer; font-size:16px;">×</button>
+            </div>
+            <div id="outline-drawer-content" class="drawer-content"></div>
+          </div>
+          <div id="outline-confirmation-bar" class="outline-confirmation-bar" style="margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border-color, #e5e7eb);">
+            <div id="outline-confirmation-status-line" class="inline-status" style="margin-bottom: 8px; font-weight: 500;">大纲状态：待生成</div>
+            <button id="btn-confirm-outline" class="primary-button" type="button" style="width: 100%;" disabled>确认大纲</button>
+          </div>
+        </section>
       </section>
 
       <section id="settings-view" class="view">
@@ -393,6 +466,7 @@
       </section>
     </div>
     <script src="./taskpane-helpers.js?v=0.23.1-alpha"></script>
+    <script src="./material-outline.js?v=0.23.1-alpha"></script>
     <script src="./taskpane.js?v=0.23.1-alpha"></script>
   </body>
 </html>

@@ -1,5 +1,43 @@
 # Codex Handoff - AI-WPS
 
+## PR #249 审查修复（2026-09-27）
+
+- 资料大纲按当前演示文稿识别会话，未保存同名演示文稿按实例分开；首次保存与另存为确认后迁移资料和本地大纲，失败保留原归属。尚无服务器资料时保留填写参数，不覆盖新会话已有草稿。
+- 资料名、大纲、冲突和出处文本按纯文本转义；连续编辑标题不重建当前输入节点，切换演示文稿恢复其表单与预览。
+- 轮询固定所属会话与任务；任务丢失允许重提，网络错误继续恢复，取消以服务器确认为准，迟到回包不能复活取消或覆盖新任务。
+- 修复 FastAPI 冲突核对变量错误，补充事实按真实编号核验；克隆发布或索引失败恢复旧资料，双运行时使用来源仓储现有锁保持快照一致。
+- Preview 交付清单补齐 PPT 模块、提示词和前端控制器；任务清单、发布元数据及原有审计同步为12项，保留全部交付边界。
+- 完整回归：Python 3.8 `1664 passed / 54 skipped`；正式插件含真实 Chrome `461 passed / 0 failed`；原型 `12 passed` 且构建通过；84个生产 Python 文件兼容扫描通过。
+- 真实模型质量、真实 WPS 和麒麟真机仍待验收；此次核查麒麟文档记录的虚拟环境解释器不存在，未安装依赖或生成正式交付归档。
+
+## Issue #238：PPT：根据资料生成并确认逐页大纲（2026-09-27）
+
+- **目标与核心机制**：在 PPT/WPP 中支持主动导入 DOCX 资料或跨宿主复用资料，基于受控提示词生成结构化逐页大纲（`schemaVersion: ppt.material_outline.v1`），并在任务窗格核对出处、缺项并确认；确认状态作为下游生成正文的严格前置门禁（`hasConfirmedOutline()`）。
+- **演示文稿隔离持久化与跨宿主克隆（PPT Material Store）**：
+  - 后端持久化存储在 `ppt_materials/<documentSessionId>/` 目录，管理 `files/`、`materials/`、`manifest.json` 与 `catalog_cache.json`；
+  - 支持主动导入 DOCX、原子更新、物理删除与单演示文稿 5 份文件/10 万字上限；
+  - 支持通过 `POST /ppt/materials/clone-from-source` 从 Word 或 Excel 的资料集克隆导入当前演示文稿，克隆后资料完全独立，源头变更不自动污染 PPT 存储；
+  - 另存为迁移：支持 `POST /ppt/materials/bind-document` 迁移资料归属会话。
+- **逐页大纲协调器（PptMaterialOutlineCoordinator）**：
+  - 注册 `TaskType.PPT_MATERIAL_OUTLINE`（`ppt.material_outline`）系统提示词，通过 `ProviderClient.post_task` 调用模型；
+  - 严格校验受控 JSON 输出：支持指定汇报对象（`audience`）、页数（`slideCount`，当前实现范围 3~30 页）、重点要求（`instruction`）、补充事实（`userFacts`）与冲突决策（`conflictResolutions`）；
+  - 结构解析与容错：每页包含 `pageIndex`、`pageRole`（cover/agenda/transition/content/summary/backcover）、`title`、`keyPoints`、`missingItems`、`sources`；容错解析数字/字符串混合的片段编号（如 `1` / `"frag-1"`），严格防御伪造出处；
+  - 依据追踪：大纲保存 `basisMaterials` 快照，当底层资料更新或移除时标记 `basisWarning` 并使确认失效。
+- **纯只读幻灯片不变量（Pure Read-Only Invariant）**：
+  - 本模块全程只操作资料与大纲模型结果，调用 0 项 PPT 幻灯片修改 API（如 `Presentation.Slides.Add`、`AddSlide`、`Shapes.Add` 等），与既有 `ppt.slide_assistant` 和 `ppt.structure_review` 完全解耦，零副作用。
+- **确认门禁与降级状态机（Confirmation Gate State Machine）**：
+  - 任务窗格提供明确状态指示：未确认（`unconfirmed`）、已确认（`confirmed`）、需重新确认（`needs_reconfirmation`）；
+  - 点击“确认大纲”记录快照与确认时间戳，下游生成任务可通过 `hasConfirmedOutline()` 作为硬门禁拦截；
+  - 降级保护：一旦用户编辑单页标题/要点、修改汇报对象/页数/重点要求、修改补充事实或底层资料发生变更，确认状态立即自动降级为 `needs_reconfirmation`，杜绝脱靶生成。
+- **双运行时接口与插件端集成**：
+  - FastAPI 与 Standalone Adapter 对等暴露 `/ppt/materials/*` 与 `/ppt/material-outline/*` 完整路由；
+  - 功能区 `ribbon.xml` 与 `ribbon.js` 新增“资料大纲”按钮（`btnAiPptMaterialOutline`，映射模式 `pptMaterialOutline`）；
+  - 任务窗格 `taskpane.html`、`taskpane.css`、`taskpane.js` 与独立控制器 `material-outline.js` 实现完整的资料管理、冲突核对、大纲预览、逐页编辑、出处抽屉与 Markdown 复制功能。
+- **自检结论**：
+  - 后端 Python 3.8 测试：`1664 passed, 54 skipped`（完整后端回归，含双运行时和交付测试）；
+  - 正式插件契约与浏览器自动化测试：`461 passed, 0 failed`（含 PPT 窗格真实 Chrome、防注入、标题编辑和会话隔离回归）；
+  - 生产 Python 3.8 兼容扫描：84文件通过；完整后端回归覆盖通用及 Preview 交付审计。
+
 ## PR #248 审查修复（2026-09-27）
 
 - 检测目标时保存工作簿会话、工作表、起始位置和选区尺寸；确认后写入传递同一 `targetRangeInfo`，执行前拒绝目标变化并重新检查空白。未检测目标不允许写入，弹窗工作簿名使用检测快照。

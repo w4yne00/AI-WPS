@@ -56,6 +56,11 @@
       "version": "2026-09-27.1",
       "file": "excel-material-ledger.md",
       "sha256": "8df7f228e21060c24e5563158350db4c1b82530c25ac2ac7c4fd86a36c134a5d"
+    },
+    "ppt.material_outline": {
+      "version": "2026-09-27.1",
+      "file": "ppt-material-outline.md",
+      "sha256": "e02aeed0089a2b4482c14946062b58dd425183bed051924ad225016e389ffb20"
     }
   },
   "stages": {

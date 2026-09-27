@@ -73,6 +73,8 @@ from app.services.ppt.slide_assistant import PptSlideAssistant
 from app.services.ppt.slide_assistant_jobs import PptSlideAssistantJobStore
 from app.services.ppt.structure_review import PptStructureReviewer
 from app.services.ppt.structure_review_jobs import PptStructureReviewJobStore
+from app.services.ppt.material_store import PptMaterialStore
+from app.services.ppt.material_outline import PptMaterialOutlineCoordinator
 from app.services.word.document_reviewer import WordDocumentReviewer
 from app.services.word.document_review_jobs import DocumentReviewJobStore
 from app.services.word.deterministic_format_review import (
@@ -208,6 +210,11 @@ PPT_SLIDE_ASSISTANT_JOB_STORE = PptSlideAssistantJobStore(
     PptSlideAssistant(document_file_store=PPT_DOCUMENT_FILE_STORE)
 )
 PPT_STRUCTURE_REVIEW_JOB_STORE = PptStructureReviewJobStore(PptStructureReviewer())
+PPT_MATERIAL_STORE = PptMaterialStore(
+    word_store=WORD_MATERIAL_IMPORT_SERVICE._store,
+    excel_store=EXCEL_MATERIAL_STORE,
+)
+PPT_MATERIAL_OUTLINE_COORDINATOR = PptMaterialOutlineCoordinator(store=PPT_MATERIAL_STORE)
 
 
 def close_ppt_resources():
@@ -2427,6 +2434,65 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
 
+        if path == "/ppt/materials/catalog":
+            session = parse_qs(parsed.query).get("documentSessionId", [""])[0]
+            trace_id = new_trace_id("standalone-ppt-material-catalog")
+            data = PPT_MATERIAL_STORE.get_catalog(session)
+            self._write(
+                200,
+                envelope(trace_id, "ppt.material_outline", data, message="catalog"),
+            )
+            return
+
+        if path == "/ppt/material-outline/conflicts":
+            query_params = parse_qs(parsed.query)
+            session = query_params.get("documentSessionId", [""])[0]
+            user_facts = query_params.get("userFacts", [""])[0]
+            trace_id = new_trace_id("standalone-ppt-material-conflicts")
+            try:
+                conflicts = PPT_MATERIAL_OUTLINE_COORDINATOR.detect_conflicts(session, user_facts)
+            except AdapterError as error:
+                self._write(
+                    error.status_code,
+                    envelope(
+                        trace_id,
+                        "ppt.material_outline",
+                        success=False,
+                        message=error.message,
+                        errors=[{"code": error.code, "message": error.message}],
+                    ),
+                )
+                return
+            self._write(
+                200,
+                envelope(trace_id, "ppt.material_outline", {"conflicts": conflicts}, message="conflicts"),
+            )
+            return
+
+        if path.startswith("/ppt/material-outline/jobs/"):
+            job_id = unquote(path[len("/ppt/material-outline/jobs/") :]).strip("/")
+            session = parse_qs(parsed.query).get("documentSessionId", [""])[0]
+            trace_id = new_trace_id("standalone-ppt-material-outline-job")
+            try:
+                job = PPT_MATERIAL_OUTLINE_COORDINATOR.query_job(job_id, session)
+            except AdapterError as error:
+                self._write(
+                    error.status_code,
+                    envelope(
+                        trace_id,
+                        "ppt.material_outline",
+                        success=False,
+                        message=error.message,
+                        errors=[{"code": error.code, "message": error.message}],
+                    ),
+                )
+                return
+            self._write(
+                200,
+                envelope(job.get("traceId", job_id), "ppt.material_outline", job, message=job["status"]),
+            )
+            return
+
         self._write(
             404,
             envelope("standalone-not-found", "adapter.error", success=False, message="Not found", errors=[{"code": "NOT_FOUND", "message": path}]),
@@ -2516,15 +2582,32 @@ class Handler(BaseHTTPRequestHandler):
                     path.startswith("/excel/material-ledger/jobs/")
                     and path.endswith("/cancel")
                 )
+                or path == "/ppt/material-outline/jobs"
+                or path == "/ppt/material-outline/conflicts"
+                or path == "/ppt/materials/bind-document"
+                or (
+                    path.startswith("/ppt/material-outline/jobs/")
+                    and path.endswith("/cancel")
+                )
             ) and length > MATERIAL_COMPOSER_REQUEST_MAX_BYTES:
                 self.close_connection = True
-                is_excel = path.startswith("/excel/")
-                message = "从资料生成任务台账请求超过 64 KiB 限制。" if is_excel else "资料章节草稿请求超过 64 KiB 限制。"
+                if path.startswith("/ppt/"):
+                    task_type = "ppt.material_outline"
+                    message = "根据资料生成逐页大纲请求超过 64 KiB 限制。"
+                    trace_name = "standalone-material-outline"
+                elif path.startswith("/excel/"):
+                    task_type = "excel.material_ledger"
+                    message = "从资料生成任务台账请求超过 64 KiB 限制。"
+                    trace_name = "standalone-material-ledger"
+                else:
+                    task_type = "word.material_composer"
+                    message = "资料章节草稿请求超过 64 KiB 限制。"
+                    trace_name = "standalone-material-composer"
                 self._write(
                     413,
                     envelope(
-                        new_trace_id("standalone-material-ledger" if is_excel else "standalone-material-composer"),
-                        "excel.material_ledger" if is_excel else "word.material_composer",
+                        new_trace_id(trace_name),
+                        task_type,
                         success=False,
                         message=message,
                         errors=[
@@ -3461,6 +3544,112 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
 
+        if path == "/ppt/material-outline/conflicts":
+            trace_id = new_trace_id("standalone-ppt-material-conflicts")
+            try:
+                conflicts = PPT_MATERIAL_OUTLINE_COORDINATOR.detect_conflicts(
+                    payload.get("documentSessionId", ""),
+                    payload.get("userFacts", ""),
+                )
+            except AdapterError as error:
+                self._write(error.status_code, envelope(trace_id, "ppt.material_outline", success=False, message=error.message, errors=[{"code": error.code, "message": error.message}]))
+                return
+            self._write(200, envelope(trace_id, "ppt.material_outline", {"conflicts": conflicts}, message="conflicts"))
+            return
+
+        if path == "/ppt/material-outline/jobs" or (path.startswith("/ppt/material-outline/jobs/") and path.endswith("/cancel")):
+            trace_id = new_trace_id("standalone-ppt-material-outline")
+            try:
+                if path.endswith("/cancel"):
+                    job_id = unquote(path[len("/ppt/material-outline/jobs/"):-len("/cancel")]).strip("/")
+                    job = PPT_MATERIAL_OUTLINE_COORDINATOR.cancel_job(job_id, payload.get("documentSessionId", ""))
+                else:
+                    job = PPT_MATERIAL_OUTLINE_COORDINATOR.submit_job(payload, trace_id=trace_id)
+            except AdapterError as error:
+                self._write(error.status_code, envelope(trace_id, "ppt.material_outline", success=False, message=error.message, errors=[{"code": error.code, "message": error.message}]))
+                return
+            self._write(200, envelope(job.get("traceId", trace_id), "ppt.material_outline", job, message=job.get("status", "accepted")))
+            return
+
+        if path == "/ppt/materials/import":
+            trace_id = new_trace_id("standalone-ppt-material-import")
+            try:
+                data = PPT_MATERIAL_STORE.import_material(
+                    session_id=str(payload.get("documentSessionId") or "").strip(),
+                    doc_identity=str(payload.get("documentIdentity") or "").strip(),
+                    file_name=str(payload.get("fileName") or "").strip(),
+                    content_base64=str(payload.get("contentBase64") or "").strip(),
+                )
+            except AdapterError as error:
+                self._write(
+                    error.status_code,
+                    envelope(
+                        trace_id,
+                        "ppt.material_outline",
+                        success=False,
+                        message=error.message,
+                        errors=[{"code": error.code, "message": error.message}],
+                    ),
+                )
+                return
+            self._write(
+                200,
+                envelope(trace_id, "ppt.material_outline", data, message="imported"),
+            )
+            return
+
+        if path == "/ppt/materials/clone-from-source":
+            trace_id = new_trace_id("standalone-ppt-material-clone")
+            try:
+                data = PPT_MATERIAL_STORE.clone_from_source(
+                    source_session_id=str(payload.get("sourceSessionId") or "").strip(),
+                    target_session_id=str(payload.get("targetDocumentSessionId") or "").strip(),
+                    target_doc_identity=str(payload.get("targetDocumentIdentity") or "").strip(),
+                )
+            except AdapterError as error:
+                self._write(
+                    error.status_code,
+                    envelope(
+                        trace_id,
+                        "ppt.material_outline",
+                        success=False,
+                        message=error.message,
+                        errors=[{"code": error.code, "message": error.message}],
+                    ),
+                )
+                return
+            self._write(
+                200,
+                envelope(trace_id, "ppt.material_outline", data, message="cloned"),
+            )
+            return
+
+        if path == "/ppt/materials/bind-document":
+            trace_id = new_trace_id("standalone-ppt-material-bind")
+            try:
+                data = PPT_MATERIAL_STORE.bind_document(
+                    old_session_id=str(payload.get("oldDocumentSessionId") or "").strip(),
+                    new_session_id=str(payload.get("newDocumentSessionId") or "").strip(),
+                    new_doc_identity=str(payload.get("newDocumentIdentity") or "").strip(),
+                )
+            except AdapterError as error:
+                self._write(
+                    error.status_code,
+                    envelope(
+                        trace_id,
+                        "ppt.material_outline",
+                        success=False,
+                        message=error.message,
+                        errors=[{"code": error.code, "message": error.message}],
+                    ),
+                )
+                return
+            self._write(
+                200,
+                envelope(trace_id, "ppt.material_outline", data, message="bound"),
+            )
+            return
+
         if path == "/word/smart-write":
             trace_id = new_trace_id("standalone-word-smart-write")
             status, body = sync_long_task_response(
@@ -4394,6 +4583,50 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
 
+        if path.startswith("/ppt/materials/"):
+            material_id = unquote(path[len("/ppt/materials/"): ]).strip("/")
+            trace_id = new_trace_id("standalone-ppt-material-update")
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                raw_bytes = self.rfile.read(length) if length else b"{}"
+                payload = json.loads(raw_bytes.decode("utf-8") or "{}")
+                data = PPT_MATERIAL_STORE.update_material(
+                    session_id=str(payload.get("documentSessionId") or "").strip(),
+                    material_id=material_id,
+                    file_name=str(payload.get("fileName") or "").strip(),
+                    content_base64=str(payload.get("contentBase64") or "").strip(),
+                )
+            except AdapterError as error:
+                self._write(
+                    error.status_code,
+                    envelope(
+                        trace_id,
+                        "ppt.material_outline",
+                        success=False,
+                        message=error.message,
+                        errors=[{"code": error.code, "message": error.message}],
+                    ),
+                )
+                return
+            except (UnicodeDecodeError, ValueError):
+                message = "资料更新请求格式无效。"
+                self._write(
+                    400,
+                    envelope(
+                        trace_id,
+                        "ppt.material_outline",
+                        success=False,
+                        message=message,
+                        errors=[{"code": "REQUEST_VALIDATION_FAILED", "message": message}],
+                    ),
+                )
+                return
+            self._write(
+                200,
+                envelope(trace_id, "ppt.material_outline", data, message="updated"),
+            )
+            return
+
         self.send_error(501, "Unsupported method (%r)" % self.command)
 
     def do_DELETE(self):
@@ -4458,6 +4691,30 @@ class Handler(BaseHTTPRequestHandler):
             self._write(
                 200,
                 envelope(trace_id, "excel.material_ledger", data, message="deleted"),
+            )
+            return
+
+        if path.startswith("/ppt/materials/"):
+            material_id = unquote(path[len("/ppt/materials/"): ]).strip("/")
+            session = parse_qs(parsed.query).get("documentSessionId", [""])[0]
+            trace_id = new_trace_id("standalone-ppt-material-delete")
+            try:
+                data = PPT_MATERIAL_STORE.delete_material(session, material_id)
+            except AdapterError as error:
+                self._write(
+                    error.status_code,
+                    envelope(
+                        trace_id,
+                        "ppt.material_outline",
+                        success=False,
+                        message=error.message,
+                        errors=[{"code": error.code, "message": error.message}],
+                    ),
+                )
+                return
+            self._write(
+                200,
+                envelope(trace_id, "ppt.material_outline", data, message="deleted"),
             )
             return
 

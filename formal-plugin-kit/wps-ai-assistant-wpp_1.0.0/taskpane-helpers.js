@@ -2151,12 +2151,12 @@
 
   function getStableDocumentSessionId(presentation) {
     var fullName = safeText(resolveValue(safeRead(presentation, "FullName") || safeRead(presentation, "fullName"), presentation));
-    var name = safeText(resolveValue(safeRead(presentation, "Name") || safeRead(presentation, "name"), presentation));
-    var identity = String(fullName || name || "").trim().replace(/\\/g, "/");
-    if (!identity) {
+    var identity = fullName.replace(/\\/g, "/");
+    // An unsaved presentation can expose its display name through FullName.
+    if (!identity || !(/^(?:\/|[A-Za-z]:\/|[A-Za-z][A-Za-z0-9+.-]*:\/\/)/.test(identity))) {
       return "";
     }
-    identity = (fullName ? "full:" : "name:") + identity;
+    identity = "full:" + identity;
     return "doc_session_v2_" +
       hashDocumentIdentity(identity, 2166136261) +
       hashDocumentIdentity(identity, 2246822507) +

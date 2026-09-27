@@ -32,6 +32,7 @@ EXPECTED_TASKS = frozenset(
         "excel.material_ledger",
         "ppt.slide_assistant",
         "ppt.structure_review",
+        "ppt.material_outline",
     }
 )
 
@@ -1238,7 +1239,7 @@ def test_preview_delivery_tree_contains_all_tasks_and_smart_fill_assets(tmp_path
     delivery = _prepare_delivery(tmp_path)
 
     manifest = json.loads((delivery / "release-manifest.json").read_text(encoding="utf-8"))
-    assert manifest["adapter"]["systemPromptCount"] == 11
+    assert manifest["adapter"]["systemPromptCount"] == 12
     assert manifest["excelSmartFillAssets"] == {
         "operationsGuide": "docs/operations/model-excel-smart-fill-contract.md",
         "workflowGuide": "docs/operations/workflow-platform-excel-smart-fill.md",
@@ -1249,7 +1250,7 @@ def test_preview_delivery_tree_contains_all_tasks_and_smart_fill_assets(tmp_path
     prompt_manifest_path = delivery / manifest["adapter"]["systemPromptManifest"]
     prompt_manifest = json.loads(prompt_manifest_path.read_text(encoding="utf-8"))
     assert prompt_manifest["release"] == "0.26.0-preview.1"
-    assert len(prompt_manifest["tasks"]) == 11
+    assert len(prompt_manifest["tasks"]) == 12
     assert set(prompt_manifest["tasks"].keys()) == EXPECTED_TASKS
 
     smart_fill_prompt = prompt_manifest_path.parent / prompt_manifest["tasks"]["excel.smart_fill"]["file"]
@@ -1298,7 +1299,7 @@ def test_preview_audit_rejects_missing_or_substituted_prompt_task(tmp_path):
     prompt_manifest_path = delivery / manifest["adapter"]["systemPromptManifest"]
     original_manifest_text = prompt_manifest_path.read_text(encoding="utf-8")
 
-    # Tamper 1: Replace word.smart_write with unrelated.task (maintaining count=11, rewrite hashes)
+    # Tamper 1: Replace word.smart_write with unrelated.task (maintaining count=12, rewrite hashes)
     tampered_data = json.loads(original_manifest_text)
     item = tampered_data["tasks"].pop("word.smart_write")
     tampered_data["tasks"]["word.unrelated_task"] = item
@@ -1318,7 +1319,7 @@ def test_preview_audit_rejects_missing_or_substituted_prompt_task(tmp_path):
     assert rejected.returncode != 0
     assert "V0260_PROMPT_TASKS_MISMATCH" in rejected.stdout
 
-    # Tamper 2: Delete word.smart_write in prompt manifest only (count becomes 10)
+    # Tamper 2: Delete word.smart_write in prompt manifest only (count becomes 11)
     tampered_data = json.loads(original_manifest_text)
     del tampered_data["tasks"]["word.smart_write"]
     prompt_manifest_path.write_text(json.dumps(tampered_data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -1332,9 +1333,9 @@ def test_preview_audit_rejects_missing_or_substituted_prompt_task(tmp_path):
     assert rejected.returncode != 0
     assert "V0260_PROMPT_TASK_COUNT_INVALID" in rejected.stdout
 
-    # Tamper 3: Delete word.smart_write and adjust release manifest count to 10 (so phase1 passes, but preview audit fails)
+    # Tamper 3: Delete word.smart_write and adjust release manifest count to 11 (so phase1 passes, but preview audit fails)
     tampered_manifest = json.loads(original_release_manifest_text)
-    tampered_manifest["adapter"]["systemPromptCount"] = 10
+    tampered_manifest["adapter"]["systemPromptCount"] = 11
     release_manifest_path.write_text(json.dumps(tampered_manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     subprocess.run(
         [sys.executable, str(ROOT / "packaging/audit_phase1_delivery.py"), str(delivery), "--write-hashes"],
@@ -1723,3 +1724,28 @@ def test_preview_audit_rejects_disabled_streaming_default(tmp_path):
     )
     assert rejected.returncode != 0
     assert "V0260_STREAMING_RUNTIME_CONTRACT_FAILED" in rejected.stdout
+
+
+def test_preview_delivery_includes_ppt_material_outline_runtime(tmp_path):
+    delivery = _prepare_delivery(tmp_path)
+    adapter = delivery / "packages/adapter-start-kit/adapter_service"
+    for relative in (
+        "app/services/ppt/material_store.py",
+        "app/services/ppt/material_outline.py",
+        "system_prompts/ppt-material-outline.md",
+    ):
+        assert (adapter / relative).is_file(), relative
+    assert (delivery / "packages/wps-ai-assistant-wpp_1.0.0/material-outline.js").is_file()
+    prompt_manifest = json.loads((adapter / "system_prompts/manifest.json").read_text(encoding="utf-8"))
+    task = prompt_manifest["tasks"]["ppt.material_outline"]
+    prompt = adapter / "system_prompts" / task["file"]
+    assert hashlib.sha256(prompt.read_bytes()).hexdigest() == task["sha256"]
+    imported = subprocess.run(
+        [sys.executable, "-c", "from app.api import ppt; from app.services.ppt.material_outline import PptMaterialOutlineCoordinator"],
+        cwd=adapter,
+        env={**os.environ, "PYTHONPATH": str(adapter)},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert imported.returncode == 0, imported.stdout + imported.stderr
