@@ -557,3 +557,147 @@ test('a late poll response cannot restore a cancelled job result', async () => {
   assert.equal(h.api.getState().status, 'cancelled');
   assert.equal(h.api.getState().result, null);
 });
+
+function createMockGridApp(config) {
+  const opts = config || {};
+  const activeSheetName = opts.sheetName || 'Sheet1';
+  const docSessionId = opts.documentSessionId || 'sess-excel-doc-1';
+  const grid = opts.cells || {};
+  const sheetProtected = Boolean(opts.sheetProtected);
+
+  function cellKey(r, c) {
+    return `${r},${c}`;
+  }
+
+  function getCell(r, c) {
+    const k = cellKey(r, c);
+    const cellData = grid[k] || {};
+    return {
+      Row: r,
+      Column: c,
+      Value2: cellData.Value2 !== undefined ? cellData.Value2 : (cellData.Value !== undefined ? cellData.Value : null),
+      Value: cellData.Value !== undefined ? cellData.Value : (cellData.Value2 !== undefined ? cellData.Value2 : null),
+      HasFormula: Boolean(cellData.HasFormula || cellData.Formula || cellData.formula),
+      Formula: cellData.Formula || cellData.formula || '',
+      MergeCells: Boolean(cellData.MergeCells || cellData.mergeCells),
+      EntireRow: { Hidden: Boolean(cellData.rowHidden) },
+      EntireColumn: { Hidden: Boolean(cellData.colHidden) },
+      Locked: cellData.Locked !== undefined ? Boolean(cellData.Locked) : true
+    };
+  }
+
+  const selectionRow = opts.selectionRow || 2;
+  const selectionCol = opts.selectionCol || 1;
+  const selectionRowCount = opts.selectionRowCount || 1;
+  const selectionColCount = opts.selectionColCount || 1;
+
+  const app = {
+    ActiveWorkbook: {
+      Name: opts.workbookName || '测试台账.xlsx',
+      FullName: opts.workbookPath || '/test/测试台账.xlsx',
+      wps_doc_session_id: docSessionId
+    },
+    ActiveSheet: {
+      Name: activeSheetName,
+      ProtectContents: sheetProtected,
+      Cells: {
+        Item: (r, c) => getCell(r, c)
+      },
+      Range: (r1, c1, r2, c2) => {
+        return {
+          Item: (r, c) => getCell(r, c)
+        };
+      }
+    },
+    Selection: {
+      Row: selectionRow,
+      Column: selectionCol,
+      Rows: { Count: selectionRowCount },
+      Columns: { Count: selectionColCount },
+      Cells: {
+        Item: (r, c) => getCell(r, c)
+      }
+    }
+  };
+  return app;
+}
+
+test('resolveExcelLedgerTargetRange calculates bounding box for single-cell selection', () => {
+  const app = createMockGridApp({ selectionRow: 2, selectionCol: 1, selectionRowCount: 1, selectionColCount: 1 });
+  const rangeInfo = helpers.resolveExcelLedgerTargetRange(app, 5, 4);
+  assert.strictEqual(rangeInfo.startRow, 2);
+  assert.strictEqual(rangeInfo.startCol, 1);
+  assert.strictEqual(rangeInfo.endRow, 6);
+  assert.strictEqual(rangeInfo.endCol, 4);
+  assert.strictEqual(rangeInfo.rowCount, 5);
+  assert.strictEqual(rangeInfo.colCount, 4);
+  assert.strictEqual(rangeInfo.targetAddress, 'A2:D6');
+  assert.strictEqual(rangeInfo.sheetName, 'Sheet1');
+});
+
+test('resolveExcelLedgerTargetRange accepts multi-cell selection with sufficient capacity', () => {
+  const app = createMockGridApp({ selectionRow: 3, selectionCol: 2, selectionRowCount: 10, selectionColCount: 5 });
+  const rangeInfo = helpers.resolveExcelLedgerTargetRange(app, 5, 4);
+  assert.strictEqual(rangeInfo.startRow, 3);
+  assert.strictEqual(rangeInfo.startCol, 2);
+  assert.strictEqual(rangeInfo.endRow, 7);
+  assert.strictEqual(rangeInfo.endCol, 5);
+  assert.strictEqual(rangeInfo.targetAddress, 'B3:E7');
+});
+
+test('resolveExcelLedgerTargetRange rejects multi-cell selection with insufficient capacity', () => {
+  const app = createMockGridApp({ selectionRow: 2, selectionCol: 1, selectionRowCount: 3, selectionColCount: 2 });
+  assert.throws(() => {
+    helpers.resolveExcelLedgerTargetRange(app, 5, 4);
+  }, /选区尺寸不足以容纳/);
+});
+
+test('validateExcelLedgerTargetBlank succeeds on completely blank range', () => {
+  const app = createMockGridApp({ selectionRow: 2, selectionCol: 1, selectionRowCount: 1, selectionColCount: 1 });
+  const rangeInfo = helpers.resolveExcelLedgerTargetRange(app, 3, 2);
+  const result = helpers.validateExcelLedgerTargetBlank(app, rangeInfo, { documentSessionId: 'sess-excel-doc-1' });
+  assert.strictEqual(result.valid, true);
+  assert.strictEqual(result.cells.length, 6);
+});
+
+test('validateExcelLedgerTargetBlank rejects cells with existing values, formulas, merged, or hidden', () => {
+  // Existing text
+  const appWithText = createMockGridApp({
+    cells: { '3,2': { Value2: '已有内容' } }
+  });
+  const range1 = { startRow: 2, startCol: 1, endRow: 4, endCol: 3, targetAddress: 'A2:C4', sheetName: 'Sheet1', rowCount: 3, colCount: 3 };
+  assert.throws(() => {
+    helpers.validateExcelLedgerTargetBlank(appWithText, range1, { documentSessionId: 'sess-excel-doc-1' });
+  }, /目标区域包含已有数据/);
+
+  // Existing formula
+  const appWithFormula = createMockGridApp({
+    cells: { '2,2': { Formula: '=SUM(A1)' } }
+  });
+  assert.throws(() => {
+    helpers.validateExcelLedgerTargetBlank(appWithFormula, range1, { documentSessionId: 'sess-excel-doc-1' });
+  }, /包含公式/);
+
+  // Merged cell
+  const appWithMerged = createMockGridApp({
+    cells: { '2,1': { MergeCells: true } }
+  });
+  assert.throws(() => {
+    helpers.validateExcelLedgerTargetBlank(appWithMerged, range1, { documentSessionId: 'sess-excel-doc-1' });
+  }, /合并单元格/);
+
+  // Hidden row
+  const appWithHidden = createMockGridApp({
+    cells: { '2,1': { rowHidden: true } }
+  });
+  assert.throws(() => {
+    helpers.validateExcelLedgerTargetBlank(appWithHidden, range1, { documentSessionId: 'sess-excel-doc-1' });
+  }, /隐藏/);
+
+  // Document session mismatch
+  const normalApp = createMockGridApp();
+  assert.throws(() => {
+    helpers.validateExcelLedgerTargetBlank(normalApp, range1, { documentSessionId: 'sess-different-workbook' });
+  }, /工作簿/);
+});
+
