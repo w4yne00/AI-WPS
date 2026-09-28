@@ -913,7 +913,10 @@ class WritingPolicyServiceTests(unittest.TestCase):
             )
             self.assertEqual(calls_after_failure, 1)
             self.assertEqual(calls_during_backoff, 1)
-            self.assertTrue(all(result is failed_results[0] for result in backoff_results))
+            # A follower can return the temporary initializing service before
+            # the leader records its failure. Completion order is not identity.
+            self.assertTrue(all(result is backoff_results[0] for result in backoff_results))
+            self.assertTrue(any(result is backoff_results[0] for result in failed_results))
             self.assertTrue(retry_followers_returned)
             self.assertEqual(len(retry_results), 12)
             self.assertEqual(state["calls"], 2)
