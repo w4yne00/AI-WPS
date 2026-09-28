@@ -199,6 +199,9 @@ function loadController(h) {
       }
       const jobId = decodeURIComponent(String(url).split("/ppt/template-page/jobs/")[1] || "").split("?")[0];
       const submitted = h.jobs.get(jobId) || {};
+      if (h.pollStatuses && h.pollStatuses.length) {
+        return Promise.resolve({ success: true, data: { status: h.pollStatuses.shift() } });
+      }
       const points = submitted.pageRole === "content" && h.overflowContent
         ? ["要点一", "要点二", "要点三", "要点四", "要点五"]
         : submitted.outlineKeyPoints || [];
@@ -274,6 +277,14 @@ test("按已确认大纲生成封面目录章节和正文，并保留讲稿", as
   assert.match(state.unverified.join(" "), /真实 WPS/);
 });
 
+test("排队和运行中的任务持续查询，直到整套内容生成", async () => {
+  const h = harness({ pollStatuses: ["queued", "running"] });
+  const result = await h.ctrl.startGenerate();
+  assert.equal(result.status, "PREVIEW");
+  assert.equal(h.calls.filter((call) => call.method === "GET").length, 6);
+  assert.equal(h.ctrl.getState().pages.length, 4);
+});
+
 test("先确认内容并最终确认后才追加，原页面文字不变", async () => {
   const h = harness();
   await h.ctrl.startGenerate();
@@ -331,6 +342,46 @@ test("溢出可拆页并明示页数变化，未再确认前不写入", async ()
   assert.equal(h.host.app.ActivePresentation.Slides.Count, 5);
 });
 
+test("目录拆页后清空复制页未使用的旧条目和编号", async () => {
+  const h = harness();
+  h.outline.slides[1].keyPoints = ["架构", "路径", "保障", "运维"];
+  await h.ctrl.startGenerate();
+  const agenda = h.ctrl.getState().pages.find((page) => page.pageRole === "agenda");
+  h.ctrl.splitPage(agenda.pageId);
+  h.ctrl.confirmContent();
+  assert.equal(h.ctrl.append(h.host.app).completed, true);
+  for (const index of [7, 8]) {
+    const slots = h.host.app.ActivePresentation.Slides.Item(index).shapes;
+    assert.equal(slots[4].spec.text, "");
+    assert.equal(slots[5].spec.text, "");
+  }
+  assert.match(h.host.bodyText(7), /架构.*路径/s);
+  assert.match(h.host.bodyText(8), /保障.*运维/s);
+});
+
+test("拆页后仍按字符和行数拦截过长正文", async () => {
+  const h = harness();
+  await h.ctrl.startGenerate();
+  const content = h.ctrl.getState().pages.find((page) => page.pageRole === "content");
+  content.keyPoints = ["长".repeat(300), "短"];
+  content.isOverflow = true;
+  h.ctrl.splitPage(content.pageId);
+  const splitContents = h.ctrl.getState().pages.filter((page) => page.pageRole === "content");
+  assert.equal(splitContents[0].isOverflow, true);
+  assert.throws(() => h.ctrl.confirmContent(), /超出容量/);
+  assert.equal(h.host.app.ActivePresentation.Slides.Count, 5);
+});
+
+test("追加边界独立拒绝未标记的正文超限", () => {
+  const host = createHost();
+  const { appendTemplateDeck } = require(path.join(root, "template-deck.js"));
+  const written = appendTemplateDeck(host.app, { pages: [{
+    pageRole: "content", title: "长文", keyPoints: ["长".repeat(300)], speakerNotes: "讲稿", isOverflow: false,
+  }] });
+  assert.equal(written.completed, false);
+  assert.equal(host.app.ActivePresentation.Slides.Count, 5);
+});
+
 test("精简后必须重新预览确认，且不直接改演示文稿", async () => {
   const h = harness({ overflowContent: true });
   await h.ctrl.startGenerate();
@@ -356,6 +407,16 @@ test("目标文稿或已确认内容变化时拒绝写入旧预览", async () =>
   assert.equal(h.host.app.ActivePresentation.Slides.Count, 5);
 });
 
+test("生成后切换文稿不能把旧内容重新确认为新文稿", async () => {
+  const h = harness();
+  await h.ctrl.startGenerate();
+  h.session = "other-deck";
+  h.outline = { ...outline(), instruction: "另一文稿" };
+  assert.throws(() => h.ctrl.confirmContent(), /目标演示文稿|大纲已变化/);
+  assert.equal(h.ctrl.getState().contentConfirmed, false);
+  assert.equal(h.host.app.ActivePresentation.Slides.Count, 5);
+});
+
 test("部分失败展示已追加范围，重试不重复追加也不伪报完成", async () => {
   const h = harness();
   await h.ctrl.startGenerate();
@@ -378,6 +439,72 @@ test("部分失败展示已追加范围，重试不重复追加也不伪报完�
   assert.equal(retried.completed, true);
   assert.equal(h.host.app.ActivePresentation.Slides.Count, 9);
   assert.equal(h.host.calls.duplicate, 3);
+});
+
+test("失败页删除失败后必须先核查残页，才能继续追加", async () => {
+  const h = harness();
+  await h.ctrl.startGenerate();
+  h.ctrl.confirmContent();
+  const prototype = h.host.app.ActivePresentation.Slides.Item(3);
+  const duplicate = prototype.Duplicate.bind(prototype);
+  let cleanup;
+  prototype.Duplicate = () => {
+    const slide = duplicate();
+    cleanup = slide.Delete.bind(slide);
+    slide.Delete = () => { throw new Error("删除失败"); };
+    return slide;
+  };
+  let failedOnce = false;
+  prototype.NotesPage.Shapes.Item(1).spec.onWrite = () => {
+    if (!failedOnce) { failedOnce = true; throw new Error("备注写入失败"); }
+  };
+  const failed = h.ctrl.append(h.host.app);
+  assert.equal(failed.status, "ROLLBACK_FAILED");
+  assert.equal(failed.residualSlideIndex, 8);
+  assert.equal(h.host.app.ActivePresentation.Slides.Count, 8);
+  assert.equal(h.ctrl.getState().recoveryRequired, true);
+  assert.equal([].concat(h.ctrl.getState().appendedRange).join(","), "6,7");
+  assert.match(h.ctrl.getState().recoveryChoices.join(" "), /核查/);
+  assert.throws(() => h.ctrl.append(h.host.app), /核查恢复/);
+  assert.equal(h.host.app.ActivePresentation.Slides.Count, 8);
+  assert.throws(() => h.ctrl.verifyRecovery(h.host.app), /残页/);
+  cleanup();
+  assert.equal(h.host.app.ActivePresentation.Slides.Count, 7);
+  h.ctrl.verifyRecovery(h.host.app);
+  const retried = h.ctrl.append(h.host.app);
+  assert.equal(retried.completed, true);
+  assert.equal(h.host.app.ActivePresentation.Slides.Count, 9);
+});
+
+test("删除接口静默未删除残页时同样阻止重试", async () => {
+  const h = harness();
+  await h.ctrl.startGenerate();
+  h.ctrl.confirmContent();
+  const prototype = h.host.app.ActivePresentation.Slides.Item(3);
+  const duplicate = prototype.Duplicate.bind(prototype);
+  prototype.Duplicate = () => {
+    const slide = duplicate();
+    slide.Delete = () => {};
+    return slide;
+  };
+  prototype.NotesPage.Shapes.Item(1).spec.onWrite = () => { throw new Error("备注写入失败"); };
+  const failed = h.ctrl.append(h.host.app);
+  assert.equal(failed.status, "ROLLBACK_FAILED");
+  assert.equal(h.ctrl.getState().recoveryRequired, true);
+  assert.equal(h.host.app.ActivePresentation.Slides.Count, 8);
+});
+
+test("部分追加后重新点击生成不会清空恢复进度", async () => {
+  const h = harness();
+  await h.ctrl.startGenerate();
+  h.ctrl.confirmContent();
+  h.host.app.ActivePresentation.Slides.Item(3).NotesPage.Shapes.Item(1).spec.onWrite = () => {
+    throw new Error("备注写入失败");
+  };
+  assert.equal(h.ctrl.append(h.host.app).status, "PARTIAL");
+  assert.equal(h.host.app.ActivePresentation.Slides.Count, 7);
+  await assert.rejects(h.ctrl.startGenerate(), /已有追加进度/);
+  assert.equal(h.host.app.ActivePresentation.Slides.Count, 7);
 });
 
 test("任务窗格提供整套填充入口", () => {

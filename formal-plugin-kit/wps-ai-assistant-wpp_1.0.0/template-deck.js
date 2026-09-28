@@ -15,14 +15,26 @@
   var EXCLUDED_LABELS = { summary: "总结", backcover: "封底" };
   var LAYOUTS = { cover: "标题幻灯片", content: "标题和内容", agenda: "节标题", transition: "两栏内容" };
 
-  function slotLimit(role) {
-    if (role === "agenda") return 3;
-    if (role === "cover" || role === "transition") return 1;
-    return 4;
-  }
+  var ROLE_CAPACITY = {
+    content: { points: 4, characters: 260, lines: 8 },
+    cover: { points: 1, characters: 80, lines: 2 },
+    agenda: { points: 3, characters: 72, lines: 3 },
+    transition: { points: 1, characters: 40, lines: 2 }
+  };
 
   function isOverflow(role, points) {
-    return (points || []).length > slotLimit(role);
+    var limit = ROLE_CAPACITY[role] || ROLE_CAPACITY.content;
+    var items = (points || []).map(function (point) { return String(point || "").trim(); })
+      .filter(function (point) { return !!point; });
+    var characters = 0;
+    var lines = 0;
+    items.forEach(function (point) {
+      characters += point.length;
+      point.split(/\r\n|\r|\n/).forEach(function (line) {
+        lines += Math.max(1, Math.ceil(line.length / 32));
+      });
+    });
+    return items.length > limit.points || characters > limit.characters || lines > limit.lines;
   }
 
   function fingerprint(pages) {
@@ -105,8 +117,11 @@
     });
     var lefts = shapes.map(function (shape) { return shape.Left; }).sort(function (a, b) { return a - b; });
     var median = lefts.length ? lefts[Math.floor(lefts.length / 2)] : 0;
-    return shapes.filter(function (shape) { return shape.Left >= median - 0.1; })
+    var titles = shapes.filter(function (shape) { return shape.Left >= median - 0.1; })
       .sort(function (a, b) { return a.Top - b.Top; });
+    var numbers = shapes.filter(function (shape) { return shape.Left < median - 0.1; })
+      .sort(function (a, b) { return a.Top - b.Top; });
+    return titles.map(function (title, index) { return { title: title, number: numbers[index] }; });
   }
 
   function fillPage(slide, page) {
@@ -117,7 +132,11 @@
     } else if (page.pageRole === "agenda") {
       var slots = agendaSlots(slide);
       if ((page.keyPoints || []).length > slots.length) throw new Error("目录超出模板槽位，已阻止截断。");
-      (page.keyPoints || []).forEach(function (point, index) { writeText(slots[index], point, "目录项"); });
+      slots.forEach(function (slot, index) {
+        var point = (page.keyPoints || [])[index];
+        writeText(slot.title, point || "", "目录项");
+        if (!point && slot.number) writeText(slot.number, "", "目录编号");
+      });
     } else if (page.pageRole === "transition") {
       writeText(findShape(shapes, [1, 3], ["标题 3"]), page.title, "标题");
       var subtitle = null;
@@ -170,6 +189,7 @@
 
   function appendTemplateDeck(app, deck) {
     if (!app || !app.ActivePresentation || !app.ActivePresentation.Slides) throw new Error("未找到当前打开的演示文稿。");
+    if (deck.recoveryRequired) throw new Error("请先核查恢复并清理残页，再继续追加。");
     var pres = app.ActivePresentation;
     if (!deck.baselineSlideCount) deck.baselineSlideCount = pres.Slides.Count;
     var prototypeLimit = deck.baselineSlideCount;
@@ -181,7 +201,9 @@
         continue;
       }
       var created = null;
+      var beforeCount = pres.Slides.Count;
       try {
+        if (isOverflow(page.pageRole, page.keyPoints)) throw new Error("页面超出模板容量，已阻止写入。");
         created = createSlide(pres, page, prototypeLimit);
         if (!created || created.index <= prototypeLimit) throw new Error("禁止修改已有页。");
         fillPage(created.slide, page);
@@ -192,15 +214,19 @@
         if (created && created.slide && typeof created.slide.Delete === "function") {
           try { created.slide.Delete(); } catch (delErr) { rollbackError = delErr.message || String(delErr); }
         }
+        if (pres.Slides.Count !== beforeCount) rollbackError = rollbackError || "失败页删除后页数未恢复。";
+        if (rollbackError) {
+          deck.recoveryRequired = true;
+          deck.recoveryExpectedSlideCount = beforeCount;
+        }
         return {
           success: false,
           completed: false,
           status: rollbackError ? "ROLLBACK_FAILED" : "PARTIAL",
           error: err.message || String(err),
+          residualSlideIndex: rollbackError ? (created ? created.index : beforeCount + 1) : null,
           appendedRange: appended.length ? [appended[0], appended[appended.length - 1]] : [],
-          recoveryChoices: rollbackError
-            ? ["继续追加剩余页", "核查并清理未恢复的新增页"]
-            : ["继续追加剩余页", "已恢复失败页，可继续追加"]
+          recoveryChoices: rollbackError ? ["核查并清理残页后继续追加"] : ["继续追加剩余页"]
         };
       }
     }
@@ -229,7 +255,14 @@
       confirmedFingerprint: "",
       confirmedSessionId: "",
       confirmedOutlineSnapshot: "",
+      generatedSessionId: "",
+      generatedOutlineSnapshot: "",
       baselineSlideCount: 0,
+      appendedRange: [],
+      recoveryChoices: [],
+      recoveryRequired: false,
+      recoveryExpectedSlideCount: 0,
+      residualSlideIndex: null,
       elapsedMs: 0,
       excludedNotice: "",
       unverified: ["真实模型质量", "真实 WPS 固定模板排版与可编辑性"],
@@ -243,19 +276,28 @@
 
     function getState() { return state; }
 
+    function assertGenerationCurrent() {
+      if (getSessionId() !== state.generatedSessionId) throw new Error("目标演示文稿已变化，请重新生成整套内容。");
+      if (!hasConfirmedOutline() || JSON.stringify(getConfirmedOutline() || {}) !== state.generatedOutlineSnapshot) {
+        throw new Error("已确认大纲已变化，请重新生成整套内容。");
+      }
+    }
+
     function pollJob(jobId, sessionId) {
       return new Promise(function (resolve, reject) {
-        schedule(function () {
+        function check() {
           request("/ppt/template-page/jobs/" + encodeURIComponent(jobId) + "?documentSessionId=" + encodeURIComponent(sessionId), null, { method: "GET" })
             .then(function (resp) {
               if (!resp || !resp.success) throw new Error((resp && resp.message) || "查询任务失败");
               var data = resp.data || {};
               if (data.status === "completed") { resolve(data); return; }
               if (data.status === "failed") throw new Error((data.error && data.error.message) || "任务生成失败");
-              throw new Error("整套生成尚未完成");
+              if (data.status === "queued" || data.status === "running") { schedule(check, 500); return; }
+              throw new Error("任务未完成：" + (data.status || "未知状态"));
             })
             .catch(reject);
-        }, 10);
+        }
+        schedule(check, 10);
       });
     }
 
@@ -280,6 +322,9 @@
     }
 
     function startGenerate() {
+      if (state.recoveryRequired || state.pages.some(function (page) { return !!page.writtenSlideIndex; })) {
+        return Promise.reject(new Error("已有追加进度，请先核查恢复并完成剩余页面。"));
+      }
       if (!hasConfirmedOutline()) return Promise.reject(new Error("请先确认逐页大纲后再生成整套内容。"));
       var outline = getConfirmedOutline() || {};
       var selected = (outline.slides || []).filter(function (slide) { return ROLE_LABELS[slide.pageRole]; });
@@ -289,12 +334,21 @@
       state.contentConfirmed = false;
       state.elapsedMs = 0;
       state.baselineSlideCount = 0;
+      state.appendedRange = [];
+      state.recoveryChoices = [];
+      state.recoveryRequired = false;
+      state.recoveryExpectedSlideCount = 0;
+      state.residualSlideIndex = null;
+      state.generatedSessionId = getSessionId();
+      state.generatedOutlineSnapshot = JSON.stringify(outline);
       state.status = "running";
       state.error = null;
       notify();
       return selected.reduce(function (chain, slide) {
         return chain.then(function () {
+          assertGenerationCurrent();
           return submitPage(slide, outline.instruction || "").then(function (data) {
+            assertGenerationCurrent();
             var result = data.result || {};
             var role = result.pageRole || slide.pageRole;
             var points = result.keyPoints || [];
@@ -307,12 +361,15 @@
               keyPoints: points,
               sourceKeyPoints: slide.keyPoints || [],
               speakerNotes: result.speakerNotes || "",
+              sources: result.sources || [],
+              missingItems: result.missingItems || [],
               isOverflow: !!(result.isOverflow || isOverflow(role, points)),
               writtenSlideIndex: null
             });
           });
         });
       }, Promise.resolve()).then(function () {
+        assertGenerationCurrent();
         state.status = "preview";
         state.excludedNotice = excluded.length
           ? "以下大纲页不属于本模板四类页面，本次不写入：" + excluded.map(function (slide) {
@@ -327,11 +384,14 @@
 
     function confirmContent() {
       if (!state.pages.length) throw new Error("请先生成整套内容。");
-      if (state.pages.some(function (page) { return page.isOverflow; })) throw new Error("仍有超出容量的页面，请先精简或拆页。");
+      assertGenerationCurrent();
+      if (state.pages.some(function (page) { return page.isOverflow || isOverflow(page.pageRole, page.keyPoints); })) {
+        throw new Error("仍有超出容量的页面，请先精简或拆页。");
+      }
       state.contentConfirmed = true;
       state.confirmedFingerprint = fingerprint(state.pages);
       state.confirmedSessionId = getSessionId();
-      state.confirmedOutlineSnapshot = JSON.stringify(getConfirmedOutline() || {});
+      state.confirmedOutlineSnapshot = state.generatedOutlineSnapshot;
       notify();
       return state;
     }
@@ -380,6 +440,8 @@
         page.title = result.title || page.title;
         page.keyPoints = result.keyPoints || page.keyPoints;
         page.speakerNotes = result.speakerNotes || page.speakerNotes;
+        page.sources = result.sources || [];
+        page.missingItems = result.missingItems || [];
         page.isOverflow = !!(result.isOverflow || isOverflow(page.pageRole, page.keyPoints));
         state.contentConfirmed = false;
         state.elapsedMs += Number(data.elapsedMs) || 0;
@@ -390,6 +452,7 @@
 
     function append(app) {
       if (!state.contentConfirmed) throw new Error("请先确认整套内容。");
+      if (state.recoveryRequired) throw new Error("请先核查恢复并清理残页，再继续追加。");
       if (getSessionId() !== state.confirmedSessionId) throw new Error("目标演示文稿已变化，已阻止写入旧预览。");
       if (fingerprint(state.pages) !== state.confirmedFingerprint) throw new Error("已确认内容已变化，请重新确认后再写入。");
       if (JSON.stringify(getConfirmedOutline() || {}) !== state.confirmedOutlineSnapshot) throw new Error("已确认大纲已变化，请重新确认后再写入。");
@@ -399,8 +462,27 @@
       var written = appendTemplateDeck(app, state);
       state.status = written.completed ? "completed" : "partial";
       state.error = written.success ? null : { message: written.error || "" };
+      state.appendedRange = written.appendedRange;
+      state.recoveryChoices = written.recoveryChoices;
+      state.residualSlideIndex = written.residualSlideIndex || null;
       notify();
       return written;
+    }
+
+    function verifyRecovery(app) {
+      if (!state.recoveryRequired) throw new Error("当前没有需要核查的残页。");
+      if (getSessionId() !== state.confirmedSessionId) throw new Error("目标演示文稿已变化，无法核查恢复。");
+      var slides = app && app.ActivePresentation && app.ActivePresentation.Slides;
+      if (!slides || slides.Count !== state.recoveryExpectedSlideCount) {
+        throw new Error("残页尚未清理，请核对新增页后再核查恢复。");
+      }
+      state.recoveryRequired = false;
+      state.recoveryExpectedSlideCount = 0;
+      state.residualSlideIndex = null;
+      state.recoveryChoices = ["继续追加剩余页"];
+      state.error = null;
+      notify();
+      return state;
     }
 
     return {
@@ -409,6 +491,7 @@
       splitPage: splitPage,
       simplifyPage: simplifyPage,
       append: append,
+      verifyRecovery: verifyRecovery,
       getState: getState,
       hasConfirmedOutline: hasConfirmedOutline
     };

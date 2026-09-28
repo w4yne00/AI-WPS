@@ -2513,6 +2513,7 @@
     var previewEl = byId("ppt-template-deck-preview");
     var confirmBtn = byId("btn-ppt-confirm-template-deck");
     var appendBtn = byId("btn-ppt-append-template-deck");
+    var verifyBtn = byId("btn-ppt-verify-template-deck");
     var lines = [];
     if (v.excludedNotice) lines.push(helpers.escapeHtml(v.excludedNotice));
     if (v.pageCountMessage) lines.push(helpers.escapeHtml(v.pageCountMessage));
@@ -2520,6 +2521,19 @@
       var label = { cover: "封面", agenda: "目录", transition: "章节页", content: "正文页" }[page.pageRole] || page.pageRole;
       lines.push("<p><strong>" + helpers.escapeHtml(label) + "</strong> " + helpers.escapeHtml(page.title || "") +
         (page.isOverflow ? "（超出容量，可精简或拆页）" : "") + "</p>");
+      lines.push('<ul style="margin:0; padding-left:16px;">' + (page.keyPoints || []).map(function (point) {
+        return '<li>' + helpers.escapeHtml(point) + '</li>';
+      }).join('') + '</ul>');
+      lines.push('<div class="field-hint">演讲备注：' + helpers.escapeHtml(page.speakerNotes || "") + '</div>');
+      lines.push('<div class="field-hint">依据：</div>');
+      (page.sources || []).forEach(function (source) {
+        lines.push('<div class="field-hint">' + helpers.escapeHtml(source.fileName || '用户补充事实') + ' · ' +
+          helpers.escapeHtml(source.chapter || '正文') + '<br>' + helpers.escapeHtml(source.text || '') + '</div>');
+      });
+      if (!(page.sources || []).length) lines.push('<div class="field-hint">无出处引用，请核对。</div>');
+      (page.missingItems || []).forEach(function (item) {
+        lines.push('<div class="outline-missing-item">待补充：' + helpers.escapeHtml(item) + '</div>');
+      });
       if (page.isOverflow) {
         lines.push("<button type=\"button\" data-deck-action=\"simplify\" data-page-id=\"" + helpers.escapeHtml(page.pageId) + "\">精简</button>");
         lines.push("<button type=\"button\" data-deck-action=\"split\" data-page-id=\"" + helpers.escapeHtml(page.pageId) + "\">拆页</button>");
@@ -2527,7 +2541,17 @@
     });
     if (v.elapsedMs) lines.push("<p>生成耗时：" + helpers.escapeHtml(String(v.elapsedMs)) + " 毫秒</p>");
     if (v.unverified && v.unverified.length) lines.push("<p>未验证：" + helpers.escapeHtml(v.unverified.join("、")) + "</p>");
-    if (v.status === "partial" && v.error) lines.push("<p>" + helpers.escapeHtml(v.error.message || "") + "</p>");
+    if (v.status === "partial") {
+      if (v.appendedRange && v.appendedRange.length) {
+        lines.push("<p>已追加第 " + helpers.escapeHtml(String(v.appendedRange[0])) + " 至 " +
+          helpers.escapeHtml(String(v.appendedRange[1])) + " 页</p>");
+      }
+      if (v.residualSlideIndex) lines.push("<p>请核查第 " + helpers.escapeHtml(String(v.residualSlideIndex)) + " 页残页。</p>");
+      (v.recoveryChoices || []).forEach(function (choice) {
+        lines.push("<p>恢复选择：" + helpers.escapeHtml(choice) + "</p>");
+      });
+      if (v.error) lines.push("<p>" + helpers.escapeHtml(v.error.message || "") + "</p>");
+    }
     if (statusEl) {
       statusEl.hidden = !v.error;
       statusEl.textContent = v.error ? (v.error.message || "") : "";
@@ -2539,9 +2563,10 @@
     }
     if (confirmBtn) confirmBtn.hidden = !(v.pages && v.pages.length) || v.contentConfirmed;
     if (appendBtn) {
-      appendBtn.hidden = !v.contentConfirmed;
-      appendBtn.disabled = !v.contentConfirmed;
+      appendBtn.hidden = !v.contentConfirmed || !!v.recoveryRequired;
+      appendBtn.disabled = !v.contentConfirmed || !!v.recoveryRequired;
     }
+    if (verifyBtn) verifyBtn.hidden = !v.recoveryRequired;
   }
 
   function copyText(text, successMessage, feedback) {
@@ -6208,6 +6233,17 @@
         } catch (err) {
           setStatus(err.message || String(err));
         }
+      });
+    }
+    if (byId("btn-ppt-verify-template-deck")) {
+      byId("btn-ppt-verify-template-deck").addEventListener("click", function () {
+        var ctrl = ensureTemplateDeck();
+        if (!ctrl) return;
+        var app = typeof wps !== "undefined" ? wps.WppApplication() : null;
+        try {
+          ctrl.verifyRecovery(app);
+          setStatus("残页已清理，可继续追加剩余页。");
+        } catch (err) { setStatus(err.message || String(err)); }
       });
     }
     if (byId("ppt-template-deck-preview")) {
