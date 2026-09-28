@@ -16,10 +16,10 @@
 | 版本规则号 | `AI-WPS-WORD-EXCEL-PPT-0.26.0-preview.1` |
 | 当前阶段 | `P1` 平台底座 + Word + Excel + PPT |
 | 运行目标 | 麒麟 V10 ARM、Python 3.8、WPS 原生 JS 插件 |
-| 交付状态 | 自动化候选 `20260928-ab8e082` 已登记为 `candidate`；Issue #154 目标机验收保持 `manual-pending` |
+| 交付状态 | 自动化候选 `20260928-2b855ca` 已登记为 `candidate`；Issue #154 目标机验收保持 `manual-pending` |
 | 基线状态 | `v0.25.3-alpha` 已依据 Issue #59 完成目标机验收，状态为 `target-accepted` |
 
-`v0.26.0-preview.1` 汇总稳定的 Excel 任务反馈、只读智能填写预览与复制、Word 自动/手工/疑似目录处理与格式位置问题组，以及九类任务的紧凑模型配置入口。当前自动化候选为 [`ai-wps-delivery-20260928-ab8e082-v0260-preview1.tar.gz`](./dist-preview-delivery-kit/ai-wps-delivery-20260928-ab8e082-v0260-preview1.tar.gz)，源码提交为 `ab8e0825b6114eb77aebb1352b875c5da5746d50`，SHA-256 为 `e66d7c7f66fcd9da11075bdd933b95ccae186763f0bea1290ad881b4c3f81dde`。Word 资料编写未设置任务输出上限时，现会把预留的 8000 Token 上限传给模型，并明确提示输出耗尽。UTM 上包内麒麟 ARM 依赖安装与启动已通过；用户原资料生成及 Issue #154 目标机验收仍待验证。`v0.25.3-alpha` 的 `target-accepted` 基线仍按 Issue #59 保留记录。
+`v0.26.0-preview.1` 汇总稳定的 Excel 任务反馈、只读智能填写预览与复制、Word 自动/手工/疑似目录处理与格式位置问题组，以及十类任务的紧凑模型配置入口。当前自动化候选为 [`ai-wps-delivery-20260928-2b855ca-v0260-preview1.tar.gz`](./dist-preview-delivery-kit/ai-wps-delivery-20260928-2b855ca-v0260-preview1.tar.gz)，源码提交为 `2b855ca7ba3b465439c94a30d27ba48f666c8e98`，SHA-256 为 `f3badde0bd98bd921a22a008260dfd316ee7d955f83225858df95b0886a5813d`。Word“按需编写”现有独立图标、模型设置选项卡与底部结果预览。当前仍按一次模型调用生成草稿；若模型耗尽输出预算，需在其支持范围内调高上限或更换模型。本候选尚未在当前 UTM 安装及用户原资料上验证。`v0.25.3-alpha` 的 `target-accepted` 基线仍按 Issue #59 保留记录。
 
 版本规则：`AI-WPS-P{阶段}-{范围}-{主版本.次版本.修订号}-{yyyymmdd}`。主版本改兼容边界，次版本加用户可见能力，修订号覆盖缺陷、界面、打包和文档。
 
