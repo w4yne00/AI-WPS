@@ -73,11 +73,9 @@ function homeConfigStrip(html, hostName = "Excel") {
   const index = html.indexOf(marker);
   assert.ok(index >= 0, `${hostName} task page missing workflow-profile-strip`);
   const start = html.lastIndexOf("<", index);
-  let end = html.indexOf("<section class=\"controls", start);
-  if (end < start) {
-    end = html.indexOf("<section id=\"summary-controls\"", start);
-  }
-  assert.ok(end > start, `${hostName} home strip must sit above task controls`);
+  const closing = html.indexOf("</section>", start);
+  assert.ok(closing > start, `${hostName} configuration strip must be a complete section`);
+  const end = closing + "</section>".length;
   return html.slice(start, end);
 }
 

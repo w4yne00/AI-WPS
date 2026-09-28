@@ -138,7 +138,7 @@ test("material reading renders into a real browser DOM", (t) => {
   try { execFileSync("agent-browser", ["--version"], { stdio: "ignore" }); }
   catch (_) { t.skip("agent-browser unavailable"); return; }
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), "material-dom-"));
-  const run = (...args) => execFileSync("agent-browser", ["--session", "material-import", ...args], {
+  const run = (...args) => execFileSync("agent-browser", ["--session", "mi-" + path.basename(temp).slice(-6), ...args], {
     encoding: "utf8", env: { ...process.env, AGENT_BROWSER_SOCKET_DIR: temp }
   });
   const source = fs.readFileSync(path.join(pluginRoot, "material-import.js"), "utf8");
@@ -151,4 +151,24 @@ test("material reading renders into a real browser DOM", (t) => {
   } finally {
     try { run("close"); } finally { fs.rmSync(temp, { recursive: true, force: true }); }
   }
+});
+
+test('DOC conversion disables macros, converts a temporary copy and restores the active document', async () => {
+  const api = loadMaterialImport();
+  const events = [];
+  const active = {Activate(){ events.push('restore'); }};
+  const converted = {SaveAs2(file, format){ events.push(['save', file, format]); }, Close(save){ events.push(['close', save]); }};
+  const app = {AutomationSecurity:1, DisplayAlerts:1, Options:{UpdateLinksAtOpen:true}, ActiveDocument:active,
+    Documents:{Open(...args){ assert.equal(app.AutomationSecurity,3); assert.equal(app.Options.UpdateLinksAtOpen,false); assert.equal(args[2],true); assert.equal(args[11],false); events.push(['open',args[0]]); return converted; }}};
+  const calls = [];
+  const reading = await api.submitMaterialImport({fileName:'参考.doc', documentSessionId:'doc-a', application:app,
+    request:async (url, body) => {
+      calls.push(body);
+      return calls.length === 1 ? {success:true,data:{conversionRequired:true, conversionId:'token', sourcePath:'/tmp/source.doc', targetPath:'/tmp/converted.docx'}} : {success:true,data:{fileName:'参考.doc',blocks:[]}};
+    }});
+  assert.equal(reading.fileName,'参考.doc');
+  assert.equal(calls[1].conversionId,'token');
+  assert.equal(app.AutomationSecurity,1);
+  assert.equal(app.Options.UpdateLinksAtOpen,true);
+  assert.deepEqual(events, [['open','/tmp/source.doc'],['save','/tmp/converted.docx',12],['close',0],'restore']);
 });

@@ -141,6 +141,11 @@
     },
     {
       "type": "file",
+      "source": "adapter_service/app/services/word/material_document.py",
+      "target": "packages/adapter-start-kit/adapter_service/app/services/word/material_document.py"
+    },
+    {
+      "type": "file",
       "source": "adapter_service/app/services/word/material_composer.py",
       "target": "packages/adapter-start-kit/adapter_service/app/services/word/material_composer.py"
     },

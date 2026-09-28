@@ -43,31 +43,41 @@
             <strong>参考资料</strong>
             <details class="context-help material-help">
               <summary aria-label="查看资料编写说明">!</summary>
-              <div class="context-help-popover" role="note">最多导入 5 份 DOCX，合计 100,000 字。资料原文件和当前文档不会因导入而修改。只读取正文、标题、列表和表格文字；图片文字和嵌入附件未读取，读取结果不代表理解全部内容。字数统计和文件字节上限是实施参数。资料仅用于当前章节草稿；补充事实请与写作要求分开填写，资料有冲突时需手动选择依据。生成后核对出处、缺项、关键数字与承诺，缺项草稿须经确认后才能写入文档。</div>
+              <div class="context-help-popover" role="note">最多 5 份参考文档，合计 100,000 字。全部可读取文字、表格和原图一起发送给所选模型；不自动摘要或截断。无法读取的对象会明确提示。原文件保持不变，生成结果由您预览后使用。</div>
             </details>
           </div>
           <label class="field">
-            <span>添加 DOCX 资料</span>
-            <input id="material-import-file" type="file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" />
+            <span>上传参考文档</span>
+            <input id="material-import-file" type="file" accept=".doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" />
           </label>
           <p id="material-import-status" aria-live="polite">请选择资料。</p>
           <details id="material-reading-details" class="material-reading-details"><summary>查看资料读取结果</summary><div id="material-import-result"></div></details>
-          <label class="field" for="material-section-title"><span>目标章节</span>
+          <label class="field" for="material-section-title" hidden><span>目标章节</span>
             <textarea id="material-section-title" rows="2" placeholder="填写章节名称，或读取文档中选中的章节标题"></textarea>
           </label>
-          <button id="btn-material-selection" class="ghost-action" type="button">读取选中的章节</button>
+          <button id="btn-material-selection" hidden class="ghost-action" type="button">读取选中的章节</button>
           <label class="field" for="material-instruction"><span>写作要求</span>
-            <textarea id="material-instruction" rows="3" placeholder="说明本章节的结构、篇幅和语气要求"></textarea>
+            <textarea id="material-instruction" rows="5" placeholder="例如：根据参考文档，写一篇约 1500 字的建设方案；或只写“实施安排”这一段。"></textarea>
           </label>
-          <label class="field" for="material-user-facts"><span>补充事实</span>
+          <label class="field" for="material-user-facts" hidden><span>补充事实</span>
             <textarea id="material-user-facts" rows="3" placeholder="选填。补充资料未提及的最新数据、背景事实或关键信息。"></textarea>
+          </label>
+          <label class="field compact-policy-field" for="material-writing-policy-scene">
+            <span>写作规范</span>
+            <select id="material-writing-policy-scene">
+              <option value="auto">自动匹配</option>
+              <option value="yangqi">G企技术材料</option>
+              <option value="cybersecurity">网络安全技术材料</option>
+              <option value="official">党政公文</option>
+              <option value="disabled">不使用写作规范</option>
+            </select>
           </label>
           <div id="material-composer-context"></div>
           <div class="material-actions">
-            <button id="btn-material-generate" type="button">生成章节草稿</button>
-            <button id="btn-material-check-conflicts" class="ghost-action" type="button">核对事实冲突</button>
-            <button id="btn-material-cancel" class="ghost-action" type="button" disabled>取消任务</button>
-            <button id="btn-material-refresh" class="ghost-action" type="button">恢复查询</button>
+            <button id="btn-material-generate" type="button">开始编写</button>
+            <button id="btn-material-check-conflicts" hidden class="ghost-action" type="button">核对事实冲突</button>
+            <button id="btn-material-cancel" hidden class="ghost-action" type="button" disabled>取消任务</button>
+            <button id="btn-material-refresh" hidden class="ghost-action" type="button">恢复查询</button>
           </div>
           <p id="material-composer-status" role="status" aria-live="polite"></p>
         </section>

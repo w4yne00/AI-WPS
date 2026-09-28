@@ -230,7 +230,7 @@ test('render separates each paragraph from its source sidebar and safely display
  const root=document.createElement('div'); root.ownerDocument=document;
  const draft=result(); draft.paragraphs[0].text='<script>正文</script>'; draft.paragraphs[0].missingItems=['待核实日期'];
  context.window.renderMaterialComposer(root,{status:'succeeded',phaseLabel:'核对完成',result:draft});
- const row=root.children.find(x=>x.className==='material-composer-paragraph'); assert.ok(row); assert.equal(row.children[0].tagName,'p'); assert.equal(row.children[0].textContent,'<script>正文</script>'); assert.equal(row.children[1].tagName,'aside'); assert.ok(row.children[1].children.some(x=>x.textContent.includes('资料.docx'))); assert.ok(row.children[1].children.some(x=>x.textContent.includes('待核实日期'))); assert.ok(root.children.some(x=>x.textContent==='核对完成'));
+ const row=root.children.find(x=>x.className==='material-composer-paragraph'); assert.ok(row); assert.equal(row.children[0].tagName,'p'); assert.equal(row.children[0].textContent,'<script>正文</script>'); assert.equal(row.children[1].tagName,'details'); assert.ok(row.children[1].children.some(x=>x.textContent.includes('资料.docx'))); assert.ok(row.children[1].children.some(x=>x.textContent.includes('待核实日期'))); assert.ok(root.children.some(x=>x.textContent==='核对完成'));
 });
 
 test('catalog stays with inputs while generated paragraphs render in the bottom preview', () => {
@@ -580,7 +580,7 @@ test('render distinguishes user-supplied facts, unverified key facts, and missin
 
   const row = root.children.find(x => x.className === 'material-composer-paragraph');
   assert.ok(row);
-  const aside = row.children.find(x => x.tagName === 'aside');
+  const aside = row.children.find(x => x.tagName === 'details');
   assert.ok(aside);
   // 用户补充事实标识
   assert.ok(aside.children.some(x => x.textContent.includes('用户补充事实')));
@@ -904,4 +904,14 @@ test('switching documents isolates material catalog and prevents cross-document 
   await h.api.restore();
   assert.equal(h.last().catalogSummary.totalDocuments, 1);
   assert.equal(h.last().catalogSummary.documents[0].fileName, '文档A资料.docx');
+});
+
+test('free writing needs only instructions and reuses the selected writing policy', async () => {
+  const h = harness();
+  h.api.setMaterial({materialId:'mat-1', catalogSummary:{totalDocuments:1, documents:[{materialId:'mat-1'}], toc:[]}});
+  await h.api.start({instruction:'写一篇运行报告', writingPolicyScene:'cybersecurity'});
+  const submitted = h.calls.find(c => c.url === '/word/material-composer/jobs');
+  assert.ok(submitted, '自由写作不应要求章节标题');
+  assert.equal(submitted.body.writingPolicyScene, 'cybersecurity');
+  assert.equal(submitted.body.instruction, '写一篇运行报告');
 });

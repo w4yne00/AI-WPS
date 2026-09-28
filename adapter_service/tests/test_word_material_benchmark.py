@@ -172,7 +172,7 @@ class WordMaterial100kBenchmarkTests(unittest.TestCase):
         }
 
         with patch("app.services.provider_client.ProviderClient.resolve_task_auth",
-                   return_value={"providerBaseUrl": "https://model.invalid", "apiKey": "test"}), \
+                   return_value={"providerBaseUrl": "https://model.invalid", "apiKey": "test", "contextWindowTokens": 512000}), \
              patch("app.services.provider_client.ProviderClient.post_task",
                    return_value={"answer": json.dumps(ch1_mock_answer)}):
             job1 = composer_jobs.start({
@@ -211,7 +211,7 @@ class WordMaterial100kBenchmarkTests(unittest.TestCase):
         }
 
         with patch("app.services.provider_client.ProviderClient.resolve_task_auth",
-                   return_value={"providerBaseUrl": "https://model.invalid", "apiKey": "test"}), \
+                   return_value={"providerBaseUrl": "https://model.invalid", "apiKey": "test", "contextWindowTokens": 512000}), \
              patch("app.services.provider_client.ProviderClient.post_task",
                    return_value={"answer": json.dumps(ch2_mock_answer)}):
             job2 = composer_jobs.start({
@@ -361,7 +361,7 @@ class WordMaterialFactConflictReviewBenchmarkTests(unittest.TestCase):
         }
 
         with patch("app.services.provider_client.ProviderClient.resolve_task_auth",
-                   return_value={"providerBaseUrl": "https://model.invalid", "apiKey": "test"}), \
+                   return_value={"providerBaseUrl": "https://model.invalid", "apiKey": "test", "contextWindowTokens": 512000}), \
              patch("app.services.provider_client.ProviderClient.post_task",
                    return_value={"answer": json.dumps(mock_answer)}):
             job = composer_jobs.start({

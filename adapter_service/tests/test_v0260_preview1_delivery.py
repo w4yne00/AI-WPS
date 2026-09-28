@@ -1754,3 +1754,9 @@ def test_preview_delivery_includes_ppt_material_outline_runtime(tmp_path):
         check=False,
     )
     assert imported.returncode == 0, imported.stdout + imported.stderr
+
+
+def test_preview_includes_full_document_reader(tmp_path):
+    delivery = _prepare_delivery(tmp_path)
+    module = delivery / 'packages/adapter-start-kit/adapter_service/app/services/word/material_document.py'
+    assert module.is_file(), '按需编写引用的完整文档读取模块必须进入交付目录'

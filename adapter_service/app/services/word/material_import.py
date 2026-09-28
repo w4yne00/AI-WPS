@@ -8,6 +8,8 @@ from pathlib import Path
 import re
 import secrets
 import threading
+import tempfile
+import time
 import zipfile
 from typing import Dict, List, Optional
 from xml.etree import ElementTree
@@ -346,9 +348,10 @@ class WordMaterialImportService:
         state_dir: Optional[Path] = None,
         coordinator: Optional[LongTaskCoordinator] = None,
     ) -> None:
+        self._conversions = {}
         self._materials = {}
         self._session_catalogs = {}
-        self._import_lock = threading.Lock()
+        self._import_lock = threading.RLock()
         self._store = WordMaterialStore(base_dir=state_dir)
         self._coordinator = (
             coordinator if coordinator is not None else get_long_task_coordinator()
@@ -380,9 +383,62 @@ class WordMaterialImportService:
 
     def import_material(self, request: dict) -> dict:
         with self._import_lock:
+            self._expire_conversions()
+            if isinstance(request, dict) and request.get("conversionId"):
+                return self._finish_conversion(request)
             return self._import_material(request)
 
-    def _import_material(self, request: dict) -> dict:
+    def _expire_conversions(self):
+        for token, entry in list(self._conversions.items()):
+            if time.monotonic() - entry["created"] > 600:
+                entry["directory"].cleanup()
+                del self._conversions[token]
+
+    def _stage_conversion(self, payload: dict, content: bytes, material_id: str = "") -> dict:
+        session_id = str(payload.get("documentSessionId") or "").strip()
+        if not session_id or not content.startswith(bytes.fromhex("d0cf11e0a1b11ae1")):
+            raise AdapterError("MATERIAL_FILE_REJECTED", "DOC 文件无效或缺少文档会话。", status_code=400)
+        self._expire_conversions()
+        # One pending conversion per document avoids leaking copies on retries.
+        for token, entry in list(self._conversions.items()):
+            if entry["payload"].get("documentSessionId") == session_id:
+                entry["directory"].cleanup()
+                del self._conversions[token]
+        directory = tempfile.TemporaryDirectory(prefix="ai-wps-doc-")
+        source = Path(directory.name) / "source.doc"
+        target = Path(directory.name) / "converted.docx"
+        source.write_bytes(content)
+        token = secrets.token_urlsafe(24)
+        self._conversions[token] = {"directory": directory, "created": time.monotonic(),
+                                   "payload": dict(payload), "materialId": material_id}
+        return {"conversionRequired": True, "conversionId": token,
+                "documentSessionId": session_id, "sourcePath": str(source), "targetPath": str(target)}
+
+    def _finish_conversion(self, payload: dict) -> dict:
+        token = payload.get("conversionId")
+        entry = self._conversions.get(token) if isinstance(token, str) else None
+        if not entry or entry["payload"].get("documentSessionId") != payload.get("documentSessionId"):
+            raise AdapterError("MATERIAL_CONVERSION_EXPIRED", "转换会话已失效，请重新选择文件。", status_code=409)
+        try:
+            if payload.get("cancelConversion") is True:
+                return {"cancelled": True}
+            target = Path(entry["directory"].name) / "converted.docx"
+            if target.is_symlink() or not target.is_file() or target.stat().st_size > DOCX_MAX_PACKAGE_BYTES:
+                raise AdapterError("MATERIAL_CONVERSION_FAILED", "WPS 未生成有效的 DOCX 临时副本。", status_code=422)
+            converted = target.read_bytes()
+            try:
+                validate_docx_bytes(converted)
+            except DocxSecurityError as exc:
+                raise _security_error(exc) from exc
+            request = dict(entry["payload"], contentBase64=base64.b64encode(converted).decode("ascii"), sizeBytes=len(converted))
+            if entry["materialId"]:
+                return self._update_material(entry["materialId"], request, converted_doc=True)
+            return self._import_material(request, converted_doc=True)
+        finally:
+            entry["directory"].cleanup()
+            del self._conversions[token]
+
+    def _import_material(self, request: dict, converted_doc: bool = False) -> dict:
         payload = request or {}
         session_id = str(
             payload.get("documentSessionId") or payload.get("document_session_id") or ""
@@ -390,7 +446,10 @@ class WordMaterialImportService:
         self._check_composer_busy(session_id)
         file_name = str(payload.get("fileName") or payload.get("file_name") or "")
         content = _decode_upload(payload.get("contentBase64") or payload.get("content_base64"))
-        _reject_wrong_type(file_name, str(payload.get("mimeType") or payload.get("mime_type") or ""))
+        if file_name.lower().endswith(".doc") and not converted_doc:
+            return self._stage_conversion(payload, content)
+        if not converted_doc:
+            _reject_wrong_type(file_name, str(payload.get("mimeType") or payload.get("mime_type") or ""))
         doc_identity = str(
             payload.get("documentIdentity") or payload.get("document_identity") or ""
         ).strip()
@@ -459,6 +518,7 @@ class WordMaterialImportService:
             "extractedTableCells": doc_cells,
             "blocksCount": len(reading["blocks"]),
             "fragmentsCount": len(reading["fragments"]),
+            "fullReading": reading["fullReading"],
             "importedAt": now_iso,
             "updatedAt": now_iso,
         }
@@ -522,6 +582,7 @@ class WordMaterialImportService:
             "sourceFileUnchanged": True,
             "targetDocumentUnchanged": True,
             "understandsAllContent": False,
+            "fullReading": reading["fullReading"],
             "limits": reading["limits"],
             "disclosure": reading["disclosure"],
             "unreadRegions": reading["unreadRegions"],
@@ -601,6 +662,21 @@ class WordMaterialImportService:
             status_code=404,
         )
 
+    def read_complete_material(self, material_id: str, document_session_id: str) -> dict:
+        """Re-read the retained local package, including legacy imports."""
+        with self._import_lock:
+            view = self.view_material(material_id)
+            if view.get("documentSessionId") != document_session_id:
+                raise AdapterError("MATERIAL_NOT_FOUND", "当前文档没有该资料。", status_code=404)
+            if not re.fullmatch(r"mat_[a-f0-9]{16}", material_id):
+                raise AdapterError("MATERIAL_NOT_FOUND", "资料编号无效。", status_code=404)
+            directory = self._store._get_dir_for_session(document_session_id)
+            path = directory / "files" / (material_id + ".docx") if directory else None
+            if path is None or path.is_symlink() or not path.is_file():
+                raise AdapterError("MATERIAL_NOT_FOUND", "资料原始副本缺失，请重新导入。", status_code=404)
+            from app.services.word.material_document import extract_document
+            return extract_document(path.read_bytes(), view.get("fileName", ""))
+
     def bind_document(self, request: dict) -> dict:
         with self._import_lock:
             payload = request or {}
@@ -625,7 +701,7 @@ class WordMaterialImportService:
         with self._import_lock:
             return self._update_material(material_id, request)
 
-    def _update_material(self, material_id: str, request: dict) -> dict:
+    def _update_material(self, material_id: str, request: dict, converted_doc: bool = False) -> dict:
         old_view = self._materials.get(material_id)
         if old_view is None:
             old_view = self._store.load_material_view(material_id)
@@ -665,7 +741,10 @@ class WordMaterialImportService:
 
         file_name = str(payload.get("fileName") or payload.get("file_name") or old_view.get("fileName") or "")
         content = _decode_upload(payload.get("contentBase64") or payload.get("content_base64"))
-        _reject_wrong_type(file_name, str(payload.get("mimeType") or payload.get("mime_type") or ""))
+        if file_name.lower().endswith(".doc") and not converted_doc:
+            return self._stage_conversion(dict(payload, documentSessionId=session_id), content, material_id)
+        if not converted_doc:
+            _reject_wrong_type(file_name, str(payload.get("mimeType") or payload.get("mime_type") or ""))
 
         try:
             validated = validate_docx_bytes(content)
@@ -738,6 +817,7 @@ class WordMaterialImportService:
             "extractedTableCells": doc_cells,
             "blocksCount": len(reading["blocks"]),
             "fragmentsCount": len(reading["fragments"]),
+            "fullReading": reading["fullReading"],
             "importedAt": old_view.get("importedAt") or now_iso,
             "updatedAt": now_iso,
         }
@@ -799,6 +879,7 @@ class WordMaterialImportService:
             "sourceFileUnchanged": True,
             "targetDocumentUnchanged": True,
             "understandsAllContent": False,
+            "fullReading": reading["fullReading"],
             "limits": reading["limits"],
             "disclosure": reading["disclosure"],
             "unreadRegions": reading["unreadRegions"],
@@ -1012,14 +1093,22 @@ def _read_document(
                 blocks.append(block)
                 fragments.extend(table_fragments)
                 readable_count += count
+    from app.services.word.material_document import extract_document
+    complete_reading = extract_document(package, "material.docx")
+    readable_count = sum(len(b.get("text", "")) for b in complete_reading["blocks"])
     unread = _unread_regions(document_xml, package)
     return {
         "blocks": blocks,
         "fragments": fragments,
         "unreadRegions": unread,
+        "fullReading": {
+            "complete": complete_reading["complete"],
+            "imageCount": len(complete_reading["images"]),
+            "unreadObjects": complete_reading["unreadObjects"],
+        },
         "disclosure": (
-            "本次只读取正文、标题、列表和表格文字。"
-            "图片文字和嵌入附件未读取，不宣称理解全部内容。"
+            "已提取文字、表格及支持的原图；图片由多模态模型识别，不保证辨认全部细节。"
+            "完整读取状态和未读取对象见 fullReading，未读取对象不会静默略过。"
         ),
         "limits": {
             "parameterStatus": "implementation_parameter",

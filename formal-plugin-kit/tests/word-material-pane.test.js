@@ -5,6 +5,12 @@ const vm = require('node:vm');
 const path = require('node:path');
 const source = fs.readFileSync(path.join(__dirname, '../wps-ai-assistant_1.0.0/taskpane.js'), 'utf8');
 function load(name, context) {
+  if (!context.getActiveDocument) context.getActiveDocument = () => null;
+  if (name === 'renderMaterialComposerView') {
+    const originalById = context.byId;
+    const newControls = {'btn-material-refresh':{hidden:true}, 'material-writing-policy-scene':{value:'auto'}};
+    context.byId = id => originalById(id) || newControls[id];
+  }
   if (name === 'applyMaterialComposerResult') {
     context.isMaterialComposerFullDocumentSelection = load('isMaterialComposerFullDocumentSelection', {});
   }
@@ -203,9 +209,10 @@ for (const catalogOutcome of ['success', 'failure']) {
   });
 }
 
-test('chapter generation sends only explicit chapter and requirements, never document body', async () => {
+test('free writing never reuses hidden legacy chapter or facts or current document body', async () => {
   const nodes = {
     'material-section-title': {value: '实施安排'},
+    'material-user-facts': {value:'旧预算500万元'},
     'material-instruction': {value: '按阶段说明'},
     'material-composer-status': {textContent: ''}
   };
@@ -222,7 +229,7 @@ test('chapter generation sends only explicit chapter and requirements, never doc
     lastMaterialComposerView: null
   });
   await run();
-  assert.deepEqual(JSON.parse(JSON.stringify(input)), {sectionTitle:'实施安排', instruction:'按阶段说明'});
+  assert.deepEqual(JSON.parse(JSON.stringify(input)), {sectionTitle:'', instruction:'按阶段说明', writingPolicyScene:'auto'});
 });
 
 test('selecting a chapter reads only explicit selection and never modifies the document', () => {
@@ -313,7 +320,7 @@ test('a successful import shows its reading and allows selecting the same DOCX a
   await h.flush();
   assert.equal(input.value, '');
   assert.match(h.node('material-import-result').textContent, /资料正文/);
-  assert.equal(h.node('material-reading-details').open, true);
+  assert.equal(h.node('material-reading-details').open, false);
   assert.match(h.node('material-import-status').textContent, /已导入/);
 });
 
@@ -322,8 +329,8 @@ test('material pane keeps guidance in an accessible help control', () => {
   const panel = html.split('<section id="material-import-panel"')[1].split('<section class="controls')[0];
   assert.match(panel, /<details class="context-help material-help">/);
   assert.match(panel, /<summary aria-label="查看资料编写说明">!<\/summary>/);
-  assert.match(panel, /字数统计和文件字节上限是实施参数/);
-  assert.match(panel, /只读取正文、标题、列表和表格文字/);
+  assert.match(panel, /全部可读取文字、表格和原图/);
+  assert.match(panel, /不自动摘要或截断/);
   assert.match(panel, /id="material-reading-details"/);
   assert.doesNotMatch(panel, /<p class="field-hint">最多使用 5 份/);
 });
@@ -358,7 +365,7 @@ test('real pane generates and restores a read-only chapter with source sidebar i
   catch (_) { t.skip('agent-browser unavailable'); return; }
   const root = path.join(__dirname, '../wps-ai-assistant_1.0.0');
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'material-pane-'));
-  const run = (...args) => execFileSync('agent-browser', ['--session','material-pane', ...args], {encoding:'utf8', env:{...process.env, AGENT_BROWSER_SOCKET_DIR:temp}});
+  const run = (...args) => execFileSync('agent-browser', ['--session','mp-' + path.basename(temp).slice(-6), ...args], {encoding:'utf8', env:{...process.env, AGENT_BROWSER_SOCKET_DIR:temp}});
   const mock = `
 window.paneErrors=[];window.addEventListener('error',e=>paneErrors.push(e.message));
 window.confirm=function(){return true;};
@@ -410,50 +417,31 @@ window.fetch=async function(url,options){
     run('click','#btn-open-settings');
     run('eval',`(async()=>{var input=document.getElementById('material-import-file');var dt=new DataTransfer();dt.items.add(new File(['docx'],'资料.docx'));input.files=dt.files;input.dispatchEvent(new Event('change'));})();`);
     run('wait','--text','资料目录');
-    assert.equal(run('eval',`document.getElementById('material-reading-details').open && document.getElementById('material-import-result').textContent.length > 0`).trim(), 'true');
-    run('scrollintoview','.material-composer-toc summary');
-    run('click','.material-composer-toc summary');
-    run('scrollintoview','.material-composer-toc-chapter');
-    run('click','.material-composer-toc-chapter');
-    assert.equal(run('eval',`document.getElementById('material-section-title').value`).trim(), '"实施安排"');
-    run('fill','#material-instruction','简要说明责任和工期');
-    run('fill','#material-user-facts','预算调整为50万元');
-    run('scrollintoview','#btn-material-check-conflicts');
-    run('click','#btn-material-check-conflicts');
-    run('wait','--text','150万元与50万元存在差异');
-    run('scrollintoview','.material-composer-conflict-choice:last-child');
-    run('click','.material-composer-conflict-choice:last-child');
-    assert.equal(run('eval',`document.querySelectorAll('.material-composer-conflict-choice.active').length`).trim(),'1');
+    assert.equal(run('eval',`!document.getElementById('material-reading-details').open && document.getElementById('material-import-result').textContent.length > 0`).trim(), 'true');
+    assert.equal(run('eval',`document.getElementById('material-section-title').closest('label').hidden`).trim(), 'true');
+    run('fill','#material-instruction','简要说明责任和工期，预算调整为50万元');
+    run('select','#material-writing-policy-scene','cybersecurity');
     run('scrollintoview','#btn-material-generate');
     run('click','#btn-material-generate');
     run('wait','--text','response lost');
-    run('fill','#material-user-facts','预算调整为500万元');
-    assert.equal(run('eval',`document.querySelectorAll('.material-composer-conflict-choice').length`).trim(),'0');
-    run('scrollintoview','#btn-material-generate');
+    run('fill','#material-instruction','新的要求');
     run('click','#btn-material-generate');
     run('wait','--text','信息化处负责。');
     assert.equal(run('eval',`getComputedStyle(document.getElementById('material-result-section')).display !== 'none'`).trim(),'true');
     const posts=JSON.parse(JSON.parse(run('eval',`JSON.stringify(requests.filter(r=>r.path==='/word/material-composer/jobs').map(r=>r.body))`)));
     assert.equal(posts.length,2); assert.deepEqual(posts[1],posts[0]);
-    assert.equal(posts[1].userFacts,'预算调整为50万元');
-    assert.equal(posts[1].conflictResolutions[0].chosenCandidateId,'opt-2');
-    assert.equal(posts[1].conflictResolutions[0].chosenSource,'用户补充事实');
-    assert.equal(posts[1].conflictResolutions[0].topic,'项目预算');
-    assert.ok(run('get','text','#material-composer-result').includes('资料.docx'));
-    assert.equal(run('eval',`String(document.querySelectorAll('#material-composer-result .material-composer-sources').length)`).trim(),'"1"');
-    assert.equal(run('eval',`document.documentElement.scrollWidth <= innerWidth && getComputedStyle(document.getElementById('word-result-section')).display === "none"`).trim(), 'true');
-    assert.equal(run('eval',`document.getElementById('btn-material-apply').disabled`).trim(), 'false');
-    assert.equal(run('get','text','#btn-material-apply').trim(), '替换所选内容');
-    run('fill','#material-section-title','已修改的新目标');
-    assert.equal(run('eval',`document.getElementById('btn-material-apply').disabled`).trim(), 'true');
-    assert.ok(run('get','text','#material-composer-status').includes('目标章节或选区已变更，写入已暂停'));
-    run('fill','#material-section-title','实施安排');
-    assert.equal(run('eval',`document.getElementById('btn-material-apply').disabled`).trim(), 'false');
+    assert.equal(posts[1].writingPolicyScene,'cybersecurity');
+    assert.equal(posts[1].instruction,'简要说明责任和工期，预算调整为50万元');
+    assert.equal(run('eval',`document.querySelectorAll('#material-composer-result details.material-composer-sources').length`).trim(),'1');
+    assert.equal(run('eval',`document.documentElement.scrollWidth <= innerWidth`).trim(),'true');
+    assert.equal(run('eval',`document.getElementById('btn-material-apply').disabled`).trim(),'true');
+    run('eval',`mockStart=mockEnd; document.getElementById('material-instruction').dispatchEvent(new Event('input'));`);
+    assert.equal(run('get','text','#btn-material-apply').trim(),'在光标处插入');
     run('scrollintoview','#btn-material-apply');
     run('click','#btn-material-apply');
-    assert.ok(run('get','text','#material-composer-status').includes('章节草稿已替换至所选区域'));
+    assert.ok(run('get','text','#material-composer-status').includes('生成内容已插入至光标位置'));
     assert.equal(run('eval',`window.Application.ActiveDocument.Selection.Text`).trim(), '"信息化处负责。〔待补充：完成时间〕"');
-    assert.equal(run('eval',`window.mockBody`).trim(), '"前缀|信息化处负责。〔待补充：完成时间〕|后缀"');
+    assert.equal(run('eval',`window.mockBody`).trim(), '"前缀|实施安排信息化处负责。〔待补充：完成时间〕|后缀"');
     assert.equal(run('eval',`document.getElementById('btn-material-apply').disabled`).trim(), 'true');
     run('reload');
     run('wait','--text','信息化处负责。');
@@ -493,8 +481,8 @@ test('renderMaterialComposerView dynamically adapts btn-material-apply text and 
   assert.equal(nodes['btn-material-apply'].disabled, true);
 
   view({documentSessionId:'doc-a',status:'succeeded',busy:false,result:{plainText:'正文'},input:{sectionTitle:'第一章'}});
-  assert.equal(nodes['btn-material-apply'].disabled, false);
-  assert.equal(nodes['btn-material-apply'].textContent, '替换所选内容');
+  assert.equal(nodes['btn-material-apply'].disabled, true);
+  assert.equal(nodes['btn-material-apply'].textContent, '在光标处插入');
 
   selection = '';
   range.Text = '';
@@ -530,7 +518,7 @@ test('renderMaterialComposerView pauses replacement when section title in textar
 
   view({documentSessionId:'doc-a',status:'succeeded',busy:false,result:{plainText:'正文'},input:{sectionTitle:'原章节'}});
   assert.equal(nodes['btn-material-apply'].disabled, true);
-  assert.ok(nodes['material-composer-status'].textContent.includes('目标章节或选区已变更'));
+  assert.ok(nodes['material-composer-status'].textContent.includes('不会替换选中文字'));
 });
 
 test('clearing a completed draft title pauses write instead of restoring the old title', () => {
@@ -693,7 +681,7 @@ test('confirming a whole-document selection never writes the chapter draft', asy
 
   await apply();
   assert.equal(body, '第一章\r原有正文\r');
-  assert.match(nodes['material-composer-status'].textContent, /禁止全篇替换/);
+  assert.match(nodes['material-composer-status'].textContent, /不会替换选中文字/);
 });
 
 test('whole-document text is rejected when the host omits the final paragraph mark from the selection range', () => {
@@ -747,7 +735,7 @@ test('a selection whose range text disagrees with document offsets is never writ
 
 test('applyMaterialComposerResult reports failure and guides to manual copy when write fails', async () => {
   const doc = {
-    Selection: { Range: {Start: 2, End: 5, Text: '旧内容'} },
+    Selection: { Range: {Start: 2, End: 2, Text: ''} },
     Content: {Start: 0, End: 7, Text: '前缀旧内容后缀'}
   };
   const nodes = {
@@ -774,13 +762,13 @@ test('applyMaterialComposerResult reports failure and guides to manual copy when
   assert.ok(nodes['material-composer-status'].textContent.includes('文档受保护'));
 });
 
-test('editing composer facts updates draft inputs without mutating the submitted view', () => {
+test('editing free-writing inputs excludes hidden legacy facts without mutating submitted history', () => {
   const frozen={input:{sectionTitle:'预算',instruction:'编写',userFacts:'50万元'},conflictResolutions:[{chosenValue:'50万元'}]};
   let edited;
   const nodes={'material-section-title':{value:'预算'},'material-instruction':{value:'编写'},'material-user-facts':{value:'500万元'}};
   const change=load('handleMaterialComposerInputChange',{byId:id=>nodes[id],lastMaterialComposerView:frozen,ensureMaterialComposer:()=>({updateInput:input=>{edited=input;}})});
   change();
-  assert.equal(frozen.input.userFacts,'50万元'); assert.equal(edited.userFacts,'500万元');
+  assert.equal(frozen.input.userFacts,'50万元'); assert.equal(edited.userFacts,''); assert.equal(edited.sectionTitle,'');
 });
 
 test('late conflict failure cannot replace a new document or edited input notice in the pane', async () => {
@@ -865,7 +853,7 @@ test('renderMaterialComposerView disables apply and preserves copy while basis i
 
 test('applyMaterialComposerResult pauses write-back when basis is updated or removed', async () => {
   const doc = {
-    Selection: { Range: { Start: 2, End: 5, Text: '旧内容' } },
+    Selection: { Range: { Start: 2, End: 2, Text: '' } },
     Content: { Start: 0, End: 7, Text: '前缀旧内容后缀' }
   };
   const nodes = {
@@ -897,7 +885,7 @@ test('applyMaterialComposerResult pauses write-back when basis is updated or rem
 });
 
 test('checking the catalog pauses pane write without consuming the draft write attempt', async () => {
-  const doc = { Selection: { Range: { Start: 2, End: 5, Text: '旧内容' } }, Content: { Start: 0, End: 7, Text: '前缀旧内容后缀' } };
+  const doc = { Selection: { Range: { Start: 2, End: 2, Text: '' } }, Content: { Start: 0, End: 7, Text: '前缀旧内容后缀' } };
   const nodes = { 'material-section-title': { value: '第一章' }, 'material-composer-status': { textContent: '' }, 'btn-material-apply': { disabled: false } };
   let applied = false;
   const context = {

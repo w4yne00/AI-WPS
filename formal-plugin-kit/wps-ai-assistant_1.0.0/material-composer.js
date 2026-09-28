@@ -30,7 +30,7 @@ function createMaterialComposer(options) {
   var schedule = options.schedule || function (fn, ms) { return setTimeout(fn, ms); };
   function clone(value) { return JSON.parse(JSON.stringify(value)); }
   function inputs(input) {
-    return { sectionTitle: input && input.sectionTitle || '', instruction: input && input.instruction || '', userFacts: input && input.userFacts || '' };
+    return { sectionTitle: input && input.sectionTitle || '', instruction: input && input.instruction || '', userFacts: input && input.userFacts || '', writingPolicyScene: input && input.writingPolicyScene || 'auto' };
   }
   function updateInput(s, input) {
     var next = inputs(input);
@@ -124,7 +124,7 @@ function createMaterialComposer(options) {
     var phaseLabels = {
       preparing: '正在校验任务与资料...',
       extracting: '正在检索资料原文...',
-      provider_processing: '正在依据原文编写章节草稿...',
+      provider_processing: '正在依据原文编写生成内容...',
       parsing: '正在核对草稿出处与待补充项...'
     };
     s.phaseLabel = job.phaseLabel || phaseLabels[s.phase] || '';
@@ -266,14 +266,15 @@ function createMaterialComposer(options) {
       var retryingUncertain = Boolean(s.clientJobId && !s.jobId);
       var selectedInput = retryingUncertain ? s.input : input;
       var hasMaterial = Boolean(s.materialId || (s.materialIds && s.materialIds.length) || (s.catalogSummary && s.catalogSummary.totalDocuments));
-      if (!hasMaterial || !s.documentSessionId || !selectedInput || typeof selectedInput.sectionTitle !== 'string' || typeof selectedInput.instruction !== 'string' || !selectedInput.sectionTitle.trim() || !selectedInput.instruction.trim()) { s.error = '请先导入资料，并填写章节标题和编写要求。'; show(s); return; }
+      if (!hasMaterial || !s.documentSessionId || !selectedInput || typeof selectedInput.instruction !== 'string' || !selectedInput.instruction.trim()) { s.error = '请上传参考文档并填写写作要求。'; show(s); return; }
       if (!retryingUncertain) {
         updateInput(s, selectedInput);
         if (s.conflicts.some(function (conflict) {
           return !s.conflictResolutions.some(function (resolution) { return resolution.conflictId === conflict.conflictId; });
         })) { s.error = '请先对已展示的事实差异手动选择采纳依据。'; show(s); return; }
         s.input = {
-          sectionTitle: selectedInput.sectionTitle,
+          sectionTitle: selectedInput.sectionTitle || '',
+          writingPolicyScene: selectedInput.writingPolicyScene || 'auto',
           instruction: selectedInput.instruction
         };
         var uFacts = typeof selectedInput.userFacts === 'string' ? selectedInput.userFacts : '';
@@ -292,6 +293,7 @@ function createMaterialComposer(options) {
         documentSessionId: s.documentSessionId,
         clientJobId: s.clientJobId,
         sectionTitle: s.input.sectionTitle,
+        writingPolicyScene: s.input.writingPolicyScene || 'auto',
         instruction: s.input.instruction
       };
       if (s.input.userFacts) {
@@ -329,7 +331,7 @@ function createMaterialComposer(options) {
         throw new Error('当前活动文档与草稿所属文档不一致，已阻止写入。');
       }
       if (s.status !== 'succeeded' || !validResult(s.result, s.documentSessionId)) {
-        throw new Error('当前没有可写入的章节草稿。');
+        throw new Error('当前没有可写入的生成内容。');
       }
       var basisStatus = evaluateBasisStatus(s);
       if (basisStatus === 'checking') {
@@ -358,7 +360,7 @@ function createMaterialComposer(options) {
         throw new Error(s.error);
       }
       if (target && (target.isFullDocument || target.targetType === 'document')) {
-        throw new Error('章节草稿仅支持替换选区或光标插入，禁止全篇替换。');
+        throw new Error('生成内容仅支持替换选区或光标插入，禁止全篇替换。');
       }
       var mode = target && (target.hasSelection === true ||
         (target.hasSelection !== false && target.selectionText && target.selectionText.trim())) ? 'replace' : 'insert';
@@ -375,7 +377,7 @@ function createMaterialComposer(options) {
           throw new Error('文档写入未完成，请点击「复制正文」后手动粘贴。');
         }
         s.error = '';
-        s.phaseLabel = mode === 'replace' ? '章节草稿已替换至所选区域。' : '章节草稿已插入至光标位置。';
+        s.phaseLabel = mode === 'replace' ? '生成内容已替换至所选区域。' : '生成内容已插入至光标位置。';
         show(s);
         return { ok: true, mode: mode };
       } catch (error) {
@@ -447,10 +449,12 @@ function renderMaterialComposer(root, view, onSelectChapter, onResolveConflict, 
   var catalog = view.catalogSummary;
   if (catalog && Array.isArray(catalog.documents) && catalog.documents.length) {
     var directory = append(root, 'details', '', 'material-composer-toc');
+    directory.open = true;
     append(directory, 'summary', '资料目录（' + catalog.documents.length + ' 份）');
     catalog.documents.forEach(function (material) {
       var file = append(directory, 'section', '', 'material-composer-toc-file');
       append(file, 'strong', material.fileName || '未命名资料');
+      if (material.fullReading) append(file, 'p', (material.readableCharacterCount || 0) + ' 字 · ' + (material.fullReading.imageCount || 0) + ' 张原图 · ' + (material.fullReading.complete ? '已读取' : '未完整读取'), 'material-reading-summary');
       var actions = append(file, 'span', '', 'material-composer-file-actions');
       var btnUpdate = append(actions, 'button', '更新', 'ghost-action material-composer-btn-update');
       btnUpdate.type = 'button';
@@ -511,11 +515,17 @@ function renderMaterialComposer(root, view, onSelectChapter, onResolveConflict, 
   if (view.phaseLabel) append(output, 'p', view.phaseLabel, 'material-composer-phase');
   if (view.error) append(output, 'p', String(view.error), 'material-composer-error');
   if (!view.result) return;
+  if (view.result.inputCapacity && view.result.inputCapacity.warning) append(output, 'p', view.result.inputCapacity.warning, 'material-composer-capacity');
+  if (view.result.writingPolicyUsage) {
+    var usage = view.result.writingPolicyUsage;
+    append(output, 'p', usage.degraded ? '写作规范未完整应用，请核对结果。' : (usage.applied ? '已应用所选写作规范' : '本次未应用写作规范'), 'material-composer-policy');
+  }
+
   view.result.paragraphs.forEach(function (paragraph, index) {
     var row = append(output, 'section', '', 'material-composer-paragraph');
     append(row, 'p', paragraph.text, 'material-composer-body');
-    var sources = append(row, 'aside', '', 'material-composer-sources');
-    append(sources, 'h4', '第 ' + (index + 1) + ' 段出处');
+    var sources = append(row, 'details', '', 'material-composer-sources');
+    append(sources, 'summary', '第 ' + (index + 1) + ' 段出处');
     paragraph.sources.forEach(function (source) {
       var srcText = (source.sourceType === 'user' ? '[用户补充事实] ' : '') + source.fileName + ' / ' + source.section + ' / ' + source.fragmentId;
       append(sources, 'p', srcText);

@@ -2604,6 +2604,19 @@ body[data-task-mode="materialImport"] #word-result-section { display: none; }
   .material-composer-paragraph { grid-template-columns: minmax(0, 1fr); }
 }
 
+/* 按需编写：主流程只保留资料、要求和一个主要操作。 */
+#material-import-panel { padding: 20px; gap: 18px; font-family: system-ui, sans-serif; }
+#material-import-panel [hidden] { display: none !important; }
+#material-instruction { min-height: 8rem; line-height: 1.65; resize: vertical; }
+#material-import-panel .material-actions { display: flex; gap: 8px; }
+#btn-material-generate { width: 100%; min-height: 40px; border-radius: 8px; }
+#material-import-panel button:active { transform: scale(.98); }
+#material-import-panel :focus-visible { outline: 2px solid var(--accent, #2563eb); outline-offset: 3px; }
+#material-import-panel .material-composer-toc { margin-top: 8px; }
+@media (prefers-reduced-motion: reduce) {
+  #material-import-panel button:active { transform: none; }
+}
+
 /* Shared restrained settings and interaction treatment. */
 .model-interface-card,
 .workflow-settings-card,

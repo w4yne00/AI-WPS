@@ -1852,7 +1852,7 @@
         getSessionId: getMaterialComposerSessionId,
         render: renderMaterialComposerView,
         copyText: function (text) {
-          writeClipboardText(text, "章节草稿已复制。");
+          writeClipboardText(text, "生成内容已复制。");
         },
         applyText: function (text) {
           var activeDoc = (typeof getActiveDocument === "function") ? getActiveDocument() : null;
@@ -1876,17 +1876,26 @@
         (busy || (!lastMaterialComposerView && !byId("material-section-title").value))) {
       byId("material-section-title").value = view.input.sectionTitle || "";
       byId("material-instruction").value = view.input.instruction || "";
+      if (byId("material-writing-policy-scene")) byId("material-writing-policy-scene").value = view.input.writingPolicyScene || "auto";
       if (byId("material-user-facts")) {
         byId("material-user-facts").value = view.input.userFacts || "";
       }
     }
     lastMaterialComposerView = view;
     byId("material-composer-status").textContent = view.error || view.message || "";
-    ["material-import-file", "material-section-title", "material-instruction", "material-user-facts", "btn-material-selection", "btn-material-generate", "btn-material-check-conflicts"].forEach(function (id) {
+    ["material-import-file", "material-section-title", "material-instruction", "material-writing-policy-scene", "material-user-facts", "btn-material-selection", "btn-material-generate", "btn-material-check-conflicts"].forEach(function (id) {
       var el = byId(id);
       if (el) el.disabled = busy;
     });
+    var unreadMaterial = view.catalogSummary && (view.catalogSummary.documents || []).some(function (doc) { return doc.fullReading && !doc.fullReading.complete; });
+    if (unreadMaterial) {
+      byId("btn-material-generate").disabled = true;
+      byId("material-composer-status").textContent = "资料未完整读取，请查看读取详情或更换文件。";
+    }
     byId("btn-material-cancel").disabled = !busy;
+    byId("btn-material-cancel").hidden = !busy;
+    byId("btn-material-generate").hidden = busy;
+    byId("btn-material-refresh").hidden = !(view.error && (view.jobId || view.clientJobId));
     byId("btn-material-copy").disabled = !view.result;
 
     var activeDoc = (typeof getActiveDocument === "function") ? getActiveDocument() : null;
@@ -1897,13 +1906,11 @@
       ? currentRange.End > currentRange.Start : Boolean(currentSelText && String(currentSelText).trim());
     var applyBtn = byId("btn-material-apply");
     if (applyBtn) {
-      applyBtn.textContent = hasSelection ? "替换所选内容" : "在光标处插入";
+      applyBtn.textContent = "在光标处插入";
       var currentSection = (byId("material-section-title") && byId("material-section-title").value || "").trim();
       var targetSection = (view.input && view.input.sectionTitle || "").trim();
-      var sectionChanged = Boolean(view.result && view.status === "succeeded" &&
-        (currentSection !== targetSection || materialComposerTargetHasChanged(
-          materialComposerTargetSnapshot, activeDoc && getWritableSelection(activeDoc),
-          currentSection, view.documentSessionId)));
+      var sectionChanged = Boolean(view.result && materialComposerTargetSnapshot &&
+        materialComposerTargetSnapshot.documentSessionId !== view.documentSessionId);
       if (materialComposerWriteAttempted) {
         applyBtn.disabled = true;
         if (materialComposerAppliedMessage) {
@@ -1922,7 +1929,8 @@
         applyBtn.disabled = true;
         byId("material-composer-status").textContent = "目标章节或选区已变更，写入已暂停。请重新生成；重开窗格后仍可复制草稿。";
       } else {
-        applyBtn.disabled = busy || !view.result || view.status !== "succeeded";
+        applyBtn.disabled = busy || hasSelection || !view.result || view.status !== "succeeded";
+        if (hasSelection && view.result) byId("material-composer-status").textContent = "请单击文档中的插入位置，结果不会替换选中文字。";
       }
     }
 
@@ -1961,25 +1969,22 @@
           start: range.Start, end: range.End, selectedText: range.Text
         } : null;
     }
-    var userFactsEl = byId("material-user-facts");
-    var userFactsVal = userFactsEl && typeof userFactsEl.value === "string" ? userFactsEl.value : "";
     var composerInput = {
-      sectionTitle: byId("material-section-title").value,
+      sectionTitle: "",
+      writingPolicyScene: byId("material-writing-policy-scene") ? byId("material-writing-policy-scene").value : "auto",
       instruction: byId("material-instruction").value
     };
-    if (userFactsVal) {
-      composerInput.userFacts = userFactsVal;
-    }
     return ensureMaterialComposer().start(composerInput).catch(function (error) {
-      byId("material-composer-status").textContent = error.message || "章节草稿提交失败。";
+      byId("material-composer-status").textContent = error.message || "生成内容提交失败。";
     });
   }
 
   function handleMaterialComposerInputChange() {
     ensureMaterialComposer().updateInput({
-      sectionTitle: byId("material-section-title").value,
+      sectionTitle: "",
+      writingPolicyScene: byId("material-writing-policy-scene") ? byId("material-writing-policy-scene").value : "auto",
       instruction: byId("material-instruction").value,
-      userFacts: byId("material-user-facts") ? byId("material-user-facts").value : ""
+      userFacts: ""
     });
   }
 
@@ -1989,6 +1994,7 @@
     byId("material-composer-status").textContent = "正在核对资料与补充事实冲突...";
     return ensureMaterialComposer().checkConflicts({
       sectionTitle: byId("material-section-title").value,
+      writingPolicyScene: byId("material-writing-policy-scene") ? byId("material-writing-policy-scene").value : "auto",
       instruction: byId("material-instruction").value,
       userFacts: userFactsVal
     }).then(function (conflicts) {
@@ -2048,15 +2054,12 @@
       byId("material-composer-status").textContent = "未找到可写入的选区或光标位置，请先在文档中定位光标或选中目标段落。";
       return Promise.resolve();
     }
-    if (materialComposerTargetHasChanged(materialComposerTargetSnapshot, activeSelection,
-        currentSection, currentDocSession)) {
-      byId("btn-material-apply").disabled = true;
-      byId("material-composer-status").textContent = "目标章节或选区已变更，写入已暂停。请重新生成；草稿仍可复制。";
+    if (!activeRange || activeRange.Start !== activeRange.End) {
+      byId("material-composer-status").textContent = "请先单击文档中的插入位置，结果不会替换选中文字。";
       return Promise.resolve();
     }
-    if (isMaterialComposerFullDocumentSelection(document, activeSelection, selectionText)) {
-      byId("btn-material-apply").disabled = true;
-      byId("material-composer-status").textContent = "章节草稿禁止全篇替换，请缩小选区后重新确认。";
+    if (materialComposerTargetSnapshot && materialComposerTargetSnapshot.documentSessionId !== currentDocSession) {
+      byId("material-composer-status").textContent = "目标文档已变化，请返回生成结果所属文档。";
       return Promise.resolve();
     }
     var currentBasis = (lastMaterialComposerView && lastMaterialComposerView.basisStatus) || (composer.evaluateBasisStatus && composer.evaluateBasisStatus()) || "current";
@@ -2080,7 +2083,7 @@
       (currentRes.paragraphs && currentRes.paragraphs.some(function (p) { return p.missingItems && p.missingItems.length > 0; })));
     var confirmedMissing = true;
     if (hasMissing && typeof window.confirm === "function") {
-      confirmedMissing = window.confirm("当前章节草稿包含待补充项（正文已标注“〔待补充：...〕”），确认直接使用并写入文档吗？");
+      confirmedMissing = window.confirm("当前生成内容包含待补充项（正文已标注“〔待补充：...〕”），确认直接使用并写入文档吗？");
       if (!confirmedMissing) {
         byId("material-composer-status").textContent = "草稿包含待补充项，已取消写入。您可补全信息后重新生成，或点击「复制正文」手动编辑。";
         return Promise.resolve();
@@ -2091,15 +2094,15 @@
     return composer.apply({
       sectionTitle: currentSection,
       selectionText: selectionText,
-      hasSelection: activeRange.End > activeRange.Start,
+      hasSelection: false,
       documentSessionId: currentDocSession,
       isFullDocument: false,
       confirmedMissingItems: confirmedMissing
     }).then(function (res) {
       if (res && res.mode === "replace") {
-        materialComposerAppliedMessage = "章节草稿已替换至所选区域。";
+        materialComposerAppliedMessage = "生成内容已替换至所选区域。";
       } else {
-        materialComposerAppliedMessage = "章节草稿已插入至光标位置。";
+        materialComposerAppliedMessage = "生成内容已插入至光标位置。";
       }
       byId("material-composer-status").textContent = materialComposerAppliedMessage;
     }).catch(function (error) {
@@ -2108,6 +2111,7 @@
   }
 
   function syncMaterialComposerSession() {
+    if (window.materialConversionActive) return;
     if (state.currentMode !== "materialImport") {
       return;
     }
@@ -2260,6 +2264,7 @@
       mutationComposer = ensureMaterialComposer();
       mutationComposer.beginMaterialMutation(sessionId);
       return window.submitMaterialImport({
+        application: getActiveDocument() && getActiveDocument().Application,
         fileName: file.name,
         mimeType: file.type || "",
         sizeBytes: file.size || 0,
@@ -2271,7 +2276,7 @@
       if (!reading || materialImportRequestSequences[sessionId] !== requestSequence) { return; }
       if (sessionId !== getMaterialComposerSessionId()) { return; }
       window.renderMaterialReading(result, reading);
-      if (readingDetails) readingDetails.open = true;
+      if (readingDetails) readingDetails.open = Boolean(reading.fullReading && !reading.fullReading.complete);
       ensureMaterialComposer().setMaterial(reading);
       if (status) {
         if (reading.catalogSummary && reading.catalogSummary.totalDocuments) {
@@ -2320,6 +2325,7 @@
         mutationComposer.beginMaterialMutation(sessionId);
         return window.submitMaterialUpdate({
           materialId: materialId,
+          application: getActiveDocument() && getActiveDocument().Application,
           fileName: file.name,
           mimeType: file.type || "",
           sizeBytes: file.size || 0,
@@ -13055,7 +13061,7 @@
     if (btnMaterialApply) {
       btnMaterialApply.addEventListener("click", applyMaterialComposerResult);
     }
-    ["material-section-title", "material-instruction", "material-user-facts"].forEach(function (id) {
+    ["material-section-title", "material-instruction", "material-writing-policy-scene", "material-user-facts"].forEach(function (id) {
       var input = byId(id);
       if (input) ["input", "change"].forEach(function (ev) {
         input.addEventListener(ev, handleMaterialComposerInputChange);

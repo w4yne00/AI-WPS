@@ -5,7 +5,16 @@ import pytest
 
 from fastapi.testclient import TestClient
 from app.main import app
-from tests.test_word_material_import import build_docx, upload_payload
+from tests.test_word_material_import import build_docx as _build_docx, upload_payload, DOCUMENT_XML
+
+
+def build_docx(extra_parts=None, document_xml=None):
+    # Successful composition fixtures must contain a readable complete document.
+    # The import fixture deliberately has a dangling image relationship.
+    if document_xml is None:
+        document_xml = DOCUMENT_XML.replace(b'<w:p>\n      <w:r><w:drawing><a:blip r:embed="rId8" /></w:drawing></w:r>\n    </w:p>', b'')
+    return _build_docx(extra_parts, document_xml)
+
 
 
 @pytest.fixture(autouse=True)
@@ -142,7 +151,7 @@ def test_over_budget_rejected_before_model_call():
     assert response.json()['errors'][0]['code'] == 'MODEL_INPUT_OVER_BUDGET'
 
 
-def test_long_material_packs_final_prompt_inside_model_budget():
+def test_long_material_rejects_over_budget_without_selecting_excerpts():
     from app.services.long_task_coordinator import LongTaskCoordinator
     from app.services.provider_client import _estimate_direct_tokens
     from app.services.system_prompts import SystemPromptStore
@@ -168,13 +177,12 @@ def test_long_material_packs_final_prompt_inside_model_budget():
                return_value={'providerBaseUrl': 'https://model.invalid', 'apiKey': 'test',
                              'contextWindowTokens': 2500, 'maxOutputTokens': 500}), \
          patch('app.services.provider_client.ProviderClient.post_task', side_effect=provider_response):
-        job = jobs.start({'documentSessionId': 'doc-session-1', 'clientJobId': 'long-budget-0001',
-                          'sectionTitle': '关键事实', 'instruction': '编写章节'}, 'long-budget-trace')
-        terminal = coordinator.wait(job['jobId'], task_type='word.material_composer')
-
-    assert terminal['status'] == 'completed', terminal
-    system_prompt = SystemPromptStore().load('word.material_composer')['content']
-    assert _estimate_direct_tokens(system_prompt, sent[0]) <= 1750
+        from app.core.errors import AdapterError
+        with pytest.raises(AdapterError) as caught:
+            jobs.start({'documentSessionId': 'doc-session-1', 'clientJobId': 'long-budget-0001',
+                        'sectionTitle': '关键事实', 'instruction': '编写章节'}, 'long-budget-trace')
+    assert caught.value.code == 'MODEL_INPUT_OVER_BUDGET'
+    assert sent == []
 
 
 def test_composer_api_rejects_oversized_body_before_parsing():

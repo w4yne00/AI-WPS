@@ -1,4 +1,4 @@
-"""Read-only, source-grounded single-section material composition."""
+"""Source-grounded composition from complete documents and original images."""
 import json
 import re
 import threading
@@ -7,11 +7,13 @@ from datetime import datetime, timezone
 
 from app.core.errors import AdapterError
 from app.services.long_task_coordinator import get_long_task_coordinator, PRIORITY_INTERACTIVE
-from app.services.provider_client import ProviderClient, extract_answer, _extract_json_payload, _estimate_direct_tokens
+from app.services.provider_client import ProviderClient, extract_answer, _extract_json_payload
 from app.services.word.writing_jobs import CLIENT_JOB_ID_PATTERN
 
-from app.services.model_configurations import direct_model_input_budget, DEFAULT_CONTEXT_WINDOW_TOKENS, DEFAULT_RESERVED_OUTPUT_TOKENS
 from app.services.system_prompts import SystemPromptStore
+from app.services.provider_client import validate_composer_multimodal_input
+from app.services.writing_policy.service import get_writing_policy_service
+from app.services.writing_policy.scenes import SCENE_LABELS
 
 TASK_TYPE = 'word.material_composer'
 MATERIAL_COMPOSER_REQUEST_MAX_BYTES = 64 * 1024
@@ -312,11 +314,16 @@ class MaterialComposerJobs:
 
     def start(self, payload, trace_id):
         if not isinstance(payload, dict):
-            raise AdapterError('REQUEST_VALIDATION_FAILED', '请选择资料并填写目标章节和要求。', status_code=422)
-        required_fields = ('documentSessionId', 'clientJobId', 'sectionTitle', 'instruction')
+            raise AdapterError('REQUEST_VALIDATION_FAILED', '请上传参考文档并填写写作要求。', status_code=422)
+        required_fields = ('documentSessionId', 'clientJobId', 'instruction')
         if any(not isinstance(payload.get(k), str) or not payload[k].strip() for k in required_fields):
-            raise AdapterError('REQUEST_VALIDATION_FAILED', '请选择资料并填写目标章节和要求。', status_code=422)
+            raise AdapterError('REQUEST_VALIDATION_FAILED', '请上传参考文档并填写写作要求。', status_code=422)
         request = {key: payload[key].strip() for key in required_fields}
+        request['sectionTitle'] = str(payload.get('sectionTitle') or '').strip()
+        scene = payload.get('writingPolicyScene', 'auto')
+        if not isinstance(scene, str) or scene not in SCENE_LABELS:
+            raise AdapterError('REQUEST_VALIDATION_FAILED', '写作规范选择无效。', status_code=422)
+        request['writingPolicyScene'] = scene
         if payload.get('userFacts') and isinstance(payload['userFacts'], str) and payload['userFacts'].strip():
             request['userFacts'] = payload['userFacts'].strip()
         if 'conflictResolutions' in payload:
@@ -344,7 +351,7 @@ class MaterialComposerJobs:
             request_repr['materialIds'] = sorted(material_ids)
         fingerprint = json.dumps(request_repr, ensure_ascii=False, sort_keys=True)
 
-        with self._lock:
+        with self._lock, self.materials._import_lock:
             existing = self.coordinator.get(job_id, task_type=TASK_TYPE)
             if existing:
                 self.get(job_id, session_id)
@@ -374,6 +381,47 @@ class MaterialComposerJobs:
             else:
                 raise AdapterError('MATERIAL_NOT_FOUND', '当前文档会话没有该资料，请重新导入。', status_code=404)
 
+            # Re-read retained source packages. Cached excerpts from older imports
+            # never count as a complete multimodal document.
+            full_fragments, full_blocks, image_files = [], [], []
+            original_fragments = catalog_view.get('fragmentsList', [])
+            next_fragment = max([int(f['fragmentId'][5:]) for f in original_fragments
+                                 if re.fullmatch(r'frag-[0-9]+', f.get('fragmentId', ''))] or [0]) + 1
+            remaining_fragments = list(original_fragments)
+            for doc in catalog_view['documents']:
+                mid = doc['materialId']
+                whole = self.materials.read_complete_material(mid, session_id)
+                if not whole['complete']:
+                    raise AdapterError('MATERIAL_READ_INCOMPLETE',
+                                       '资料「' + doc.get('fileName', '') + '」包含未读取对象，请查看读取详情；未跳过内容。', status_code=422)
+                image_ids = {}
+                for image in whole['images']:
+                    image = deepcopy(image)
+                    old_id = image['imageId']
+                    image['imageId'] = mid + '-' + old_id
+                    image_ids[old_id] = image['imageId']
+                    image_files.append(image)
+                for block in whole['blocks']:
+                    block = dict(block, materialId=mid, fileName=doc.get('fileName', ''))
+                    if block['kind'] == 'image':
+                        block['imageId'] = image_ids[block['imageId']]
+                        block['text'] = '原图 ' + block['imageId'] + '（图中文字及数值须根据原图核对）'
+                    block['blockId'] = mid + '-' + block['blockId']
+                    full_blocks.append(block)
+                    matching = next((f for f in remaining_fragments if f.get('materialId') == mid
+                                     and f.get('text') == block.get('text')
+                                     and f.get('source', {}).get('part') == block['source']['part']), None)
+                    if matching is not None:
+                        fragment_id = matching['fragmentId']
+                        remaining_fragments.remove(matching)
+                    else:
+                        fragment_id = 'frag-' + str(next_fragment)
+                        next_fragment += 1
+                    full_fragments.append(dict(block, fragmentId=fragment_id))
+            catalog_view['blocks'] = full_blocks
+            catalog_view['fragmentsList'] = full_fragments
+            catalog_view['fragments'] = {f['fragmentId']: f for f in full_fragments}
+
             if request.get('conflictResolutions'):
                 conflicts = {c['conflictId']: c for c in detect_material_conflicts(
                     catalog_view, request.get('userFacts', ''), request['sectionTitle'], request['instruction'])}
@@ -402,13 +450,11 @@ class MaterialComposerJobs:
                 raise AdapterError('MODEL_CONFIG_INCOMPLETE', '资料编写尚未配置模型，请前往设置。', status_code=400)
 
             asset = SystemPromptStore().load(TASK_TYPE)
-            budget, _ = direct_model_input_budget(
-                int(auth.get('contextWindowTokens') or DEFAULT_CONTEXT_WINDOW_TOKENS),
-                int(auth.get('maxOutputTokens') or DEFAULT_RESERVED_OUTPUT_TOKENS)
-            )
-            overhead = _estimate_direct_tokens(asset['content'], self._prompt(request, []))
-            if overhead >= budget:
-                raise AdapterError('MODEL_INPUT_OVER_BUDGET', '资料超过单次模型预算，请缩小资料范围；未截断资料。', status_code=413)
+            policy = get_writing_policy_service().prepare(
+                'word.smart_write', [request['instruction']] + [f.get('text', '') for f in full_fragments], scene)
+            request['writingPolicy'] = policy.prompt_block
+            prompt = self._prompt(request, full_fragments)
+            capacity = validate_composer_multimodal_input(auth, asset['content'], prompt, image_files)
 
             return self.coordinator.submit(
                 job_id=job_id, trace_id=trace_id, task_type=TASK_TYPE, runner=self._run,
@@ -417,13 +463,15 @@ class MaterialComposerJobs:
                     'catalog': catalog_view,
                     'taskAuth': deepcopy(auth),
                     'traceId': trace_id,
-                    'budget': budget,
                     'systemPrompt': asset['content'],
+                    'imageFiles': image_files,
+                    'writingPolicyUsage': policy.usage,
+                    'inputCapacity': capacity,
                 },
                 request_fingerprint=fingerprint, failure_code='MATERIAL_COMPOSER_FAILED',
                 failure_message='资料编写失败，请检查模型结果或缩小资料范围。',
                 public_metadata={'documentSessionId': session_id, 'streamingEnabled': False},
-                safe_failure_codes={'MODEL_INPUT_OVER_BUDGET', 'MATERIAL_COMPOSER_INVALID_RESULT', 'PROVIDER_TIMEOUT', 'MODEL_CONFIG_INCOMPLETE', 'MODEL_FINAL_CONTENT_TOKEN_LIMIT'},
+                safe_failure_codes={'MATERIAL_COMPOSER_INCOMPLETE', 'MODEL_IMAGE_INPUT_UNSUPPORTED', 'IMAGE_ASSET_SIZE_LIMIT', 'IMAGE_ASSET_TYPE_INVALID', 'MODEL_INPUT_OVER_BUDGET', 'MATERIAL_COMPOSER_INVALID_RESULT', 'PROVIDER_TIMEOUT', 'MODEL_CONFIG_INCOMPLETE', 'MODEL_FINAL_CONTENT_TOKEN_LIMIT'},
                 priority_class=PRIORITY_INTERACTIVE, allow_running_cancel=True)
 
     def detect_conflicts(self, payload):
@@ -457,7 +505,9 @@ class MaterialComposerJobs:
             'sectionTitle': request['sectionTitle'],
             'instruction': request['instruction'],
             'materials': fragments,
+            'writingPolicy': request.get('writingPolicy', ''),
         }
+        payload['instructionSourceId'] = 'user-instruction'
         if request.get('userFacts'):
             payload['userFacts'] = request['userFacts']
             payload['userFactItems'] = parse_user_facts(request['userFacts'])[0]
@@ -469,29 +519,20 @@ class MaterialComposerJobs:
         progress('preparing')
         request = snapshot['request']
         catalog = snapshot['catalog']
-        budget = snapshot['budget']
         system_prompt = snapshot['systemPrompt']
 
         progress('extracting')
-        overhead = _estimate_direct_tokens(system_prompt, self._prompt(request, []))
-        available_tokens = budget - overhead
-        selected_fragments = extract_relevant_fragments(
-            catalog, request['sectionTitle'], request['instruction'], available_tokens
-        )
+        selected_fragments = catalog['fragmentsList']
         prompt = self._prompt(request, selected_fragments)
-        while selected_fragments and _estimate_direct_tokens(system_prompt, prompt) > budget:
-            available_tokens = int(available_tokens * 0.75)
-            selected_fragments = extract_relevant_fragments(
-                catalog, request['sectionTitle'], request['instruction'], available_tokens
-            )
-            prompt = self._prompt(request, selected_fragments)
-        if not selected_fragments or _estimate_direct_tokens(system_prompt, prompt) > budget:
-            raise AdapterError('MODEL_INPUT_OVER_BUDGET', '资料超过单次模型预算，请缩小资料范围；未截断资料。', status_code=413)
+        validate_composer_multimodal_input(snapshot['taskAuth'], system_prompt, prompt, snapshot.get('imageFiles', []))
 
         progress('provider_processing')
         body = self.provider.post_task(TASK_TYPE, snapshot['traceId'], {}, prompt,
-                                       task_auth=snapshot['taskAuth'], progress_callback=progress)
+                                       task_auth=snapshot['taskAuth'], progress_callback=progress,
+                                       image_files=snapshot.get('imageFiles') or None)
 
+        if body.get('finishReason') in ('length', 'max_tokens', 'content_filter'):
+            raise AdapterError('MATERIAL_COMPOSER_INCOMPLETE', '模型输出未完成，请调整篇幅或模型输出容量后重新生成。', status_code=502)
         progress('parsing')
         try:
             answer = _extract_json_payload(extract_answer(body))
@@ -501,6 +542,7 @@ class MaterialComposerJobs:
 
             user_facts_raw = request.get('userFacts', '')
             user_facts_items, user_fact_map = parse_user_facts(user_facts_raw)
+            user_fact_map['user-instruction'] = request['instruction']
 
             extracted_frag_map = {f['fragmentId']: f for f in selected_fragments}
             sections = {}
@@ -551,6 +593,8 @@ class MaterialComposerJobs:
                             'fileName': b_file or (catalog.get('documents') and catalog['documents'][0].get('fileName')) or '',
                             'section': sec_name,
                             'quote': fragment.get('text', ''),
+                            'imageId': fragment.get('imageId', ''),
+                            'location': fragment.get('source', {}),
                         })
                     else:
                         raise ValueError("fragment not in extracted set")
@@ -602,6 +646,8 @@ class MaterialComposerJobs:
 
         return {
             'plainText': '\n\n'.join(p['text'] for p in result),
+            'writingPolicyUsage': snapshot.get('writingPolicyUsage', {}),
+            'inputCapacity': snapshot.get('inputCapacity', {}),
             'paragraphs': result,
             'missingItems': missing,
             'unverifiedItems': all_unverified,

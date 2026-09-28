@@ -2260,6 +2260,33 @@ def _full_document_review_aggregate_response_format() -> Dict:
     }
 
 
+
+def validate_composer_multimodal_input(auth: dict, system_prompt: str, query: str, images: list) -> dict:
+    """Validate known limits without pretending text estimates cover images."""
+    budget, _ = direct_model_input_budget(
+        int(auth.get("contextWindowTokens") or DEFAULT_CONTEXT_WINDOW_TOKENS),
+        int(auth.get("maxOutputTokens") or DEFAULT_RESERVED_OUTPUT_TOKENS))
+    estimated = _estimate_direct_tokens(system_prompt, query)
+    if estimated > budget:
+        raise AdapterError("MODEL_INPUT_OVER_BUDGET", "全文超过当前模型容量，请更换大容量模型或主动缩减资料；未截断内容。", status_code=413)
+    for image in images:
+        _composer_image_data_uri(image)
+    return {"estimatedTextTokens": estimated, "imageCount": len(images),
+            "imageBudgetKnown": not bool(images),
+            "warning": "图片容量由模型服务核验；当前无法预估图片 Token，超限会明确报错，不会删图重试。" if images else ""}
+
+
+def _composer_image_data_uri(image: dict) -> str:
+    from app.services.word.material_document import _image_mime
+    data = image.get("data")
+    mime = image.get("mimeType")
+    if not isinstance(data, bytes) or not data or _image_mime(data) != mime:
+        raise AdapterError("IMAGE_ASSET_TYPE_INVALID", "资料图片格式无效，未跳过图片。", status_code=409)
+    if len(data) > 5 * 1024 * 1024:
+        raise AdapterError("IMAGE_ASSET_SIZE_LIMIT", "资料原图超过当前图片通道 5 MiB 上限，未压缩或删图。", status_code=413)
+    return "data:" + mime + ";base64," + base64.b64encode(data).decode("ascii")
+
+
 class ProviderClient:
     def __init__(
         self,
@@ -3213,10 +3240,17 @@ class ProviderClient:
         user_content = query
         if image_files:
             content_parts = [{"type": "text", "text": query}]
+            if task_type == "word.material_composer":
+                validate_composer_multimodal_input(resolved_task_auth, prompt_asset["content"], query, image_files)
             for image in image_files:
+                if task_type == "word.material_composer":
+                    content_parts.append({"type": "text", "text": str(image.get("imageId", ""))})
+                    image_uri = _composer_image_data_uri(image)
+                else:
+                    image_uri = self._image_data_uri(image)
                 content_parts.append({
                     "type": "image_url",
-                    "image_url": {"url": self._image_data_uri(image)},
+                    "image_url": {"url": image_uri},
                 })
             user_content = content_parts
         streaming_enabled = (
@@ -3791,6 +3825,8 @@ class ProviderClient:
                 allow_response_format_fallback=allow_response_format_fallback,
                 progress_callback=progress_callback,
             )
+        if task_type == "word.material_composer" and image_files:
+            raise AdapterError("MODEL_IMAGE_INPUT_UNSUPPORTED", "当前接入方式无法完整发送原图，请为按需编写选择支持图片的直连模型。", status_code=400)
         provider_base_url = str(
             resolved_task_auth.get("providerBaseUrl") or self.settings.provider_base_url.rstrip("/")
         ).rstrip("/")
