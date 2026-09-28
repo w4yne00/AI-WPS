@@ -253,6 +253,18 @@
               <button id="btn-ppt-append-slide-confirm" class="primary-button" type="button" style="width: 100%; margin-top: 8px;" hidden>追加到幻灯片末尾</button>
             </div>
           </section>
+          <section id="ppt-template-deck-card" class="template-page-card" hidden style="margin-top: 12px; padding: 12px; border: 1px solid var(--border-color, #e5e7eb); border-radius: 6px; background-color: var(--card-bg, #ffffff);">
+            <div class="template-page-head" style="margin-bottom: 8px;">
+              <h3 style="margin: 0; font-size: 13px; font-weight: 600;">模板整套填充</h3>
+              <p class="field-hint" style="margin: 4px 0 0; font-size: 12px; color: var(--text-muted, #6b7280);">先确认大纲，再确认封面、目录、章节页和正文，最终确认后追加到末尾。不修改已有页。</p>
+            </div>
+            <button id="btn-ppt-generate-template-deck" class="primary-button" type="button" style="width: 100%;">生成整套内容</button>
+            <div id="ppt-template-deck-status" class="inline-status" hidden style="margin-top: 8px;"></div>
+            <div id="ppt-template-deck-preview" hidden style="margin-top: 8px;"></div>
+            <button id="btn-ppt-confirm-template-deck" class="ghost-action" type="button" style="width: 100%; margin-top: 8px;" hidden>确认整套内容</button>
+            <button id="btn-ppt-append-template-deck" class="primary-button" type="button" style="width: 100%; margin-top: 8px;" hidden>追加到演示文稿末尾</button>
+            <button id="btn-ppt-verify-template-deck" class="ghost-action" type="button" style="width: 100%; margin-top: 8px;" hidden>核查残页已清理</button>
+          </section>
         </section>
       </section>
 
@@ -494,6 +506,7 @@
     <script src="./taskpane-helpers.js?v=0.23.1-alpha"></script>
     <script src="./material-outline.js?v=0.23.1-alpha"></script>
     <script src="./template-body-page.js?v=0.23.1-alpha"></script>
+    <script src="./template-deck.js?v=0.23.1-alpha"></script>
     <script src="./taskpane.js?v=0.23.1-alpha"></script>
   </body>
 </html>

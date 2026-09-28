@@ -794,11 +794,12 @@ test('real DOM template page pane previews evidence before confirmation and appe
 window.paneErrors=[];window.addEventListener('error',e=>paneErrors.push(e.message));
 window.injected=false;window.confirmCalls=0;window.allowAppend=false;
 window.confirm=()=>{confirmCalls++;return allowAppend;};
-window.mockPres={Name:'A.pptx',FullName:'/test/A.pptx',SlideMaster:{CustomLayouts:{Count:1,Item:()=>({Name:'标题和内容'})}},Slides:{Count:3}};
+window.mockPres={Name:'A.pptx',FullName:'/test/A.pptx',SlideMaster:{CustomLayouts:{Count:2,Item:i=>({Name:i===1?'标题幻灯片':'标题和内容'})}},Slides:{Count:3}};
 window.writtenSlides=[];
 mockPres.Slides.AddSlide=function(index,layout){
+ if(window.failDeckContent&&layout.Name==='标题和内容')throw Error('正文版式暂不可写');
  const shape=t=>({PlaceholderFormat:{Type:t},TextFrame:{TextRange:{Text:''}}});
- const title=shape(1),body=shape(2),notes=shape(2);
+ const title=shape(layout.Name==='标题幻灯片'?3:1),body=shape(layout.Name==='标题幻灯片'?4:2),notes=shape(2);
  const slide={Shapes:{Count:2,Item:i=>[title,body][i-1]},NotesPage:{Shapes:{Count:1,Item:()=>notes}},Delete(){mockPres.Slides.Count--;}};
  mockPres.Slides.Count++;writtenSlides.push(slide);return slide;
 };
@@ -809,9 +810,12 @@ window.fetch=async function(url,options){
  if(p==='/ppt/materials/catalog')data={totalDocuments:1,documents:[{materialId:'m1',fileName:'依据.docx'}]};
  if(p==='/materials/reusable-sources')data={sources:[]};
  if(p==='/ppt/material-outline/conflicts')data={conflicts:[]};
- if(p==='/ppt/material-outline/jobs'||p==='/ppt/template-page/jobs')data={jobId:body.clientJobId,status:'running'};
+ if(p==='/ppt/material-outline/jobs'||p==='/ppt/template-page/jobs'){
+   if(p==='/ppt/template-page/jobs')window.lastTemplatePageRole=body.pageRole;
+   data={jobId:body.clientJobId,status:'running'};
+ }
  if(p.startsWith('/ppt/material-outline/jobs/'))data={status:'completed',result:${JSON.stringify(outline)}};
- if(p.startsWith('/ppt/template-page/jobs/'))data={status:'completed',result:${JSON.stringify(pageResult)}};
+ if(p.startsWith('/ppt/template-page/jobs/'))data={status:'completed',result:lastTemplatePageRole==='cover'?{...${JSON.stringify(pageResult)},keyPoints:['副标题']}:${JSON.stringify(pageResult)}};
  return {ok:true,status:200,json:async()=>({success:true,data})};
 };`;
   let html = fs.readFileSync(path.join(root, 'taskpane.html'), 'utf8');
@@ -832,6 +836,11 @@ window.fetch=async function(url,options){
     waitFor('document.querySelectorAll("[data-title-page]").length === 2');
     run('eval', 'document.querySelector("#btn-confirm-outline").click()');
     waitFor('!document.querySelector("#ppt-template-page-card").hidden');
+    run('eval', 'document.querySelector("#btn-ppt-generate-template-deck").click()');
+    waitFor('document.querySelector("#ppt-template-deck-preview").textContent.includes("架构")');
+    assert.match(run('get', 'text', '#ppt-template-deck-preview'), /分层.*隔离.*讲稿/s);
+    assert.match(run('get', 'text', '#ppt-template-deck-preview'), /依据\.docx.*待补数据/s);
+    assert.equal(run('eval', 'document.querySelectorAll("#ppt-template-deck-preview img").length').trim(), '0');
     assert.equal(run('eval', 'document.querySelector("#ppt-template-page-select").options.length').trim(), '1');
     run('eval', 'document.querySelector("#btn-ppt-generate-template-page").click()');
     waitFor('!document.querySelector("#ppt-template-page-preview").hidden');
@@ -846,6 +855,11 @@ window.fetch=async function(url,options){
     assert.equal(run('eval', 'mockPres.Slides.Count').trim(), '4');
     assert.equal(run('eval', 'writtenSlides[0].NotesPage.Shapes.Item(1).TextFrame.TextRange.Text').trim(), '"讲稿"');
     assert.equal(run('eval', 'document.querySelector("#btn-ppt-append-slide-confirm").hidden').trim(), 'true');
+    run('eval', 'document.querySelector("#btn-ppt-confirm-template-deck").click()');
+    run('eval', 'window.failDeckContent=true;document.querySelector("#btn-ppt-append-template-deck").click()');
+    assert.match(run('get', 'text', '#ppt-template-deck-preview'), /已追加第 5 至 5 页/);
+    assert.match(run('get', 'text', '#ppt-template-deck-preview'), /继续追加剩余页/);
+    assert.equal(run('eval', 'mockPres.Slides.Count').trim(), '5');
     assert.equal(run('eval', 'JSON.stringify(paneErrors)').trim(), '"[]"');
   } finally {
     try { run('close'); } finally { fs.rmSync(temp, { recursive: true, force: true }); }

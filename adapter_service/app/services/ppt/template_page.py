@@ -35,9 +35,16 @@ MAX_REQUEST_BYTES = 64 * 1024
 MAX_KEY_POINTS = 4
 MAX_CHARACTERS = 260
 MAX_ESTIMATED_LINES = 8
+ROLE_CAPACITY = {
+    "content": {"max_points": MAX_KEY_POINTS, "max_characters": MAX_CHARACTERS, "max_lines": MAX_ESTIMATED_LINES},
+    "cover": {"max_points": 1, "max_characters": 80, "max_lines": 2},
+    "agenda": {"max_points": 3, "max_characters": 72, "max_lines": 3},
+    "transition": {"max_points": 1, "max_characters": 40, "max_lines": 2},
+}
 
 
-def evaluate_template_page_capacity(key_points: List[str]) -> dict:
+def evaluate_template_page_capacity(key_points: List[str], page_role: str = "content") -> dict:
+    limits = ROLE_CAPACITY.get(page_role or "content", ROLE_CAPACITY["content"])
     points = [str(p).strip() for p in (key_points or []) if str(p).strip()]
     point_count = len(points)
     total_chars = sum(len(p) for p in points)
@@ -46,18 +53,18 @@ def evaluate_template_page_capacity(key_points: List[str]) -> dict:
         for point in points for line in re.split(r"\r\n|\r|\n", point)
     )
     is_overflow = (
-        point_count > MAX_KEY_POINTS
-        or total_chars > MAX_CHARACTERS
-        or estimated_lines > MAX_ESTIMATED_LINES
+        point_count > limits["max_points"]
+        or total_chars > limits["max_characters"]
+        or estimated_lines > limits["max_lines"]
     )
     return {
         "is_overflow": is_overflow,
         "total_characters": total_chars,
         "estimated_lines": estimated_lines,
         "point_count": point_count,
-        "max_characters": MAX_CHARACTERS,
-        "max_lines": MAX_ESTIMATED_LINES,
-        "max_points": MAX_KEY_POINTS,
+        "max_characters": limits["max_characters"],
+        "max_lines": limits["max_lines"],
+        "max_points": limits["max_points"],
     }
 
 
@@ -316,7 +323,7 @@ class PptTemplatePageCoordinator:
                 "text": frag.get("text", ""),
             })
 
-        capacity = evaluate_template_page_capacity(key_points)
+        capacity = evaluate_template_page_capacity(key_points, page_role)
 
         result = {
             "schemaVersion": "ppt.template_page.v1",

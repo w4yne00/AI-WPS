@@ -1740,6 +1740,7 @@ def test_preview_delivery_includes_ppt_material_outline_runtime(tmp_path):
         assert (adapter / relative).is_file(), relative
     assert (delivery / "packages/wps-ai-assistant-wpp_1.0.0/material-outline.js").is_file()
     assert (delivery / "packages/wps-ai-assistant-wpp_1.0.0/template-body-page.js").is_file()
+    assert (delivery / "packages/wps-ai-assistant-wpp_1.0.0/template-deck.js").is_file()
     prompt_manifest = json.loads((adapter / "system_prompts/manifest.json").read_text(encoding="utf-8"))
     task = prompt_manifest["tasks"]["ppt.material_outline"]
     prompt = adapter / "system_prompts" / task["file"]

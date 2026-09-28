@@ -203,6 +203,11 @@
       "type": "file",
       "source": "formal-plugin-kit/wps-ai-assistant-wpp_1.0.0/template-body-page.js",
       "target": "packages/wps-ai-assistant-wpp_1.0.0/template-body-page.js"
+    },
+    {
+      "type": "file",
+      "source": "formal-plugin-kit/wps-ai-assistant-wpp_1.0.0/template-deck.js",
+      "target": "packages/wps-ai-assistant-wpp_1.0.0/template-deck.js"
     }
   ]
 }
