@@ -62,6 +62,30 @@ def test_composer_api_resolves_sources_and_preserves_missing_information():
         assert client.post('/word/material-composer/jobs', json=request).status_code == 409
 
 
+def test_composer_reports_exhausted_model_output_budget(tmp_path):
+    from app.services.long_task_coordinator import LongTaskCoordinator
+    from app.services.provider_client import _missing_final_content_error
+    from app.services.word.material_composer import MaterialComposerJobs
+    from app.services.word.material_import import WordMaterialImportService
+
+    materials = WordMaterialImportService(state_dir=tmp_path)
+    material = materials.import_material(upload_payload(build_docx()))
+    coordinator = LongTaskCoordinator()
+    jobs = MaterialComposerJobs(materials, coordinator=coordinator)
+    with patch('app.services.provider_client.ProviderClient.resolve_task_auth',
+               return_value={'providerBaseUrl': 'https://model.invalid', 'apiKey': 'test'}), \
+         patch('app.services.provider_client.ProviderClient.post_task',
+               side_effect=_missing_final_content_error('length')):
+        job = jobs.start(dict(materialId=material['materialId'], documentSessionId='doc-session-1',
+                              clientJobId='composer-output-limit-0001', sectionTitle='范围',
+                              instruction='编写'), 'composer-output-limit-trace')
+        terminal = coordinator.wait(job['jobId'], task_type='word.material_composer')
+
+    assert terminal['status'] == 'failed'
+    assert terminal['error']['code'] == 'MODEL_FINAL_CONTENT_TOKEN_LIMIT'
+    assert '最大输出 Token' in terminal['error']['message']
+
+
 def test_same_named_materials_keep_distinct_source_sections():
     from app.services.long_task_coordinator import LongTaskCoordinator
     from app.services.word.material_composer import MaterialComposerJobs
@@ -338,6 +362,7 @@ def test_composer_uses_its_own_model_configuration_and_system_prompt(tmp_path):
     assert terminal['status'] == 'completed', terminal
     assert captured[0]['model'] == 'composer-model'
     assert 'fragmentId' in captured[0]['messages'][0]['content']
+    assert captured[-1]['max_tokens'] == 8000
 
 
 def test_extract_relevant_fragments_within_budget_returns_all():

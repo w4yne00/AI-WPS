@@ -3193,6 +3193,8 @@ class ProviderClient:
             or DEFAULT_CONTEXT_WINDOW_TOKENS
         )
         max_output_tokens = resolved_task_auth.get("maxOutputTokens")
+        if task_type == "word.material_composer" and max_output_tokens is None:
+            max_output_tokens = DEFAULT_RESERVED_OUTPUT_TOKENS
         reserved_output = int(max_output_tokens or DEFAULT_RESERVED_OUTPUT_TOKENS)
         input_budget, safety_margin = direct_model_input_budget(
             context_window, reserved_output

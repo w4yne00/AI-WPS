@@ -423,7 +423,7 @@ class MaterialComposerJobs:
                 request_fingerprint=fingerprint, failure_code='MATERIAL_COMPOSER_FAILED',
                 failure_message='资料编写失败，请检查模型结果或缩小资料范围。',
                 public_metadata={'documentSessionId': session_id, 'streamingEnabled': False},
-                safe_failure_codes={'MODEL_INPUT_OVER_BUDGET', 'MATERIAL_COMPOSER_INVALID_RESULT', 'PROVIDER_TIMEOUT', 'MODEL_CONFIG_INCOMPLETE'},
+                safe_failure_codes={'MODEL_INPUT_OVER_BUDGET', 'MATERIAL_COMPOSER_INVALID_RESULT', 'PROVIDER_TIMEOUT', 'MODEL_CONFIG_INCOMPLETE', 'MODEL_FINAL_CONTENT_TOKEN_LIMIT'},
                 priority_class=PRIORITY_INTERACTIVE, allow_running_cancel=True)
 
     def detect_conflicts(self, payload):
