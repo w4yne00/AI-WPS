@@ -71,6 +71,17 @@ class WordMaterialImportApiTests(unittest.TestCase):
         from app.api.word import material_import_service
         material_import_service.clear()
 
+    def test_valid_docx_with_host_supplied_legacy_mime_is_accepted(self):
+        from fastapi.testclient import TestClient
+        from app.main import app
+
+        response = TestClient(app).post(
+            "/word/materials",
+            json=upload_payload(build_docx(), mime_type="application/vnd.ms-word"),
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertTrue(response.json()["success"])
+
     def test_import_and_view_keeps_source_and_shows_located_reading(self):
         """Dropping heading level, table columns, source location, or unread
         disclosure, or returning a rewritten file, would hide what was read.

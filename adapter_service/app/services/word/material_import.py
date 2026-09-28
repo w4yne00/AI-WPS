@@ -936,7 +936,7 @@ def _reject_wrong_type(file_name: str, mime_type: str) -> None:
             "只接受 DOCX 资料，当前文件类型不符。",
             status_code=400,
         )
-    if lowered_mime and "wordprocessingml" not in lowered_mime and lowered_mime not in {
+    if not lowered_name and lowered_mime and "wordprocessingml" not in lowered_mime and lowered_mime not in {
         "application/octet-stream",
         "application/zip",
     }:

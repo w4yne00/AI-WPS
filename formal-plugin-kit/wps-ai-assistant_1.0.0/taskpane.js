@@ -1881,7 +1881,7 @@
       }
     }
     lastMaterialComposerView = view;
-    byId("material-composer-status").textContent = view.error || view.message || "资料仅用于本次章节草稿；请核对结果中的出处、待核对项和缺项。";
+    byId("material-composer-status").textContent = view.error || view.message || "";
     ["material-import-file", "material-section-title", "material-instruction", "material-user-facts", "btn-material-selection", "btn-material-generate", "btn-material-check-conflicts"].forEach(function (id) {
       var el = byId(id);
       if (el) el.disabled = busy;
@@ -2236,9 +2236,11 @@
     var file = event.target.files && event.target.files[0];
     var status = byId("material-import-status");
     var result = byId("material-import-result");
+    var readingDetails = byId("material-reading-details");
     if (!file || typeof window.submitMaterialImport !== "function" || typeof window.readMaterialFile !== "function") {
       return;
     }
+    event.target.value = "";
     if (status) {
       status.textContent = "正在读取资料，不会修改原文件或当前文档。";
     }
@@ -2263,15 +2265,15 @@
       });
     }).then(function (reading) {
       if (!reading || materialImportRequestSequences[sessionId] !== requestSequence) { return; }
-      ensureMaterialComposer().setMaterial(reading);
       if (sessionId !== getMaterialComposerSessionId()) { return; }
       window.renderMaterialReading(result, reading);
+      if (readingDetails) readingDetails.open = true;
+      ensureMaterialComposer().setMaterial(reading);
       if (status) {
         if (reading.catalogSummary && reading.catalogSummary.totalDocuments) {
-          var totalChars = typeof reading.catalogSummary.totalCharacters === "number" ? reading.catalogSummary.totalCharacters.toLocaleString() : "0";
-          status.textContent = "已导入 " + reading.catalogSummary.totalDocuments + "/5 份资料，合计 " + totalChars + "/100,000 字。资料原文件和当前文档未修改。";
+          status.textContent = "已导入 " + reading.catalogSummary.totalDocuments + "/5 份资料。";
         } else {
-          status.textContent = "读取结果已显示。资料原文件和当前文档未修改。";
+          status.textContent = "资料读取完成。";
         }
       }
     }).catch(function (error) {

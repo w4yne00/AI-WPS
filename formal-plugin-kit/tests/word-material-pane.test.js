@@ -300,6 +300,48 @@ test('the latest material selection wins when reads finish out of order in one d
   assert.deepEqual(accepted,['B.docx']);
 });
 
+test('a successful import shows its reading and allows selecting the same DOCX again', async () => {
+  const h = materialMutationHarness();
+  const importFile = load('handleMaterialImportFileChange', h.context);
+  const input = { value: '资料.docx', files: [{ name: '资料.docx', type: 'application/vnd.ms-word', size: 4 }] };
+  h.request = async () => ({ success: true, data: {
+    materialId: 'm1', documentSessionId: 'doc-a', blocks: [{ kind: 'paragraph', text: '资料正文' }],
+    catalogSummary: { totalDocuments: 1, totalCharacters: 4, documents: [{ materialId: 'm1', fileName: '资料.docx' }], toc: [] }
+  } });
+  h.node('material-reading-details').open = false;
+  importFile({ target: input });
+  await h.flush();
+  assert.equal(input.value, '');
+  assert.match(h.node('material-import-result').textContent, /资料正文/);
+  assert.equal(h.node('material-reading-details').open, true);
+  assert.match(h.node('material-import-status').textContent, /已导入/);
+});
+
+test('material pane keeps guidance in an accessible help control', () => {
+  const html = fs.readFileSync(path.join(__dirname, '../wps-ai-assistant_1.0.0/taskpane.html'), 'utf8');
+  const panel = html.split('<section id="material-import-panel"')[1].split('<section class="controls')[0];
+  assert.match(panel, /<details class="context-help material-help">/);
+  assert.match(panel, /<summary aria-label="查看资料编写说明">!<\/summary>/);
+  assert.match(panel, /字数统计和文件字节上限是实施参数/);
+  assert.match(panel, /只读取正文、标题、列表和表格文字/);
+  assert.match(panel, /id="material-reading-details"/);
+  assert.doesNotMatch(panel, /<p class="field-hint">最多使用 5 份/);
+});
+
+test('idle material pane does not repeat guidance in its status line', () => {
+  const nodes = new Map();
+  const render = load('renderMaterialComposerView', {
+    getMaterialComposerSessionId: () => 'doc-a',
+    byId: id => {
+      if (!nodes.has(id)) nodes.set(id, { textContent: '', value: '', disabled: false });
+      return nodes.get(id);
+    },
+    window: { renderMaterialComposer() {} }
+  });
+  render({ documentSessionId: 'doc-a', status: 'idle', busy: false, result: null, input: {} });
+  assert.equal(nodes.get('material-composer-status').textContent, '');
+});
+
 test('real pane generates and restores a read-only chapter with source sidebar in a narrow viewport', t => {
   const {execFileSync} = require('node:child_process');
   const os = require('node:os');
@@ -352,6 +394,7 @@ window.fetch=async function(url,options){
     assert.ok(errors.includes('[]'),errors);
     run('eval',`(async()=>{var input=document.getElementById('material-import-file');var dt=new DataTransfer();dt.items.add(new File(['docx'],'资料.docx'));input.files=dt.files;input.dispatchEvent(new Event('change'));})();`);
     run('wait','--text','资料目录');
+    assert.equal(run('eval',`document.getElementById('material-reading-details').open && document.getElementById('material-import-result').textContent.length > 0`).trim(), 'true');
     run('scrollintoview','.material-composer-toc summary');
     run('click','.material-composer-toc summary');
     run('scrollintoview','.material-composer-toc-chapter');

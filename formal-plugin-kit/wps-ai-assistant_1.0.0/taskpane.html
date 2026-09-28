@@ -39,12 +39,19 @@
         </section>
 
         <section id="material-import-panel" class="mode-block" hidden>
+          <div class="material-import-head">
+            <strong>参考资料</strong>
+            <details class="context-help material-help">
+              <summary aria-label="查看资料编写说明">!</summary>
+              <div class="context-help-popover" role="note">最多导入 5 份 DOCX，合计 100,000 字。资料原文件和当前文档不会因导入而修改。只读取正文、标题、列表和表格文字；图片文字和嵌入附件未读取，读取结果不代表理解全部内容。字数统计和文件字节上限是实施参数。资料仅用于当前章节草稿；补充事实请与写作要求分开填写，资料有冲突时需手动选择依据。生成后核对出处、缺项、关键数字与承诺，缺项草稿须经确认后才能写入文档。</div>
+            </details>
+          </div>
           <label class="field">
-            <span>添加 DOCX 资料（最多 5 份）</span>
+            <span>添加 DOCX 资料</span>
             <input id="material-import-file" type="file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" />
           </label>
-          <p id="material-import-status" aria-live="polite">选择一份 DOCX 后查看读取结果。不会修改资料原文件或当前文档。</p>
-          <details><summary>查看资料读取结果</summary><div id="material-import-result"></div></details>
+          <p id="material-import-status" aria-live="polite">请选择资料。</p>
+          <details id="material-reading-details" class="material-reading-details"><summary>查看资料读取结果</summary><div id="material-import-result"></div></details>
           <label class="field" for="material-section-title"><span>目标章节</span>
             <textarea id="material-section-title" rows="2" placeholder="填写章节名称，或读取文档中选中的章节标题"></textarea>
           </label>
@@ -55,7 +62,6 @@
           <label class="field" for="material-user-facts"><span>补充事实</span>
             <textarea id="material-user-facts" rows="3" placeholder="选填。补充资料未提及的最新数据、背景事实或关键信息。"></textarea>
           </label>
-          <p class="field-hint">最多使用 5 份、合计 100,000 字资料。补充事实与写作要求分别填写；若有冲突需手动选择采纳依据。生成后核对关键数字与承诺，无依据内容标待核对，缺项草稿须经确认后方可写入选区或光标。</p>
           <div class="material-actions">
             <button id="btn-material-generate" type="button">生成章节草稿</button>
             <button id="btn-material-check-conflicts" class="ghost-action" type="button">核对事实冲突</button>

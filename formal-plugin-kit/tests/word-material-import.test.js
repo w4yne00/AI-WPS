@@ -81,7 +81,7 @@ test("importing one DOCX shows located reading and does not change the document"
   assert.ok(visible.includes("word/document.xml"));
   assert.ok(visible.includes("未读取"));
   assert.ok(!visible.includes("已理解全部"));
-  assert.ok(visible.includes("实施参数"));
+  assert.ok(!visible.includes("实施参数"));
   assert.deepStrictEqual(writes, []);
   assert.deepStrictEqual(sourceSaves, []);
 });
