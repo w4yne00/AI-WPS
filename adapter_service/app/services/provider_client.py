@@ -3768,6 +3768,8 @@ class ProviderClient:
     ) -> Dict:
         resolved_task_auth = task_auth if task_auth is not None else self.resolve_task_auth(task_type)
         timeout = timeout_seconds or self.settings.timeout_seconds
+        if task_type == "word.material_composer":
+            timeout = max(timeout, INTERACTIVE_WRITING_TIMEOUT_SECONDS)
         if str(resolved_task_auth.get("accessMethod", "")) == ACCESS_DIRECT_MODEL:
             if files:
                 raise AdapterError(

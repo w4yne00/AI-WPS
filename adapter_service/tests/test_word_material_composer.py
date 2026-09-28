@@ -16,6 +16,25 @@ def clean_material_service():
     material_import_service.clear()
 
 
+@pytest.mark.parametrize('task_type,configured_timeout,expected_timeout', [
+    ('word.material_composer', 75, 600),
+    ('word.material_composer', 900, 900),
+    ('word.smart_write', 75, 75),
+])
+def test_material_composer_provider_wait_matches_interactive_writing_budget(
+    task_type, configured_timeout, expected_timeout
+):
+    from app.core.config import AppSettings
+    from app.services.provider_client import ProviderClient
+
+    provider = ProviderClient(AppSettings(timeout_seconds=configured_timeout))
+    with patch.object(provider, '_post_direct_task', return_value={'answer': 'ok'}) as submit:
+        provider.post_task(task_type, 'timeout-trace', {}, 'prompt',
+                           task_auth={'accessMethod': 'direct_model'})
+
+    assert submit.call_args.args[4] == expected_timeout
+
+
 def test_composer_api_resolves_sources_and_preserves_missing_information():
     client = TestClient(app)
     material = client.post('/word/materials', json=upload_payload(build_docx())).json()['data']
