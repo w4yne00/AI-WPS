@@ -16,10 +16,10 @@
 | 版本规则号 | `AI-WPS-WORD-EXCEL-PPT-0.26.0-preview.1` |
 | 当前阶段 | `P1` 平台底座 + Word + Excel + PPT |
 | 运行目标 | 麒麟 V10 ARM、Python 3.8、WPS 原生 JS 插件 |
-| 交付状态 | 自动化候选 `20260922-a0d6f5d` 已登记为 `candidate`；Issue #154 目标机验收保持 `manual-pending` |
+| 交付状态 | 自动化候选 `20260928-358fdd5` 已登记为 `candidate`；Issue #154 目标机验收保持 `manual-pending` |
 | 基线状态 | `v0.25.3-alpha` 已依据 Issue #59 完成目标机验收，状态为 `target-accepted` |
 
-`v0.26.0-preview.1` 汇总稳定的 Excel 任务反馈、只读智能填写预览与复制、Word 自动/手工/疑似目录处理与格式位置问题组，以及九类任务的紧凑模型配置入口。当前自动化候选为 [`ai-wps-delivery-20260922-a0d6f5d-v0260-preview1.tar.gz`](./dist-preview-delivery-kit/ai-wps-delivery-20260922-a0d6f5d-v0260-preview1.tar.gz)，源码提交为 `a0d6f5d1e772f9bdce2da59e9953918e6d2306dd`，SHA-256 为 `0de62be125b52420d899220322a9d2a3544fc50184aa1d0baf5d4ed089111631`。该候选仍须 Issue #154 目标机验收，不宣称已通过真实 WPS 或模型验收。`v0.25.3-alpha` 的 `target-accepted` 基线仍按 Issue #59 保留记录。
+`v0.26.0-preview.1` 汇总稳定的 Excel 任务反馈、只读智能填写预览与复制、Word 自动/手工/疑似目录处理与格式位置问题组，以及九类任务的紧凑模型配置入口。当前自动化候选为 [`ai-wps-delivery-20260928-358fdd5-v0260-preview1.tar.gz`](./dist-preview-delivery-kit/ai-wps-delivery-20260928-358fdd5-v0260-preview1.tar.gz)，源码提交为 `358fdd58b9b47a573df4fb40fe2537386dc3c04d`，SHA-256 为 `b8d696a03d8058987e779472c1e1619395f57ba44fa028613aef77cec9d66bfa`。本机生命周期模拟使用门禁提供的外部 Python 3.8 依赖；包内麒麟 ARM Wheel 安装和 Issue #154 目标机验收仍待验证。`v0.25.3-alpha` 的 `target-accepted` 基线仍按 Issue #59 保留记录。
 
 版本规则：`AI-WPS-P{阶段}-{范围}-{主版本.次版本.修订号}-{yyyymmdd}`。主版本改兼容边界，次版本加用户可见能力，修订号覆盖缺陷、界面、打包和文档。
 

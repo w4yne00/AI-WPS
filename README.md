@@ -16,10 +16,10 @@ Product page: [English](https://w4yne00.github.io/AI-WPS/en.html) · [中文](ht
 | Version rule number | `AI-WPS-WORD-EXCEL-PPT-0.26.0-preview.1` |
 | Phase | `P1` platform foundation + Word + Excel + PPT |
 | Runtime target | Kylin V10 ARM, Python 3.8, WPS native JS add-in |
-| Delivery status | Automated candidate `20260922-a0d6f5d` is recorded as `candidate`; Issue #154 target-machine acceptance remains `manual-pending` |
+| Delivery status | Automated candidate `20260928-358fdd5` is recorded as `candidate`; Issue #154 target-machine acceptance remains `manual-pending` |
 | Baseline | `v0.25.3-alpha` target-machine acceptance is `target-accepted` under Issue #59 |
 
-`v0.26.0-preview.1` aggregates stable Excel task feedback, output-only Smart Fill previews, automatic/manual/suspected TOC handling and location-grouped format issues in Word, plus compact model-configuration entries for all nine tasks. The current automated candidate is [`ai-wps-delivery-20260922-a0d6f5d-v0260-preview1.tar.gz`](./dist-preview-delivery-kit/ai-wps-delivery-20260922-a0d6f5d-v0260-preview1.tar.gz), built from source commit `a0d6f5d1e772f9bdce2da59e9953918e6d2306dd` with SHA-256 `0de62be125b52420d899220322a9d2a3544fc50184aa1d0baf5d4ed089111631`. It still requires Issue #154 target-machine acceptance and does not claim real WPS or model acceptance. The accepted `v0.25.3-alpha` baseline remains recorded under Issue #59.
+`v0.26.0-preview.1` aggregates stable Excel task feedback, output-only Smart Fill previews, automatic/manual/suspected TOC handling and location-grouped format issues in Word, plus compact model-configuration entries for all nine tasks. The current automated candidate is [`ai-wps-delivery-20260928-358fdd5-v0260-preview1.tar.gz`](./dist-preview-delivery-kit/ai-wps-delivery-20260928-358fdd5-v0260-preview1.tar.gz), built from source commit `358fdd58b9b47a573df4fb40fe2537386dc3c04d` with SHA-256 `b8d696a03d8058987e779472c1e1619395f57ba44fa028613aef77cec9d66bfa`. The macOS lifecycle simulation used the gate's external Python 3.8 dependency fixture; bundled Kylin ARM wheel installation and Issue #154 target-machine acceptance remain pending. The accepted `v0.25.3-alpha` baseline remains recorded under Issue #59.
 
 Version rule: `AI-WPS-P{phase}-{scope}-{major.minor.patch}-{yyyymmdd}`. Major is a compatibility boundary, minor is user-visible capability, patch covers fixes, UI, packaging, and docs.
 
