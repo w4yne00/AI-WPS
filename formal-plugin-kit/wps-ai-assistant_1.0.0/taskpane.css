@@ -2526,6 +2526,7 @@ body[data-task-mode="smartWrite"] #result-output {
 /* 资料章节草稿：沿用任务窗格控件，正文与依据保持可辨识。 */
 #material-import-panel { display: grid; gap: 12px; }
 #material-import-panel[hidden] { display: none; }
+.material-form-panel { margin-bottom: 10px; padding: 14px; border: 1px solid var(--hairline); border-radius: var(--radius-panel); background: var(--surface); box-shadow: var(--shadow-panel); }
 .material-import-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .material-import-head strong { font-size: 14px; }
 .material-reading-details { border: 1px solid var(--border-color); border-radius: var(--radius-panel); padding: 8px 10px; }
@@ -2533,6 +2534,7 @@ body[data-task-mode="smartWrite"] #result-output {
 #material-import-result { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 240px; overflow-y: auto; }
 .material-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 #material-composer-result { white-space: pre-wrap; overflow-wrap: anywhere; }
+.material-composer-preview { min-height: 285px; max-height: 590px; overflow: auto; margin-top: 10px; padding: 14px; border: 1px solid var(--hairline); border-radius: var(--radius-panel); background: var(--color-surface); line-height: 1.6; box-shadow: var(--shadow-soft); }
 .material-composer-toc { border: 1px solid var(--border-color, #e0e0e0); border-radius: 8px; padding: 8px 12px; }
 .material-composer-toc-file { margin-top: 10px; display: grid; gap: 4px; }
 .material-composer-file-actions { display: inline-flex; gap: 6px; margin-left: 8px; }

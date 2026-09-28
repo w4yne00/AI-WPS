@@ -347,6 +347,7 @@ def test_composer_uses_its_own_model_configuration_and_system_prompt(tmp_path):
         store.activate_configuration(config['id'])
     provider = ProviderClient(AppSettings(), model_configuration_store=store)
     assert 'word.material_composer' in provider.build_task_api_key_status()
+    assert provider.build_task_api_key_status()['word.material_composer']['label'] == '按需编写'
     materials = WordMaterialImportService()
     material = materials.import_material(upload_payload(build_docx()))
     jobs = MaterialComposerJobs(materials, provider, LongTaskCoordinator())

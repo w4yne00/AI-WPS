@@ -418,8 +418,9 @@ function createMaterialComposer(options) {
     }
   };
 }
-function renderMaterialComposer(root, view, onSelectChapter, onResolveConflict, onUpdateMaterial, onDeleteMaterial) {
+function renderMaterialComposer(root, view, onSelectChapter, onResolveConflict, onUpdateMaterial, onDeleteMaterial, previewRoot) {
   var doc = root.ownerDocument;
+  var output = previewRoot || root;
   var busy = view.busy || Boolean(view.materialMutationPending);
   function append(parent, tag, text, className) {
     var node = doc.createElement(tag);
@@ -430,7 +431,8 @@ function renderMaterialComposer(root, view, onSelectChapter, onResolveConflict, 
   }
   var labels = { idle: '请导入资料并填写编写要求。', queued: '任务已排队。', running: '正在编写，可关闭窗格后继续查询。', succeeded: '编写完成，请核对出处及待补充项。', failed: '编写未完成。', cancelled: '任务已取消。' };
   root.textContent = '';
-  if (view.catalogLabel || (view.catalogSummary && view.catalogSummary.totalDocuments)) {
+  if (output !== root) output.textContent = '';
+  if (output === root && (view.catalogLabel || (view.catalogSummary && view.catalogSummary.totalDocuments))) {
     var catText = view.catalogLabel || ('已导入 ' + view.catalogSummary.totalDocuments + '/5 份资料，合计 ' + (view.catalogSummary.totalCharacters || 0).toLocaleString() + '/100,000 字');
     append(root, 'p', catText, 'material-composer-catalog');
   }
@@ -505,12 +507,12 @@ function renderMaterialComposer(root, view, onSelectChapter, onResolveConflict, 
     });
   }
 
-  append(root, 'p', labels[view.status] || '', 'material-composer-status');
-  if (view.phaseLabel) append(root, 'p', view.phaseLabel, 'material-composer-phase');
-  if (view.error) append(root, 'p', String(view.error), 'material-composer-error');
+  append(output, 'p', labels[view.status] || '', 'material-composer-status');
+  if (view.phaseLabel) append(output, 'p', view.phaseLabel, 'material-composer-phase');
+  if (view.error) append(output, 'p', String(view.error), 'material-composer-error');
   if (!view.result) return;
   view.result.paragraphs.forEach(function (paragraph, index) {
-    var row = append(root, 'section', '', 'material-composer-paragraph');
+    var row = append(output, 'section', '', 'material-composer-paragraph');
     append(row, 'p', paragraph.text, 'material-composer-body');
     var sources = append(row, 'aside', '', 'material-composer-sources');
     append(sources, 'h4', '第 ' + (index + 1) + ' 段出处');
@@ -528,14 +530,14 @@ function renderMaterialComposer(root, view, onSelectChapter, onResolveConflict, 
   });
 
   if (view.result.unverifiedItems && view.result.unverifiedItems.length) {
-    var unverified = append(root, 'aside', '', 'material-composer-unverified');
+    var unverified = append(output, 'aside', '', 'material-composer-unverified');
     append(unverified, 'h4', '待核对关键事实（数字/日期/名称/责任/承诺）');
     append(unverified, 'small', '已标出未能与引文对齐的内容；AI 核对不伪造出处，亦不宣称发现全部冲突，请逐项核对。');
     view.result.unverifiedItems.forEach(function (item) { append(unverified, 'p', '待核对：' + String(item)); });
   }
 
   if (view.result.missingItems.length) {
-    var missing = append(root, 'aside', '', 'material-composer-missing');
+    var missing = append(output, 'aside', '', 'material-composer-missing');
     append(missing, 'h4', '待补充项');
     append(missing, 'small', '正文中已显示“〔待补充：具体信息〕”，可确认直接使用草稿或补充信息后写入。');
     view.result.missingItems.forEach(function (item) { append(missing, 'p', '待补充：' + String(item)); });

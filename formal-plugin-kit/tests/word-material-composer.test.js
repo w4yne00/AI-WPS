@@ -232,6 +232,22 @@ test('render separates each paragraph from its source sidebar and safely display
  context.window.renderMaterialComposer(root,{status:'succeeded',phaseLabel:'核对完成',result:draft});
  const row=root.children.find(x=>x.className==='material-composer-paragraph'); assert.ok(row); assert.equal(row.children[0].tagName,'p'); assert.equal(row.children[0].textContent,'<script>正文</script>'); assert.equal(row.children[1].tagName,'aside'); assert.ok(row.children[1].children.some(x=>x.textContent.includes('资料.docx'))); assert.ok(row.children[1].children.some(x=>x.textContent.includes('待核实日期'))); assert.ok(root.children.some(x=>x.textContent==='核对完成'));
 });
+
+test('catalog stays with inputs while generated paragraphs render in the bottom preview', () => {
+ const context={window:{}};
+ vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../wps-ai-assistant_1.0.0/material-composer.js'),'utf8'),context);
+ const document={createElement(tag){return {tagName:tag,children:[],appendChild(child){this.children.push(child);},addEventListener(){},textContent:'',className:''};}};
+ const catalog=document.createElement('div'); catalog.ownerDocument=document;
+ const preview=document.createElement('div'); preview.ownerDocument=document;
+ context.window.renderMaterialComposer(catalog,{
+  status:'succeeded',catalogSummary:{totalDocuments:1,totalCharacters:12,documents:[{materialId:'m1',fileName:'资料.docx'}],toc:[]},result:result()
+ },null,null,null,null,preview);
+ assert.ok(catalog.children.some(node=>node.className==='material-composer-toc'));
+ assert.ok(!catalog.children.some(node=>node.className==='material-composer-catalog'));
+ assert.ok(!catalog.children.some(node=>node.className==='material-composer-paragraph'));
+ assert.ok(preview.children.some(node=>node.className==='material-composer-paragraph'));
+ assert.ok(!preview.children.some(node=>node.className==='material-composer-toc'));
+});
 test('expired known job releases the material and allows another import', async () => {
  const h=harness(); h.api.setMaterial({materialId:'m1'}); await h.api.start({sectionTitle:'范围',instruction:'编写'}); h.respond=()=>Promise.reject(Object.assign(Error('expired'),{httpStatus:404,adapterCode:'material_composer_job_not_found'})); await h.api.refresh(); assert.equal(h.last().status,'idle'); assert.equal(h.last().jobId,''); h.api.setMaterial({materialId:'m2'}); assert.equal(h.last().materialId,'m2');
 });

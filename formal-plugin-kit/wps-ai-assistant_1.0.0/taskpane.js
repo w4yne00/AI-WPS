@@ -138,7 +138,7 @@
   var TASK_API_KEY_DEFS = [
     { taskType: "word.smart_write", label: "智能编写" },
     { taskType: "word.smart_imitation", label: "智能仿写" },
-    { taskType: "word.material_composer", label: "资料章节草稿" },
+    { taskType: "word.material_composer", label: "按需编写" },
     { taskType: "word.document_review", label: "文档审查" },
     { taskType: "word.format_review", label: "格式审查" }
   ];
@@ -212,8 +212,8 @@
       title: "设置"
     },
     materialImport: {
-      title: "资料章节草稿",
-      primaryText: "导入资料",
+      title: "按需编写",
+      primaryText: "按需编写",
       showRewriteOptions: false,
       showInstruction: false,
       showTemplate: false,
@@ -1926,7 +1926,7 @@
       }
     }
 
-    window.renderMaterialComposer(byId("material-composer-result"), view, function (sectionTitle) {
+    window.renderMaterialComposer(byId("material-composer-context"), view, function (sectionTitle) {
       if (busy || view.documentSessionId !== getMaterialComposerSessionId()) return;
       byId("material-section-title").value = sectionTitle;
       handleMaterialComposerInputChange();
@@ -1939,7 +1939,7 @@
     }, function (materialId) {
       if (busy || view.documentSessionId !== getMaterialComposerSessionId()) return;
       handleMaterialDelete(materialId);
-    });
+    }, byId("material-composer-result"));
   }
 
   function startMaterialComposer() {
@@ -2214,9 +2214,13 @@
 
   function setMaterialImportVisible(visible) {
     var panel = byId("material-import-panel");
+    var resultPanel = byId("material-result-section");
     var primary = byId("btn-run-primary");
     if (panel) {
       panel.hidden = !visible;
+    }
+    if (resultPanel) {
+      resultPanel.hidden = !visible;
     }
     if (primary) {
       primary.hidden = Boolean(visible);
@@ -3997,7 +4001,7 @@
     var taskLabels = {
       "word.smart_write": "选择智能编写模型配置",
       "word.smart_imitation": "选择智能仿写模型配置",
-      "word.material_composer": "选择资料章节草稿模型配置",
+      "word.material_composer": "选择按需编写模型配置",
       "word.document_review": "选择文档审查模型配置",
       "word.format_review": "选择格式审查模型配置"
     };
@@ -5579,6 +5583,8 @@
     var currentTask = getSettingsWorkflowTaskType();
     var isSupportedTask = (currentTask === "word.smart_write" || currentTask === "word.smart_imitation" || currentTask === "word.format_review" || currentTask === "word.document_review" || currentTask === "word.material_composer");
     section.hidden = !isSupportedTask;
+    var materialHelp = byId("word-material-model-help");
+    if (materialHelp) materialHelp.hidden = currentTask !== "word.material_composer";
     if (!isSupportedTask) {
       return;
     }
@@ -5656,9 +5662,11 @@
       tempInput.value = currentSelection && currentSelection.temperature !== null && currentSelection.temperature !== undefined ? currentSelection.temperature : "";
     }
     if (maxOutInput) {
+      maxOutInput.placeholder = currentTask === "word.material_composer" ? "默认 8000" : "0 或空表示不限";
       maxOutInput.value = currentSelection && currentSelection.maxOutputTokens !== null && currentSelection.maxOutputTokens !== undefined ? currentSelection.maxOutputTokens : "";
     }
     if (contextInput) {
+      contextInput.placeholder = currentTask === "word.material_composer" ? "默认 40000" : "0 或空表示不限";
       contextInput.value = currentSelection && currentSelection.contextWindowTokens ? currentSelection.contextWindowTokens : "";
     }
     var imageModeRow = byId("word-task-image-mode-row");

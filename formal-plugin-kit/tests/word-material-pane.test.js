@@ -328,6 +328,15 @@ test('material pane keeps guidance in an accessible help control', () => {
   assert.doesNotMatch(panel, /<p class="field-hint">最多使用 5 份/);
 });
 
+test('on-demand writing has a settings tab and a bottom result preview', () => {
+  const html = fs.readFileSync(path.join(__dirname, '../wps-ai-assistant_1.0.0/taskpane.html'), 'utf8');
+  assert.match(html, /data-workflow-task-tab="word\.material_composer"[^>]*>按需编写<\/button>/);
+  assert.match(html, /id="word-material-model-help"[\s\S]*?输出 Token 包含模型思考与正文/);
+  assert.match(html, /id="material-result-section"/);
+  assert.ok(html.indexOf('id="material-result-section"') > html.indexOf('id="word-result-section"'));
+  assert.match(html, /id="material-result-section"[\s\S]*?id="material-composer-result"/);
+});
+
 test('idle material pane does not repeat guidance in its status line', () => {
   const nodes = new Map();
   const render = load('renderMaterialComposerView', {
@@ -392,6 +401,13 @@ window.fetch=async function(url,options){
     run('set','viewport','320','900');
     const errors = run('eval','JSON.stringify(window.paneErrors)');
     assert.ok(errors.includes('[]'),errors);
+    assert.equal(run('get','text','#task-title').trim(),'按需编写');
+    assert.equal(run('eval',`(()=>{var form=document.getElementById('material-import-panel');var preview=document.getElementById('material-result-section');return !preview.hidden&&preview.getBoundingClientRect().top>=form.getBoundingClientRect().bottom})()`).trim(),'true');
+    run('click','#btn-open-settings');
+    assert.equal(run('eval',`document.querySelector('[data-workflow-task-tab="word.material_composer"]').getAttribute('aria-selected')`).trim(),'"true"');
+    run('eval',`document.getElementById('word-task-direct-params').hidden=false;document.getElementById('word-material-model-help').hidden=false;`);
+    assert.equal(run('eval',`document.documentElement.scrollWidth <= innerWidth`).trim(),'true');
+    run('click','#btn-open-settings');
     run('eval',`(async()=>{var input=document.getElementById('material-import-file');var dt=new DataTransfer();dt.items.add(new File(['docx'],'资料.docx'));input.files=dt.files;input.dispatchEvent(new Event('change'));})();`);
     run('wait','--text','资料目录');
     assert.equal(run('eval',`document.getElementById('material-reading-details').open && document.getElementById('material-import-result').textContent.length > 0`).trim(), 'true');
@@ -416,6 +432,7 @@ window.fetch=async function(url,options){
     run('scrollintoview','#btn-material-generate');
     run('click','#btn-material-generate');
     run('wait','--text','信息化处负责。');
+    assert.equal(run('eval',`getComputedStyle(document.getElementById('material-result-section')).display !== 'none'`).trim(),'true');
     const posts=JSON.parse(JSON.parse(run('eval',`JSON.stringify(requests.filter(r=>r.path==='/word/material-composer/jobs').map(r=>r.body))`)));
     assert.equal(posts.length,2); assert.deepEqual(posts[1],posts[0]);
     assert.equal(posts[1].userFacts,'预算调整为50万元');
@@ -432,6 +449,7 @@ window.fetch=async function(url,options){
     assert.ok(run('get','text','#material-composer-status').includes('目标章节或选区已变更，写入已暂停'));
     run('fill','#material-section-title','实施安排');
     assert.equal(run('eval',`document.getElementById('btn-material-apply').disabled`).trim(), 'false');
+    run('scrollintoview','#btn-material-apply');
     run('click','#btn-material-apply');
     assert.ok(run('get','text','#material-composer-status').includes('章节草稿已替换至所选区域'));
     assert.equal(run('eval',`window.Application.ActiveDocument.Selection.Text`).trim(), '"信息化处负责。〔待补充：完成时间〕"');

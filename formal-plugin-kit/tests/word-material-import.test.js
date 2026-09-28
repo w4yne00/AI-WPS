@@ -110,6 +110,18 @@ test("ribbon opens the material import pane without a document action", () => {
   assert.strictEqual(context.window.Application.WpsAiAssistantTaskPane.Visible, true);
 });
 
+test("on-demand writing has its own ribbon name and icon", () => {
+  const xml = fs.readFileSync(path.join(pluginRoot, "ribbon.xml"), "utf8");
+  const ribbon = fs.readFileSync(path.join(pluginRoot, "ribbon.js"), "utf8");
+  const iconPath = path.join(pluginRoot, "assets/icon-on-demand-write.png");
+  assert.match(xml, /id="btnAiMaterialImport" label="按需编写"/);
+  assert.match(ribbon, /btnAiMaterialImport: "assets\/icon-on-demand-write\.png"/);
+  assert.ok(fs.existsSync(iconPath));
+  const icon = fs.readFileSync(iconPath);
+  assert.equal(icon.readUInt32BE(16), 32);
+  assert.equal(icon.readUInt32BE(20), 32);
+});
+
 function createRoot() {
   return {
     textContent: "",

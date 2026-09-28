@@ -437,6 +437,7 @@ test("Word task model selection: parameters override, draft generation, and revi
     "word-task-temperature": { value: "0.5" },
     "word-task-max-output": { value: "3000" },
     "word-task-context": { value: "32000" },
+    "word-material-model-help": { hidden: true },
     "word-task-model-cost-warning": { hidden: false, textContent: "" },
     "word-task-model-validation-status": { textContent: "" }
   };
@@ -478,6 +479,7 @@ test("Word task model selection: parameters override, draft generation, and revi
   ctx.renderTaskModelSelectionSection();
   assert.strictEqual(mockNodes["word-task-direct-service-section"].hidden, false);
   assert.strictEqual(mockNodes["word-task-direct-service-title"].textContent, "接入选择");
+  assert.strictEqual(mockNodes["word-material-model-help"].hidden, true);
 
   // 2. Draft generation
   const draft = ctx.getTaskModelSelectionDraft();
@@ -493,9 +495,22 @@ test("Word task model selection: parameters override, draft generation, and revi
   assert.strictEqual(mockNodes["word-task-direct-service-section"].hidden, false);
   assert.strictEqual(mockNodes["word-task-direct-service-title"].textContent, "接入选择");
 
+  state.taskModelSelections["word.material_composer"] = { serviceId: "direct_svc_1", modelName: "gpt-4o", temperature: 0.3, maxOutputTokens: 16000, contextWindowTokens: 64000 };
+  state.settingsWorkflowTaskType = "word.material_composer";
+  ctx.renderTaskModelSelectionSection();
+  const composerDraft = ctx.getTaskModelSelectionDraft();
+  assert.strictEqual(mockNodes["word-task-direct-service-section"].hidden, false);
+  assert.strictEqual(composerDraft.temperature, 0.3);
+  assert.strictEqual(composerDraft.maxOutputTokens, 16000);
+  assert.strictEqual(composerDraft.contextWindowTokens, 64000);
+  assert.strictEqual(mockNodes["word-task-max-output"].placeholder, "默认 8000");
+  assert.strictEqual(mockNodes["word-task-context"].placeholder, "默认 40000");
+  assert.strictEqual(mockNodes["word-material-model-help"].hidden, false);
+
   // 4. Review tabs: document_review and format_review both supported
   state.settingsWorkflowTaskType = "word.document_review";
   ctx.renderTaskModelSelectionSection();
+  assert.strictEqual(mockNodes["word-material-model-help"].hidden, true);
   assert.strictEqual(mockNodes["word-task-direct-service-section"].hidden, false, "task direct service section must be visible for document_review");
   assert.strictEqual(mockNodes["word-task-direct-service-title"].textContent, "接入选择");
 
@@ -817,7 +832,7 @@ test("material composer model save reports the material composer task name", asy
   };
   const context = {
     state,
-    TASK_API_KEY_DEFS: [{taskType:"word.material_composer",label:"资料章节草稿"}],
+    TASK_API_KEY_DEFS: [{taskType:"word.material_composer",label:"按需编写"}],
     helpers: {validateTaskModelSelectionDraft() { return {ok:true}; }},
     getTaskModelSelectionDraft() { return {serviceId:"direct_svc_1",modelName:"model-a",customModel:false}; },
     getSettingsWorkflowTaskType() { return "word.material_composer"; },
@@ -833,7 +848,7 @@ test("material composer model save reports the material composer task name", asy
   };
   const save = vm.runInNewContext(`(${js.slice(start,end)})`, context);
   await save();
-  assert.equal(statuses.at(-1),"资料章节草稿接入直连服务已保存并设为当前。");
+  assert.equal(statuses.at(-1),"按需编写接入直连服务已保存并设为当前。");
 });
 
 test("formal direct-service event binding invokes the production handlers", () => {

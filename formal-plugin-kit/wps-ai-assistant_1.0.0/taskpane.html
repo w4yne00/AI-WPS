@@ -38,7 +38,7 @@
           <span id="workflow-switch-feedback" class="sr-only" aria-live="polite"></span>
         </section>
 
-        <section id="material-import-panel" class="mode-block" hidden>
+        <section id="material-import-panel" class="mode-block material-form-panel glass-card" hidden>
           <div class="material-import-head">
             <strong>参考资料</strong>
             <details class="context-help material-help">
@@ -62,16 +62,14 @@
           <label class="field" for="material-user-facts"><span>补充事实</span>
             <textarea id="material-user-facts" rows="3" placeholder="选填。补充资料未提及的最新数据、背景事实或关键信息。"></textarea>
           </label>
+          <div id="material-composer-context"></div>
           <div class="material-actions">
             <button id="btn-material-generate" type="button">生成章节草稿</button>
             <button id="btn-material-check-conflicts" class="ghost-action" type="button">核对事实冲突</button>
             <button id="btn-material-cancel" class="ghost-action" type="button" disabled>取消任务</button>
             <button id="btn-material-refresh" class="ghost-action" type="button">恢复查询</button>
-            <button id="btn-material-copy" class="ghost-action" type="button" disabled>复制正文</button>
-            <button id="btn-material-apply" class="secondary-action" type="button" disabled>确认写入选区</button>
           </div>
           <p id="material-composer-status" role="status" aria-live="polite"></p>
-          <div id="material-composer-result"></div>
         </section>
 
         <section class="controls glass-card">
@@ -376,6 +374,15 @@
           </div>
         </section>
 
+        <section id="material-result-section" class="panel result-panel glass-card" hidden>
+          <div class="panel-head"><h2>结果预览</h2></div>
+          <div id="material-composer-result" class="material-composer-preview"></div>
+          <div class="copy-toolbar result-copy-toolbar" aria-label="按需编写结果操作">
+            <button id="btn-material-copy" class="ghost-action" type="button" disabled>复制正文</button>
+            <button id="btn-material-apply" class="secondary-action" type="button" disabled>确认写入选区</button>
+          </div>
+        </section>
+
         <section id="word-history-view" class="panel result-panel glass-card word-history-view" hidden>
           <div class="panel-head">
             <h2>成功历史记录</h2>
@@ -446,6 +453,7 @@
               <div id="workflow-task-tabs" class="workflow-task-tabs" role="tablist" aria-label="Word 任务">
                 <button type="button" role="tab" data-workflow-task-tab="word.smart_write" aria-selected="true">智能编写</button>
                 <button type="button" role="tab" data-workflow-task-tab="word.smart_imitation" aria-selected="false">智能仿写</button>
+                <button type="button" role="tab" data-workflow-task-tab="word.material_composer" aria-selected="false">按需编写</button>
                 <button type="button" role="tab" data-workflow-task-tab="word.document_review" aria-selected="false">文档审查</button>
                 <button type="button" role="tab" data-workflow-task-tab="word.format_review" aria-selected="false">格式审查</button>
               </div>
@@ -471,6 +479,12 @@
                       <label class="field"><span>温度</span><input id="word-task-temperature" type="number" min="0" max="2" step="0.1" placeholder="默认" /></label>
                       <label class="field"><span>最大 Token</span><input id="word-task-max-output" type="number" min="0" step="1" placeholder="0 或空表示不限" /></label>
                       <label class="field"><span>上下文容量</span><input id="word-task-context" type="number" min="0" step="1" placeholder="0 或空表示不限" /></label>
+                    </div>
+                    <div id="word-material-model-help" class="task-context-help" hidden>
+                      <details class="context-help">
+                        <summary aria-label="查看按需编写模型参数说明">!</summary>
+                        <div class="context-help-popover" role="note">输出 Token 包含模型思考与正文；留空时按需编写默认使用 8000。若耗尽仍无正文，请在模型支持范围内提高上限，或更换适合编写的模型。上下文容量只控制输入，不增加输出上限。</div>
+                      </details>
                     </div>
                     <div id="word-task-image-mode-row" class="field" hidden>
                       <label class="field" for="word-task-image-input-mode">

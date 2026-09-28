@@ -75,6 +75,11 @@
     },
     {
       "type": "file",
+      "source": "formal-plugin-kit/wps-ai-assistant_1.0.0/assets/icon-on-demand-write.png",
+      "target": "packages/wps-ai-assistant_1.0.0/assets/icon-on-demand-write.png"
+    },
+    {
+      "type": "file",
       "source": "docs/operations/runtime-config.md",
       "target": "docs/operations/runtime-config.md"
     },

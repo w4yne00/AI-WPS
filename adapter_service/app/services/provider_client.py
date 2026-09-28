@@ -2780,7 +2780,7 @@ class ProviderClient:
         tasks = [
             ("word.smart_write", "智能编写"),
             ("word.smart_imitation", "智能仿写"),
-            ("word.material_composer", "资料编写"),
+            ("word.material_composer", "按需编写"),
             ("word.document_review", "文档审查"),
             ("word.format_review", "格式审查"),
             ("excel.analysis", "智能分析"),
