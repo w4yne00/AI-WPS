@@ -782,10 +782,9 @@ test('real DOM template page pane previews evidence before confirmation and appe
     encoding: 'utf8', timeout: 30000, env: { ...process.env, AGENT_BROWSER_SOCKET_DIR: temp }
   });
   function waitFor(expression) {
-    for (let attempt = 0; attempt < 30; attempt++) {
-      if (run('eval', expression).trim() === 'true') return;
-    }
-    assert.fail('browser condition was not reached: ' + expression);
+    // The controller polls asynchronously; a fixed number of fast evaluations
+    // can finish before the first scheduled poll has even run.
+    run('wait', '--fn', expression);
   }
   const outline = { slides: [{ pageIndex: 1, pageRole: 'cover', title: '封面' }, { pageIndex: 2, pageRole: 'content', title: '架构', keyPoints: ['分层'] }], basisMaterials: [] };
   const pageResult = regressionResult();
