@@ -16,10 +16,12 @@ Product page: [English](https://w4yne00.github.io/AI-WPS/en.html) · [中文](ht
 | Version rule number | `AI-WPS-WORD-EXCEL-PPT-0.26.0-preview.1` |
 | Phase | `P1` platform foundation + Word + Excel + PPT |
 | Runtime target | Kylin V10 ARM, Python 3.8, WPS native JS add-in |
-| Delivery status | Automated candidate `20260928-2b855ca` is recorded as `candidate`; Issue #154 target-machine acceptance remains `manual-pending` |
+| Delivery status | Automated candidate `20260928-630797d` is recorded as `candidate`; Issue #154 target-machine acceptance remains `manual-pending` |
 | Baseline | `v0.25.3-alpha` target-machine acceptance is `target-accepted` under Issue #59 |
 
-`v0.26.0-preview.1` aggregates stable Excel task feedback, output-only Smart Fill previews, automatic/manual/suspected TOC handling and location-grouped format issues in Word, plus compact model-configuration entries for ten tasks. The current automated candidate is [`ai-wps-delivery-20260928-2b855ca-v0260-preview1.tar.gz`](./dist-preview-delivery-kit/ai-wps-delivery-20260928-2b855ca-v0260-preview1.tar.gz), built from source commit `2b855ca7ba3b465439c94a30d27ba48f666c8e98` with SHA-256 `f3badde0bd98bd921a22a008260dfd316ee7d955f83225858df95b0886a5813d`. Word "按需编写" now has its own icon, model settings, and bottom result preview. It keeps one model call per draft; a model that exhausts its output budget may still need a higher supported limit or a different model. The current UTM installation and original material have not been verified with this candidate. The accepted `v0.25.3-alpha` baseline remains recorded under Issue #59.
+The current automated candidate is [`ai-wps-delivery-20260928-630797d-v0260-preview1.tar.gz`](./dist-preview-delivery-kit/ai-wps-delivery-20260928-630797d-v0260-preview1.tar.gz), built from source commit `630797d35bddb8c2728b8b2fae70d42a9ab5e7c6` with SHA-256 `258c19005909f8e06244c55f1bca4022e8955ad1f2985469e27e095877fd750e`. Word on-demand writing now sends complete text, tables and original images to a multimodal model, reuses Smart Write policies, and generates a paragraph or a full document through a simpler interface. DOC conversion uses temporary copies through native WPS APIs without additional dependencies; over-capacity inputs are never silently truncated or stripped of images. Automated regression, delivery audits and Kylin Python 3.8 installation/upgrade checks passed. Real WPS DOC conversion, insertion and actual-model image understanding remain pending under Issue #154. The accepted `v0.25.3-alpha` baseline is retained.
+
+Cleanup on 2026-09-28 removed 18 superseded kits dated before today. Today’s candidates and the v0.25.3, 20260811-v0.23.1 and v0.25.0 build/regression baselines are retained.
 
 Version rule: `AI-WPS-P{phase}-{scope}-{major.minor.patch}-{yyyymmdd}`. Major is a compatibility boundary, minor is user-visible capability, patch covers fixes, UI, packaging, and docs.
 
@@ -41,6 +43,7 @@ Word, Excel, and PPT ship as separate add-ins so Ribbon buttons never cross-disp
 
 | Host | Entry | Notes |
 | --- | --- | --- |
+| Word | On-demand writing | Upload DOCX/DOC; complete text and original images; shared writing policies; preview, copy or insert at cursor |
 | Word | Smart Write | Rewrite, continue, summarize, custom write; preview / compare / plain text, then write-back |
 | Word | Smart Imitation | Template-based imitation; preview, plain text, copy; no write-back |
 | Word | Document Review | Typos, expression, logic, fluency, professionalism; selection or limited full document |
