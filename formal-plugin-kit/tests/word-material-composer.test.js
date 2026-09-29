@@ -3,6 +3,23 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const test = require('node:test');
 const path = require('node:path');
+function previewDocument() {
+  const doc = {createElement(tag) {
+    let text = '';
+    return {tagName:tag, children:[], className:'', ownerDocument:doc,
+      appendChild(child) {this.children.push(child);},
+      addEventListener(type, handler) {this[type] = handler;},
+      focus() {doc.activeElement = this;},
+      get textContent() {return text + this.children.map(child=>child.textContent).join('');},
+      set textContent(value) {text = String(value); this.children = [];}
+    };
+  }};
+  return doc;
+}
+function previewNodes(root, className) {
+  return (root.children || []).flatMap(node =>
+    ((node.className || '').split(' ').includes(className) ? [node] : []).concat(previewNodes(node, className)));
+}
 function harness(shared) {
   const context = { window: {}, Promise, Date, Math };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../wps-ai-assistant_1.0.0/material-composer.js'), 'utf8'), context);
@@ -224,13 +241,17 @@ test('reopened uncertain job can retry its original input after restored fields 
  await reopened.api.start({sectionTitle:'',instruction:''});
  assert.equal(reopened.calls[2].body.sectionTitle,'原章节'); assert.equal(reopened.calls[2].body.instruction,'原要求');
 });
-test('render separates each paragraph from its source sidebar and safely displays markup as text', () => {
- const context={window:{}}; vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../wps-ai-assistant_1.0.0/material-composer.js'),'utf8'),context);
- const document={createElement(tag){return {tagName:tag,children:[],appendChild(child){this.children.push(child);},textContent:'',className:''};}};
- const root=document.createElement('div'); root.ownerDocument=document;
+test('sources stay out of prose until opened and source markup remains plain text', () => {
+ const h = harness(); const document = previewDocument(); const root = document.createElement('div');
  const draft=result(); draft.paragraphs[0].text='<script>正文</script>'; draft.paragraphs[0].missingItems=['待核实日期'];
- context.window.renderMaterialComposer(root,{status:'succeeded',phaseLabel:'核对完成',result:draft});
- const row=root.children.find(x=>x.className==='material-composer-paragraph'); assert.ok(row); assert.equal(row.children[0].tagName,'p'); assert.equal(row.children[0].textContent,'<script>正文</script>'); assert.equal(row.children[1].tagName,'details'); assert.ok(row.children[1].children.some(x=>x.textContent.includes('资料.docx'))); assert.ok(row.children[1].children.some(x=>x.textContent.includes('待核实日期'))); assert.ok(root.children.some(x=>x.textContent==='核对完成'));
+ h.renderComposer(root,{status:'succeeded',phaseLabel:'核对完成',result:draft});
+ assert.ok(previewNodes(root,'material-composer-body')[0].textContent.startsWith('<script>正文</script>'));
+ assert.equal(previewNodes(root,'material-composer-sources').length,0);
+ previewNodes(root,'material-composer-source-link')[0].click();
+ assert.ok(root.textContent.includes('资料.docx'));
+ assert.ok(root.textContent.includes('待核实日期'));
+ previewNodes(root,'material-composer-back')[0].click();
+ assert.equal(previewNodes(root,'material-composer-sources').length,0);
 });
 
 test('catalog stays with inputs while generated paragraphs render in the bottom preview', () => {
@@ -245,7 +266,7 @@ test('catalog stays with inputs while generated paragraphs render in the bottom 
  assert.ok(catalog.children.some(node=>node.className==='material-composer-toc'));
  assert.ok(!catalog.children.some(node=>node.className==='material-composer-catalog'));
  assert.ok(!catalog.children.some(node=>node.className==='material-composer-paragraph'));
- assert.ok(preview.children.some(node=>node.className==='material-composer-paragraph'));
+ assert.equal(previewNodes(preview,'material-composer-paragraph').length,1);
  assert.ok(!preview.children.some(node=>node.className==='material-composer-toc'));
 });
 test('expired known job releases the material and allows another import', async () => {
@@ -380,11 +401,7 @@ test('chapter generation reuses existing catalog without re-uploading on subsequ
 test('render displays multi-file source citations with accurate quotes', () => {
   const context = { window: {} };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../wps-ai-assistant_1.0.0/material-composer.js'), 'utf8'), context);
-  const document = {
-    createElement(tag) {
-      return { tagName: tag, children: [], appendChild(child) { this.children.push(child); }, textContent: '', className: '' };
-    }
-  };
+  const document = previewDocument();
   const root = document.createElement('div');
   root.ownerDocument = document;
   const draft = {
@@ -415,12 +432,16 @@ test('render displays multi-file source citations with accurate quotes', () => {
   assert.ok(catNode);
   assert.ok(catNode.textContent.includes('2/5'));
 
-  const paragraphs = root.children.filter(x => x.className === 'material-composer-paragraph');
-  assert.equal(paragraphs.length, 2);
-  assert.ok(paragraphs[0].children[1].children.some(x => x.textContent.includes('doc1.docx')));
-  assert.ok(paragraphs[0].children[1].children.some(x => x.textContent === '原句1'));
-  assert.ok(paragraphs[1].children[1].children.some(x => x.textContent.includes('doc2.docx')));
-  assert.ok(paragraphs[1].children[1].children.some(x => x.textContent === '原句2'));
+  const links = previewNodes(root,'material-composer-source-link');
+  assert.equal(links.length,2);
+  links[0].click();
+  assert.ok(root.textContent.includes('doc1.docx'));
+  assert.ok(root.textContent.includes('原句1'));
+  assert.ok(!root.textContent.includes('原句2'));
+  previewNodes(root,'material-composer-back')[0].click();
+  previewNodes(root,'material-composer-source-link')[1].click();
+  assert.ok(root.textContent.includes('doc2.docx'));
+  assert.ok(root.textContent.includes('原句2'));
 });
 
 test('catalog lists each file and its chapters and selects a chapter', () => {
@@ -539,17 +560,7 @@ test('detects conflicts, displays conflict candidates without timestamp bias, an
 test('render distinguishes user-supplied facts, unverified key facts, and missing items in sidebar and body', () => {
   const context = { window: {} };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../wps-ai-assistant_1.0.0/material-composer.js'), 'utf8'), context);
-  const document = {
-    createElement(tag) {
-      return {
-        tagName: tag,
-        children: [],
-        className: '',
-        textContent: '',
-        appendChild(child) { this.children.push(child); }
-      };
-    }
-  };
+  const document = previewDocument();
   const root = document.createElement('div');
   root.ownerDocument = document;
 
@@ -578,21 +589,16 @@ test('render distinguishes user-supplied facts, unverified key facts, and missin
     result: draft
   });
 
-  const row = root.children.find(x => x.className === 'material-composer-paragraph');
-  assert.ok(row);
-  const aside = row.children.find(x => x.tagName === 'details');
-  assert.ok(aside);
-  // 用户补充事实标识
-  assert.ok(aside.children.some(x => x.textContent.includes('用户补充事实')));
-  // 待补充项在侧栏
-  assert.ok(aside.children.some(x => x.textContent.includes('待补充：专家名单')));
-  // 待核对项在侧栏或专用区域
-  assert.ok(aside.children.some(x => x.textContent.includes('待核对') && x.textContent.includes('800 万元')));
-
-  // 全局待核对区域与警示
-  const unverifiedSection = root.children.find(x => x.className && x.className.includes('material-composer-unverified'));
-  assert.ok(unverifiedSection);
-  assert.ok(unverifiedSection.children.some(x => x.textContent.includes('全部冲突') || x.textContent.includes('无原文依据')));
+  assert.equal(previewNodes(root,'material-composer-sources').length,0);
+  assert.ok(previewNodes(root,'material-composer-issues-link')[0].textContent.includes('2'));
+  previewNodes(root,'material-composer-source-link')[0].click();
+  assert.ok(root.textContent.includes('用户补充事实'));
+  assert.ok(root.textContent.includes('待补充：专家名单'));
+  assert.ok(root.textContent.includes('待核对：预算 800 万元'));
+  previewNodes(root,'material-composer-back')[0].click();
+  previewNodes(root,'material-composer-issues-link')[0].click();
+  assert.ok(root.textContent.includes('待补充：专家名单'));
+  assert.ok(root.textContent.includes('待核对：预算 800 万元'));
 });
 
 test('allows user confirmation to apply draft containing missing items', async () => {

@@ -423,6 +423,7 @@ function createMaterialComposer(options) {
 function renderMaterialComposer(root, view, onSelectChapter, onResolveConflict, onUpdateMaterial, onDeleteMaterial, previewRoot) {
   var doc = root.ownerDocument;
   var output = previewRoot || root;
+  var previousScroll = output.scrollTop || 0;
   var busy = view.busy || Boolean(view.materialMutationPending);
   function append(parent, tag, text, className) {
     var node = doc.createElement(tag);
@@ -514,44 +515,91 @@ function renderMaterialComposer(root, view, onSelectChapter, onResolveConflict, 
   append(output, 'p', labels[view.status] || '', 'material-composer-status');
   if (view.phaseLabel) append(output, 'p', view.phaseLabel, 'material-composer-phase');
   if (view.error) append(output, 'p', String(view.error), 'material-composer-error');
-  if (!view.result) return;
+  if (!view.result) { output.materialComposerNavigation = null; return; }
   if (view.result.inputCapacity && view.result.inputCapacity.warning) append(output, 'p', view.result.inputCapacity.warning, 'material-composer-capacity');
   if (view.result.writingPolicyUsage) {
     var usage = view.result.writingPolicyUsage;
     append(output, 'p', usage.degraded ? '写作规范未完整应用，请核对结果。' : (usage.applied ? '已应用所选写作规范' : '本次未应用写作规范'), 'material-composer-policy');
   }
 
-  view.result.paragraphs.forEach(function (paragraph, index) {
-    var row = append(output, 'section', '', 'material-composer-paragraph');
-    append(row, 'p', paragraph.text, 'material-composer-body');
-    var sources = append(row, 'details', '', 'material-composer-sources');
-    append(sources, 'summary', '第 ' + (index + 1) + ' 段出处');
-    paragraph.sources.forEach(function (source) {
-      var srcText = (source.sourceType === 'user' ? '[用户补充事实] ' : '') + source.fileName + ' / ' + source.section + ' / ' + source.fragmentId;
-      append(sources, 'p', srcText);
-      append(sources, 'blockquote', source.quote);
-    });
-    paragraph.missingItems.forEach(function (item) { append(sources, 'p', '待补充：' + item, 'material-composer-missing'); });
-    if (paragraph.unverifiedItems && paragraph.unverifiedItems.length) {
-      paragraph.unverifiedItems.forEach(function (item) {
-        append(sources, 'p', '待核对：' + item, 'material-composer-unverified');
-      });
-    }
+  var key = [view.documentSessionId || '', view.jobId || '', view.result.generatedAt || view.result.plainText || ''].join('\n');
+  var navigation = output.materialComposerNavigation;
+  if (!navigation || navigation.key !== key) {
+    navigation = {key: key, page: 'body', bodyScroll: 0, detailScroll: 0, origin: null};
+    output.materialComposerNavigation = navigation;
+  } else if (navigation.page === 'body') {
+    navigation.bodyScroll = previousScroll;
+  } else {
+    navigation.detailScroll = previousScroll;
+  }
+  var content = append(output, 'div', '', 'material-composer-content');
+  var missingItems = (view.result.missingItems || []).slice();
+  var unverifiedItems = (view.result.unverifiedItems || []).slice();
+  view.result.paragraphs.forEach(function (paragraph) {
+    (paragraph.missingItems || []).forEach(function (item) { if (missingItems.indexOf(item) < 0) missingItems.push(item); });
+    (paragraph.unverifiedItems || []).forEach(function (item) { if (unverifiedItems.indexOf(item) < 0) unverifiedItems.push(item); });
   });
-
-  if (view.result.unverifiedItems && view.result.unverifiedItems.length) {
-    var unverified = append(output, 'aside', '', 'material-composer-unverified');
-    append(unverified, 'h4', '待核对关键事实（数字/日期/名称/责任/承诺）');
-    append(unverified, 'small', '已标出未能与引文对齐的内容；AI 核对不伪造出处，亦不宣称发现全部冲突，请逐项核对。');
-    view.result.unverifiedItems.forEach(function (item) { append(unverified, 'p', '待核对：' + String(item)); });
+  function showDetails(page) {
+    navigation.bodyScroll = output.scrollTop || 0;
+    navigation.origin = page;
+    navigation.page = page;
+    navigation.detailScroll = 0;
+    drawPreview(true);
   }
-
-  if (view.result.missingItems.length) {
-    var missing = append(output, 'aside', '', 'material-composer-missing');
-    append(missing, 'h4', '待补充项');
-    append(missing, 'small', '正文中已显示“〔待补充：具体信息〕”，可确认直接使用草稿或补充信息后写入。');
-    view.result.missingItems.forEach(function (item) { append(missing, 'p', '待补充：' + String(item)); });
+  function issueLines(parent, missing, unverified) {
+    missing.forEach(function (item) { append(parent, 'p', '待补充：' + item, 'material-composer-missing'); });
+    unverified.forEach(function (item) { append(parent, 'p', '待核对：' + item, 'material-composer-unverified'); });
   }
+  function drawPreview(moveFocus) {
+    content.textContent = '';
+    var returnTarget = null;
+    if (navigation.page === 'body') {
+      view.result.paragraphs.forEach(function (paragraph, index) {
+        var row = append(content, 'section', '', 'material-composer-paragraph');
+        var body = append(row, 'p', paragraph.text, 'material-composer-body');
+        if (paragraph.sources.length || (paragraph.missingItems || []).length || (paragraph.unverifiedItems || []).length) {
+          var link = append(body, 'button', '出处' + (paragraph.sources.length ? ' ' + paragraph.sources.length : ''), 'material-composer-source-link');
+          link.type = 'button';
+          link.title = '查看第 ' + (index + 1) + ' 段的出处与核对详情';
+          link.addEventListener('click', function () { showDetails(index); });
+          if (navigation.origin === index) returnTarget = link;
+        }
+      });
+      var issueCount = missingItems.length + unverifiedItems.length;
+      if (issueCount) {
+        var issues = append(content, 'button', issueCount + ' 项待核对或补充 ›', 'ghost-action material-composer-issues-link');
+        issues.type = 'button';
+        issues.addEventListener('click', function () { showDetails('issues'); });
+        if (navigation.origin === 'issues') returnTarget = issues;
+      }
+      if (moveFocus && returnTarget) returnTarget.focus({preventScroll: true});
+      output.scrollTop = navigation.bodyScroll;
+      return;
+    }
+    var back = append(content, 'button', '‹ 返回正文', 'ghost-action material-composer-back');
+    back.type = 'button';
+    back.addEventListener('click', function () {
+      navigation.page = 'body';
+      drawPreview(true);
+    });
+    if (navigation.page === 'issues') {
+      append(content, 'h4', '待核对与待补充项');
+      issueLines(content, missingItems, unverifiedItems);
+    } else {
+      var paragraph = view.result.paragraphs[navigation.page];
+      append(content, 'h4', '第 ' + (navigation.page + 1) + ' 段出处');
+      paragraph.sources.forEach(function (source) {
+        var sourceCard = append(content, 'section', '', 'material-composer-sources');
+        append(sourceCard, 'p', (source.sourceType === 'user' ? '[用户补充事实] ' : '') + source.fileName + ' / ' + source.section);
+        append(sourceCard, 'blockquote', source.quote);
+      });
+      issueLines(content, paragraph.missingItems || [], paragraph.unverifiedItems || []);
+    }
+    if (moveFocus) back.focus({preventScroll: true});
+    output.scrollTop = navigation.detailScroll;
+  }
+  drawPreview(false);
+
 }
 if (typeof window !== 'undefined') {
   window.createMaterialComposer = createMaterialComposer;

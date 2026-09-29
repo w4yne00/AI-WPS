@@ -432,7 +432,7 @@ window.fetch=async function(url,options){
     assert.equal(posts.length,2); assert.deepEqual(posts[1],posts[0]);
     assert.equal(posts[1].writingPolicyScene,'cybersecurity');
     assert.equal(posts[1].instruction,'简要说明责任和工期，预算调整为50万元');
-    assert.equal(run('eval',`document.querySelectorAll('#material-composer-result details.material-composer-sources').length`).trim(),'1');
+    assert.equal(run('eval',`document.querySelectorAll('#material-composer-result .material-composer-source-link').length`).trim(),'1');
     assert.equal(run('eval',`document.documentElement.scrollWidth <= innerWidth`).trim(),'true');
     assert.equal(run('eval',`document.getElementById('btn-material-apply').disabled`).trim(),'true');
     run('eval',`mockStart=mockEnd; document.getElementById('material-instruction').dispatchEvent(new Event('input'));`);
