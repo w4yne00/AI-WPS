@@ -161,7 +161,7 @@
             <span id="outline-material-count-label" class="field-hint">未添加资料</span>
             <div class="outline-source-actions">
               <button id="btn-import-outline-material" class="ghost-action" type="button">导入资料</button>
-              <input id="ppt-outline-file-input" type="file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" style="display:none;" />
+              <input id="ppt-outline-file-input" type="file" accept=".doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" style="display:none;" />
             </div>
           </div>
           <div id="outline-reusable-section" class="outline-reusable-section" style="margin-bottom: 8px;">
@@ -193,13 +193,14 @@
             </label>
           </div>
           <label class="field" for="ppt-outline-instruction" style="margin-top: 6px;">
-            <span>重点要求</span>
+            <span>编写要求</span>
             <textarea id="ppt-outline-instruction" rows="2" placeholder="例如：面向管理层，突出核心成效与未来规划。"></textarea>
           </label>
+          <details id="outline-extra-facts"><summary id="outline-extra-facts-summary">补充事实（选填）</summary>
           <label class="field" for="ppt-outline-user-facts" style="margin-top: 6px;">
             <span>补充事实</span>
             <textarea id="ppt-outline-user-facts" rows="2" placeholder="选填。补充资料未提及的关键事实或数字。"></textarea>
-          </label>
+          </label></details>
           <div class="action-bar task-job-actions">
             <button id="btn-run-outline" type="button">生成逐页大纲</button>
             <button id="btn-cancel-outline-job" class="ghost-action" type="button" hidden>取消任务</button>
@@ -219,7 +220,7 @@
           <div id="outline-source-drawer" class="outline-source-drawer" hidden>
             <div class="drawer-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
               <h4 id="outline-drawer-title" style="margin: 0; font-size: 13px;">出处原文核对</h4>
-              <button id="btn-close-outline-drawer" class="icon-button" type="button" style="border:none; background:none; cursor:pointer; font-size:16px;">×</button>
+              <button id="btn-close-outline-drawer" class="icon-button" type="button" style="border:none; background:none; cursor:pointer; font-size:16px;">返回大纲</button>
             </div>
             <div id="outline-drawer-content" class="drawer-content"></div>
           </div>
@@ -320,6 +321,7 @@
               <div id="workflow-task-tabs" class="workflow-task-tabs" role="tablist" aria-label="PPT 任务">
                 <button type="button" role="tab" data-workflow-task-tab="ppt.slide_assistant" aria-selected="true">智能总结</button>
                 <button type="button" role="tab" data-workflow-task-tab="ppt.structure_review" aria-selected="false">结构审查</button>
+                <button type="button" role="tab" data-workflow-task-tab="ppt.material_outline" aria-selected="false">资料大纲</button>
               </div>
               <section id="ppt-task-direct-service-section" class="task-model-selection-card">
                 <div class="task-selection-heading">
@@ -338,6 +340,7 @@
                       <option value="">继承服务默认模型</option>
                     </select>
                   </label>
+                  <label id="ppt-task-image-mode-field" class="field" hidden><span>图片输入能力</span><select id="ppt-task-image-mode"><option value="disabled">尚未确认支持图片</option><option value="openai_image_url">已确认模型支持原图输入</option></select></label>
                   <div class="grid-three-col">
                     <label class="field"><span>温度</span><input id="ppt-task-temperature" type="number" min="0" max="2" step="0.1" placeholder="默认" /></label>
                     <label class="field"><span>最大 Token</span><input id="ppt-task-max-output" type="number" min="0" step="1" placeholder="0 或空表示不限" /></label>

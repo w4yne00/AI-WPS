@@ -1444,6 +1444,16 @@ button.ghost-action:hover {
   margin: 8px 0;
 }
 
+/* 资料大纲：建议占满预览区，出处按需下钻。 */
+#ppt-material-outline-controls { gap: 12px; }
+#outline-extra-facts summary, .outline-slide-card summary { cursor: pointer; color: var(--text-muted, #64748b); font-size: 12px; }
+.outline-source-image { display: block; max-width: 100%; height: auto; margin-top: 12px; }
+.outline-core-message { font-weight: 600; line-height: 1.6; }
+#outline-drawer-content p { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.7; }
+#btn-close-outline-drawer { min-width: 72px; min-height: 36px; }
+#outline-slide-list[hidden], #outline-source-drawer[hidden] { display: none; }
+#ppt-material-outline-controls button:active { opacity: .72; }
+
 /* Shared restrained settings and interaction treatment. */
 .model-interface-card,
 .workflow-settings-card,

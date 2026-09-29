@@ -54,6 +54,7 @@ function createTestHarness(sharedStorage) {
       removeItem: (k) => storage.delete(k),
     },
     getSessionId: () => h.session,
+    getWordApp: () => h.wordApp,
     render: (v) => h.views.push(v),
     copyText: (t) => h.copied.push(t),
     schedule: (fn) => h.scheduled.push(fn),
@@ -709,6 +710,12 @@ window.fetch=async function(url,options){
     assert.equal(run("get", "value", '[data-title-page="1"]').trim(), "重新编辑标题继续");
     run("click", "#btn-confirm-outline");
     run("wait", "--text", "大纲状态：已确认");
+    run("set", "viewport", "320", "700");
+    run("click", '[data-drawer-page="1"]');
+    assert.equal(run("eval", "document.querySelector('#outline-slide-list').hidden").trim(), "true");
+    run("click", "#btn-close-outline-drawer");
+    assert.equal(run("eval", "document.activeElement.getAttribute('data-drawer-page')").trim(), '"1"');
+    run("set", "viewport", "420", "700");
     run("click", '[data-drawer-page="1"]');
     assert.equal(run("eval", "document.querySelectorAll('#outline-source-drawer img').length").trim(), "0");
     assert.match(run("get", "text", "#outline-drawer-content"), /<img/);
@@ -722,4 +729,60 @@ window.fetch=async function(url,options){
   } finally {
     try { run("close"); } finally { fs.rmSync(temp, { recursive: true, force: true }); }
   }
+});
+
+test('outline sources replace the page list and restore it on return', () => {
+  const { context: c, nodes } = paneHarness();
+  const view = { activeDrawerPageIndex: 1, result: { slides: [{pageIndex: 1, title: '报告',
+    coreMessage: '核心结论', presentationAdvice: '使用对比图',
+    sources: [{fileName: '材料', text: '原文'}]}] } };
+  c.renderMaterialOutlineView(view);
+  assert.equal(nodes['outline-slide-list'].hidden, true);
+  assert.equal(nodes['outline-source-drawer'].hidden, false);
+  view.activeDrawerPageIndex = null;
+  c.renderMaterialOutlineView(view);
+  assert.equal(nodes['outline-slide-list'].hidden, false);
+  assert.match(nodes['outline-slide-list'].innerHTML, /核心结论/);
+  assert.match(nodes['outline-slide-list'].innerHTML, /使用对比图/);
+});
+
+
+test('DOC import restores Word security and completes the original presentation session', async () => {
+  const h = createTestHarness();
+  let closed = false, activated = false;
+  h.wordApp = { AutomationSecurity: 2, DisplayAlerts: 1, Options: {UpdateLinksAtOpen: true},
+    ActiveDocument: {Activate() {activated = true;}}, Documents: {Open() {
+      assert.equal(h.wordApp.AutomationSecurity, 3);
+      assert.equal(h.wordApp.Options.UpdateLinksAtOpen, false);
+      return {SaveAs2(target, format) { assert.equal(format, 12); h.session = 'other'; }, Close() {closed = true;}};
+    }} };
+  h.requestHandler = async (url, body) => {
+    if (body && body.contentBase64) return {success: true, data: {conversionRequired: true, conversionId: 'conversion', sourcePath: '/tmp/source.doc', targetPath: '/tmp/converted.docx'}};
+    if (body && body.conversionId) assert.equal(body.documentSessionId, 'sess-ppt-doc-1');
+    return {success: true, data: {documents: [], conflicts: []}};
+  };
+  await h.api.importMaterial({name: '材料.doc', contentBase64: 'test'});
+  assert.equal(h.wordApp.AutomationSecurity, 2);
+  assert.equal(h.wordApp.Options.UpdateLinksAtOpen, true);
+  assert.equal(h.wordApp.DisplayAlerts, 1);
+  assert.ok(closed && activated);
+});
+
+test('source pictures load on demand without entering persisted outline', async () => {
+  const storage = new Map();
+  const h = createTestHarness(storage);
+  const s = h.api.current();
+  s.result = {slides: [{pageIndex: 1, title: '图示', sources: [{materialId: 'm', imageId: 'm-image-1'}]}], basisMaterials: [{materialId: 'm', updatedAt: 'v1'}]};
+  const image = 'data:image/png;base64,' + 'a'.repeat(1024 * 1024);
+  h.requestHandler = async url => {
+    assert.match(url, /\/ppt\/materials\/image\?/);
+    assert.match(url, /updatedAt=v1/);
+    return {success: true, data: {imageDataUri: image}};
+  };
+  await h.api.openSources(1);
+  assert.equal(s.sourceImages['m-image-1'], image);
+  h.api.confirmOutline();
+  assert.ok([...storage.values()].every(v => !v.includes('data:image/')));
+  const reopened = createTestHarness(storage);
+  assert.equal(reopened.api.hasConfirmedOutline(), true);
 });

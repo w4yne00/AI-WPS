@@ -265,13 +265,14 @@ def clone_ppt_material(request: dict) -> dict:
 @router.post("/ppt/materials/import")
 def import_ppt_material(request: dict) -> dict:
     trace_id = new_trace_id("ppt-material-import")
-    data = ppt_material_store.import_material(
-        session_id=str(request.get("documentSessionId") or "").strip(),
-        doc_identity=str(request.get("documentIdentity") or "").strip(),
-        file_name=str(request.get("fileName") or "").strip(),
-        content_base64=str(request.get("contentBase64") or "").strip(),
-    )
+    data = ppt_material_store.import_request(request)
     return _outline_envelope(data, trace_id=trace_id, message="imported")
+
+
+@router.get("/ppt/materials/image")
+def get_ppt_material_image(documentSessionId: str, materialId: str, imageId: str, updatedAt: str) -> dict:
+    data = ppt_material_store.get_source_image(documentSessionId, materialId, imageId, updatedAt)
+    return _outline_envelope(data, trace_id=new_trace_id("ppt-material-image"), message="image")
 
 
 @router.get("/ppt/materials/catalog")
@@ -283,12 +284,7 @@ def get_ppt_materials_catalog(documentSessionId: str = "") -> dict:
 
 @router.put("/ppt/materials/{material_id}")
 def update_ppt_material(material_id: str, request: dict) -> dict:
-    data = ppt_material_store.update_material(
-        session_id=str(request.get("documentSessionId") or "").strip(),
-        material_id=material_id,
-        file_name=str(request.get("fileName") or "").strip(),
-        content_base64=str(request.get("contentBase64") or "").strip(),
-    )
+    data = ppt_material_store.import_request(request, material_id)
     return _outline_envelope(data, trace_id=material_id, message="updated")
 
 

@@ -99,6 +99,11 @@
     },
     {
       "type": "file",
+      "source": "formal-plugin-kit/wps-ai-assistant-wpp_1.0.0/assets/icon-ppt-material-outline.png",
+      "target": "packages/wps-ai-assistant-wpp_1.0.0/assets/icon-ppt-material-outline.png"
+    },
+    {
+      "type": "file",
       "source": "packaging/v0260-preview1-delivery.md",
       "target": "README.md",
       "replace": true

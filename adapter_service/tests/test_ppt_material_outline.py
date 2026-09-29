@@ -338,3 +338,96 @@ def test_ppt_material_outline_with_user_facts(outline_setup):
         assert result["slides"][0]["sources"][0]["sourceType"] == "user"
         assert result["slides"][0]["sources"][0]["fileName"] == "用户补充事实"
         assert "500万元" in result["slides"][0]["sources"][0]["text"]
+
+
+def test_outline_submission_reads_original_header_and_keeps_full_sources(outline_setup):
+    store, coordinator = outline_setup
+    output = BytesIO()
+    with zipfile.ZipFile(output, 'w') as archive:
+        archive.writestr('[Content_Types].xml', CONTENT_TYPES_XML)
+        archive.writestr('word/document.xml', DOCUMENT_XML)
+        archive.writestr('word/header1.xml', DOCUMENT_XML.replace('第一章'.encode(), '页眉事实不可遗漏'.encode()))
+    doc = store.get_catalog('ppt_test_sess')['documents'][0]
+    store.update_material('ppt_test_sess', doc['materialId'], '完整.docx', base64.b64encode(output.getvalue()).decode())
+    coordinator.coordinator = MagicMock()
+    coordinator.coordinator.get.return_value = None
+    coordinator.provider.resolve_task_auth = MagicMock(return_value={})
+    coordinator.submit_job({'documentSessionId': 'ppt_test_sess', 'slideCount': 3})
+    snapshot = coordinator.coordinator.submit.call_args.kwargs['snapshot']
+    fragments = snapshot['catalog']['fragmentsList']
+    assert any('页眉事实不可遗漏' in f.get('text', '') for f in fragments)
+    assert all(f['fragmentId'] in store.get_catalog('ppt_test_sess')['fragments'] for f in fragments)
+
+
+def test_outline_preserves_core_message_and_presentation_advice(outline_setup):
+    store, coordinator = outline_setup
+    raw = json.dumps({'schemaVersion': 'ppt.material_outline.v1', 'slides': [{'title': '成果', 'coreMessage': '强调覆盖范围',
+                                  'presentationAdvice': '用对比图呈现', 'keyPoints': ['覆盖12个网点']} ]})
+    result = coordinator._parse_and_validate_outline(raw, '高管', 1, '', store.get_catalog('ppt_test_sess'))
+    assert result['slides'][0]['coreMessage'] == '强调覆盖范围'
+    assert result['slides'][0]['presentationAdvice'] == '用对比图呈现'
+
+
+def test_outline_calls_real_provider_signature_and_rejects_truncation(outline_setup):
+    from app.services.provider_client import ProviderClient
+    from unittest.mock import create_autospec
+    _, coordinator = outline_setup
+    coordinator.provider = create_autospec(ProviderClient, instance=True)
+    coordinator.provider.post_task.return_value = {'answer': '{}', 'finishReason': 'length'}
+    with pytest.raises(AdapterError) as error:
+        coordinator._call_provider_model('system', 'whole document',
+                                        task_auth={'providerBaseUrl': 'http://localhost', 'apiKey': 'test'})
+    assert error.value.code == 'MATERIAL_OUTLINE_INCOMPLETE'
+
+
+def test_outline_original_images_reach_http_request_without_id_collisions(outline_setup):
+    from tests.test_word_material_document import document, p, PNG
+    store, coordinator = outline_setup
+    image = '<w:p><w:r><w:drawing><a:blip r:embed="rId1"/></w:drawing></w:r></w:p>'
+    parts = {'word/_rels/document.xml.rels': b'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/a.png"/></Relationships>', 'word/media/a.png': PNG}
+    for name in ('甲.docx', '乙.docx'):
+        store.import_material('ppt_test_sess', '', name, base64.b64encode(document(p('文首') + image + p('文尾'), parts)).decode())
+    captured = []
+    class Response:
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def read(self):
+            catalog = store.get_catalog('ppt_test_sess')
+            fid = next(f['fragmentId'] for f in catalog['fragmentsList'] if f.get('imageId'))
+            answer = {'schemaVersion': 'ppt.material_outline.v1', 'slides': [
+                {'title': str(i), 'fragmentIds': [fid], 'coreMessage': '观点', 'presentationAdvice': '建议'} for i in range(3)]}
+            return json.dumps({'choices': [{'message': {'content': json.dumps(answer)}, 'finish_reason': 'stop'}]}).encode()
+    def respond(req, *args):
+        captured.append(json.loads(req.data))
+        return Response()
+    auth = {'accessMethod': 'direct_model', 'providerBaseUrl': 'https://model.invalid', 'apiKey': 'test',
+            'modelName': 'vision', 'contextWindowTokens': 40000, 'temperature': 0, 'maxOutputTokens': 2000,
+            'imageInputMode': 'openai_image_url'}
+    with patch.object(coordinator.provider, 'resolve_task_auth', return_value=auth), patch('app.services.provider_client._open_task_response', side_effect=respond):
+        submitted = coordinator.submit_job({'documentSessionId': 'ppt_test_sess', 'slideCount': 3})
+        job = coordinator.wait_job(submitted['jobId'], document_session_id='ppt_test_sess')
+    assert job['status'] == 'completed', job.get('error')
+    content = captured[0]['messages'][1]['content']
+    pictures = [x for x in content if x['type'] == 'image_url']
+    assert len(pictures) == 2
+    assert all(base64.b64decode(x['image_url']['url'].split(',')[1]) == PNG for x in pictures)
+    assert captured[0]['temperature'] == 0
+    assert '文首' in content[0]['text'] and '文尾' in content[0]['text']
+    image_ids = [f['imageId'] for f in store.get_catalog('ppt_test_sess')['fragmentsList'] if f.get('imageId')]
+    assert len(set(image_ids)) == 2
+    assert job['result']['slides'][0]['sources'][0]['imageId'] in image_ids
+    assert 'imageDataUri' not in json.dumps(job['result'])
+    assert job['result']['capacity']['imageBudgetKnown'] is False
+
+
+def test_conflict_preview_and_submit_use_the_same_complete_material(outline_setup):
+    from tests.test_word_material_document import document, p, W
+    store, coordinator = outline_setup
+    raw = document(p('项目预算为100万元。'), {'word/header1.xml': ('<w:hdr xmlns:w="%s">%s</w:hdr>' % (W, p('项目预算为200万元。'))).encode()})
+    doc = store.get_catalog('ppt_test_sess')['documents'][0]
+    store.update_material('ppt_test_sess', doc['materialId'], '预算.docx', base64.b64encode(raw).decode())
+    conflicts = coordinator.detect_conflicts('ppt_test_sess')
+    assert conflicts, '页眉冲突必须在提交前可见'
+    with pytest.raises(AdapterError) as error:
+        coordinator.submit_job({'documentSessionId': 'ppt_test_sess', 'slideCount': 3})
+    assert error.value.code == 'MATERIAL_OUTLINE_CONFLICT_UNRESOLVED'

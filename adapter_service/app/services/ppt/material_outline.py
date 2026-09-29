@@ -14,16 +14,11 @@ from app.services.long_task_coordinator import (
     LongTaskCoordinator,
     PRIORITY_INTERACTIVE,
 )
-from app.services.model_configurations import (
-    direct_model_input_budget,
-    DEFAULT_CONTEXT_WINDOW_TOKENS,
-    DEFAULT_RESERVED_OUTPUT_TOKENS,
-)
 from app.services.provider_client import (
     ProviderClient,
     _extract_json_payload,
-    _estimate_direct_tokens,
     extract_answer,
+    validate_composer_multimodal_input,
 )
 from app.services.system_prompts import SystemPromptStore
 from app.services.word.material_composer import (
@@ -74,7 +69,7 @@ class PptMaterialOutlineCoordinator:
 
     def detect_conflicts(self, document_session_id: str, user_facts: str = "") -> List[dict]:
         with self._lock, self.store._lock:
-            catalog = self.store.get_catalog(document_session_id)
+            catalog, _ = self.store.prepare_full_catalog(document_session_id)
             return detect_material_conflicts(catalog, user_facts=user_facts)
 
     def submit_job(self, payload: dict, trace_id: str = "") -> dict:
@@ -143,6 +138,7 @@ class PptMaterialOutlineCoordinator:
             if not catalog.get("documents"):
                 raise AdapterError("MATERIAL_NOT_FOUND", "当前演示文稿尚未导入或复用参考资料，请先添加资料。", status_code=400)
 
+            catalog, image_files = self.store.prepare_full_catalog(session_id)
             conflicts = detect_material_conflicts(catalog, user_facts=user_facts)
             normalized_choices = []
             for conflict in conflicts:
@@ -177,6 +173,7 @@ class PptMaterialOutlineCoordinator:
             snapshot = {
                 "request": request_repr,
                 "catalog": deepcopy(catalog),
+                "imageFiles": image_files,
                 "systemPrompt": system_prompt,
                 "audience": audience,
                 "slideCount": slide_count,
@@ -202,6 +199,11 @@ class PptMaterialOutlineCoordinator:
                     "MATERIAL_OUTLINE_INVALID_SOURCE",
                     "MATERIAL_OUTLINE_INVALID_SCHEMA",
                     "MODEL_INPUT_OVER_BUDGET",
+                    "MODEL_IMAGE_INPUT_UNSUPPORTED",
+                    "IMAGE_ASSET_SIZE_LIMIT",
+                    "IMAGE_ASSET_TYPE_INVALID",
+                    "MATERIAL_OUTLINE_INCOMPLETE",
+                    "MODEL_CONFIG_INCOMPLETE",
                     "PROVIDER_TIMEOUT",
                 },
                 priority_class=PRIORITY_INTERACTIVE,
@@ -209,18 +211,21 @@ class PptMaterialOutlineCoordinator:
             )
 
     def _call_provider_model(self, system_prompt: str, user_content: str,
-                             task_auth=None, trace_id: str = "", progress=None) -> str:
+                             task_auth=None, trace_id: str = "", progress=None, image_files=None) -> str:
         auth = task_auth if task_auth is not None else self.provider.resolve_task_auth(TASK_TYPE)
         if not auth.get("providerBaseUrl") or not auth.get("apiKey"):
             raise AdapterError("MODEL_CONFIG_INCOMPLETE", "逐页大纲任务尚未配置模型，请前往设置。", status_code=400)
         body = self.provider.post_task(
             task_type=TASK_TYPE,
-            system_prompt=system_prompt,
-            user_content=user_content,
+            input_data={},
+            query=user_content,
             trace_id=trace_id,
-            progress=progress,
+            progress_callback=progress,
             task_auth=auth,
+            image_files=image_files or None,
         )
+        if body.get("finishReason") in ("length", "max_tokens", "content_filter"):
+            raise AdapterError("MATERIAL_OUTLINE_INCOMPLETE", "模型输出未完成，请调整输出容量后重新生成。", status_code=502)
         return extract_answer(body)
 
     def _build_user_prompt(
@@ -250,9 +255,11 @@ class PptMaterialOutlineCoordinator:
             fname = f.get("fileName", "资料")
             fhead = f.get("heading") or f.get("chapter") or "正文"
             ftext = f.get("text", "")
+            if f.get("source"):
+                ftext += "\n[位置与表格关系] " + json.dumps(f["source"], ensure_ascii=False)
             fragments_repr.append("[片段编号 {0}] 《{1}》- {2}：\n{3}".format(fid, fname, fhead, ftext))
 
-        prompt_parts.append("【参考资料片段】\n" + "\n\n".join(fragments_repr))
+        prompt_parts.append("【完整参考资料（编号仅用于出处定位）】\n" + "\n\n".join(fragments_repr))
         return "\n\n".join(prompt_parts)
 
     def _run_job(self, snapshot: dict, progress) -> dict:
@@ -291,12 +298,9 @@ class PptMaterialOutlineCoordinator:
         )
 
         auth = snapshot["taskAuth"]
-        budget, _ = direct_model_input_budget(
-            int(auth.get("contextWindowTokens") or DEFAULT_CONTEXT_WINDOW_TOKENS),
-            int(auth.get("maxOutputTokens") or DEFAULT_RESERVED_OUTPUT_TOKENS),
-        )
-        if _estimate_direct_tokens(system_prompt, system_prompt + "\n" + user_content) > budget:
-            raise AdapterError("MODEL_INPUT_OVER_BUDGET", "资料超过单次模型预算，请缩小资料范围；未截断资料。", status_code=413)
+        if snapshot.get("imageFiles") and auth.get("imageInputMode") != "openai_image_url":
+            raise AdapterError("MODEL_IMAGE_INPUT_UNSUPPORTED", "请在资料大纲模型设置中确认原图输入能力；未删图或降级。", status_code=400)
+        capacity = validate_composer_multimodal_input(auth, system_prompt, user_content, snapshot.get("imageFiles", []))
 
         check_cancel()
         progress("provider_processing")
@@ -306,6 +310,7 @@ class PptMaterialOutlineCoordinator:
             task_auth=auth,
             trace_id=snapshot["traceId"],
             progress=progress,
+            **({"image_files": snapshot["imageFiles"]} if snapshot.get("imageFiles") else {})
         )
 
         check_cancel()
@@ -318,6 +323,7 @@ class PptMaterialOutlineCoordinator:
             catalog=catalog,
             user_facts=user_facts,
         )
+        validated_result["capacity"] = capacity
         return validated_result
 
     def _parse_and_validate_outline(
@@ -447,6 +453,7 @@ class PptMaterialOutlineCoordinator:
                     "fileName": frag.get("fileName", "参考资料"),
                     "chapter": chap,
                     "text": frag.get("text", ""),
+                    **({"imageId": frag["imageId"]} if frag.get("imageId") else {}),
                 })
                 normalized_fids.append(fid)
 
@@ -454,6 +461,8 @@ class PptMaterialOutlineCoordinator:
                 "pageIndex": idx + 1,
                 "pageRole": page_role,
                 "title": title,
+                "coreMessage": str(slide.get("coreMessage") or "").strip(),
+                "presentationAdvice": str(slide.get("presentationAdvice") or "").strip(),
                 "keyPoints": key_points,
                 "missingItems": missing_items,
                 "fragmentIds": normalized_fids,

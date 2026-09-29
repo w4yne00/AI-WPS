@@ -6,7 +6,7 @@ const path = require('node:path');
 const { pptRoot } = require('./support/plugin-roots');
 const source = fs.readFileSync(path.join(pptRoot, 'taskpane.js'), 'utf8');
 const helpers = require(path.join(pptRoot, 'taskpane-helpers.js'));
-const tasks = ['ppt.slide_assistant', 'ppt.structure_review'];
+const tasks = ['ppt.slide_assistant', 'ppt.structure_review', 'ppt.material_outline'];
 function pane(failConfig = false, mode = '') {
   const nodes = new Map();
   const node = id => {

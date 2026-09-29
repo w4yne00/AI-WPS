@@ -1,3 +1,4 @@
+from copy import deepcopy
 import base64
 import binascii
 import hashlib
@@ -8,6 +9,8 @@ import secrets
 import shutil
 import threading
 import tempfile
+import time
+from app.services.word.material_document import extract_document
 from contextlib import nullcontext
 from typing import Dict, List, Optional
 
@@ -95,6 +98,7 @@ class PptMaterialStore:
         self.coordinator = coordinator or get_long_task_coordinator()
         self._lock = threading.RLock()
         self._memory_catalogs: Dict[str, dict] = {}
+        self._conversions = {}
 
     def _check_busy(self, session_id: Optional[str]) -> None:
         if not session_id:
@@ -235,6 +239,14 @@ class PptMaterialStore:
             except Exception as e:
                 raise AdapterError("MATERIAL_NOT_FOUND", "读取来源资料清单失败。", status_code=500) from e
 
+            for doc in manifest.get("documents", []):
+                mid = doc.get("materialId", "")
+                if Path(doc.get("fileName", "")).suffix.lower() not in (".doc", ".docx"):
+                    raise AdapterError("MATERIAL_FILE_REJECTED", "来源包含非 Word 材料，请选择 DOCX/DOC 资料。", status_code=422)
+                original = source_dir / "files" / (mid + ".docx")
+                if not re.fullmatch(r"mat_[a-f0-9]{16}", mid) or original.is_symlink() or not original.is_file():
+                    raise AdapterError("MATERIAL_NOT_FOUND", "来源原件缺失，请重新上传。", status_code=404)
+
             target_dir_name = self._resolve_dir_name(target_session_id, target_doc_identity)
             target_dir = self.base_dir / target_dir_name
             existing_target = self._get_dir_for_session(target_session_id)
@@ -353,6 +365,136 @@ class PptMaterialStore:
             self._memory_catalogs.pop(target_session_id, None)
             return self.get_catalog(target_session_id)
 
+    def get_source_image(self, session_id: str, material_id: str, image_id: str, updated_at: str) -> dict:
+        from app.services.provider_client import _composer_image_data_uri
+        with self._lock:
+            catalog = self.get_catalog(session_id)
+            doc = next((d for d in catalog.get("documents", []) if d["materialId"] == material_id), None)
+            if not doc or not updated_at or doc.get("updatedAt") != updated_at:
+                raise AdapterError("MATERIAL_NOT_FOUND", "图片依据已更新或不属于当前文稿，请重新生成。", status_code=409)
+            whole = self.get_full_document(session_id, material_id)
+            image = next((im for im in whole["images"] if material_id + "-" + im["imageId"] == image_id), None)
+            if image is None:
+                raise AdapterError("MATERIAL_NOT_FOUND", "出处图片不存在，请重新生成。", status_code=404)
+            return {"imageId": image_id, "imageDataUri": _composer_image_data_uri(image)}
+
+    def prepare_full_catalog(self, session_id: str):
+        """Re-read originals and retain source IDs for downstream template tasks."""
+        with self._lock:
+            catalog = deepcopy(self.get_catalog(session_id))
+            remaining = list(catalog.get("fragmentsList", []))
+            next_index = _next_fragment_index(catalog)
+            fragments, blocks, images = [], [], []
+            for doc in catalog.get("documents", []):
+                mid = doc["materialId"]
+                whole = self.get_full_document(session_id, mid)
+                if not whole["complete"]:
+                    raise AdapterError("MATERIAL_READ_INCOMPLETE", "资料「" + doc["fileName"] + "」含未读取对象，请处理后重新上传。", status_code=422)
+                image_map = {}
+                for image in whole["images"]:
+                    image = deepcopy(image)
+                    old_id = image["imageId"]
+                    image["imageId"] = mid + "-" + old_id
+                    image_map[old_id] = image
+                    images.append(image)
+                chapter = "正文"
+                for block in whole["blocks"]:
+                    block = dict(block, materialId=mid, fileName=doc["fileName"])
+                    if block["kind"] == "heading":
+                        chapter = block.get("text") or chapter
+                    block["chapter"] = chapter
+                    if block["kind"] == "image":
+                        image = image_map[block["imageId"]]
+                        block["imageId"] = image["imageId"]
+                        block["text"] = "原图 " + image["imageId"] + "（请核对图中文字和数值）"
+                    match = next((f for f in remaining if f.get("materialId") == mid and
+                                  f.get("text") == block.get("text") and
+                                  ("path" not in f.get("source", {}) or f.get("source") == block.get("source"))), None)
+                    if match is not None:
+                        fid = match["fragmentId"]
+                        remaining.remove(match)
+                    else:
+                        fid = "frag-" + str(next_index)
+                        next_index += 1
+                    block["blockId"] = fid
+                    blocks.append(block)
+                    fragments.append(dict(block, fragmentId=fid))
+            catalog["blocks"] = blocks
+            catalog["fragmentsList"] = fragments
+            catalog["fragments"] = {f["fragmentId"]: f for f in fragments}
+            directory = self._get_dir_for_session(session_id)
+            if directory:
+                (directory / "catalog_cache.json").write_text(json.dumps(catalog, ensure_ascii=False), encoding="utf-8")
+            self._memory_catalogs[session_id] = catalog
+            return deepcopy(catalog), images
+
+    def import_request(self, payload: dict, material_id: str = "") -> dict:
+        """Import/update, or finish a session-bound native DOC conversion."""
+        with self._lock:
+            for token, entry in list(self._conversions.items()):
+                if time.monotonic() - entry["created"] > 600:
+                    entry["directory"].cleanup()
+                    del self._conversions[token]
+            session_id = str(payload.get("documentSessionId") or "").strip()
+            if not session_id:
+                raise AdapterError("REQUEST_VALIDATION_FAILED", "缺少演示文稿会话。", status_code=422)
+            self._check_busy(session_id)
+            token = payload.get("conversionId")
+            if token:
+                entry = self._conversions.get(token) if isinstance(token, str) else None
+                if not entry or entry["payload"]["documentSessionId"] != session_id or entry["materialId"] != material_id:
+                    raise AdapterError("MATERIAL_CONVERSION_EXPIRED", "转换会话已失效，请重新选择文件。", status_code=409)
+                try:
+                    if payload.get("cancelConversion") is True:
+                        return {"cancelled": True}
+                    path = Path(entry["directory"].name) / "converted.docx"
+                    if path.is_symlink() or not path.is_file() or path.stat().st_size > DOCX_MAX_PACKAGE_BYTES:
+                        raise AdapterError("MATERIAL_CONVERSION_FAILED", "WPS 未生成有效 DOCX 副本。", status_code=422)
+                    request = entry["payload"]
+                    encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+                    if material_id:
+                        return self.update_material(session_id, material_id, request["fileName"], encoded)
+                    return self.import_material(session_id, request.get("documentIdentity", ""), request["fileName"], encoded)
+                finally:
+                    entry["directory"].cleanup()
+                    del self._conversions[token]
+            file_name = str(payload.get("fileName") or "").strip()
+            encoded = str(payload.get("contentBase64") or "")
+            if file_name.lower().endswith(".doc"):
+                content = _decode_upload(encoded)
+                if not content.startswith(bytes.fromhex("d0cf11e0a1b11ae1")):
+                    raise AdapterError("MATERIAL_FILE_REJECTED", "DOC 文件格式无效。", status_code=422)
+                for old_token, entry in list(self._conversions.items()):
+                    if entry["payload"]["documentSessionId"] == session_id:
+                        entry["directory"].cleanup()
+                        del self._conversions[old_token]
+                directory = tempfile.TemporaryDirectory(prefix="ai-wps-outline-doc-")
+                source = Path(directory.name) / "source.doc"
+                source.write_bytes(content)
+                token = secrets.token_urlsafe(24)
+                self._conversions[token] = {"directory": directory, "created": time.monotonic(),
+                                           "payload": dict(payload, documentSessionId=session_id), "materialId": material_id}
+                return {"conversionRequired": True, "conversionId": token, "documentSessionId": session_id,
+                        "sourcePath": str(source), "targetPath": str(Path(directory.name) / "converted.docx")}
+            if material_id:
+                return self.update_material(session_id, material_id, file_name, encoded)
+            return self.import_material(session_id, str(payload.get("documentIdentity") or ""), file_name, encoded)
+
+    def get_full_document(self, session_id: str, material_id: str) -> dict:
+        with self._lock:
+            doc = next((d for d in self.get_catalog(session_id)["documents"] if d["materialId"] == material_id), None)
+            if not doc or not re.fullmatch(r"mat_[a-f0-9]{16}", material_id):
+                raise AdapterError("MATERIAL_NOT_FOUND", "当前演示文稿没有该资料。", status_code=404)
+            directory = self._get_dir_for_session(session_id)
+            suffix = Path(doc["fileName"]).suffix.lower()
+            if suffix not in (".doc", ".docx"):
+                raise AdapterError("MATERIAL_FILE_REJECTED", "资料大纲仅支持 DOCX/DOC 完整文档。", status_code=422)
+            suffix = ".docx" if suffix == ".doc" else suffix
+            path = directory / "files" / (material_id + suffix) if directory else None
+            if path is None or path.is_symlink() or not path.is_file():
+                raise AdapterError("MATERIAL_NOT_FOUND", "资料原始副本缺失，请重新导入。", status_code=404)
+            return extract_document(path.read_bytes(), doc["fileName"])
+
     def import_material(
         self,
         session_id: str,
@@ -366,7 +508,7 @@ class PptMaterialStore:
         with self._lock:
             self._check_busy(session_id)
             content = _decode_upload(content_base64)
-            _reject_wrong_type(file_name, "")
+            _reject_wrong_type(file_name + "x" if file_name.lower().endswith(".doc") else file_name, "")
             catalog = self.get_catalog(session_id)
             if len(catalog.get("documents", [])) >= MATERIAL_IMPORT_MAX_DOCUMENTS:
                 raise AdapterError(
@@ -389,7 +531,10 @@ class PptMaterialStore:
                 remaining_table_cells=MATERIAL_IMPORT_MAX_TABLE_CELLS - existing_cells,
                 start_fragment_index=start_fragment_index,
             )
-            char_count = reading["limits"]["readableCharacterCount"]
+            whole = extract_document(content, file_name)
+            reading["fullReading"] = {"complete": whole["complete"], "imageCount": len(whole["images"]),
+                                      "unreadObjects": whole["unreadObjects"]}
+            char_count = sum(len(b.get("text", "")) for b in whole["blocks"])
             if catalog.get("totalCharacters", 0) + char_count > MATERIAL_IMPORT_MAX_READABLE_CHARACTERS:
                 raise AdapterError(
                     "MATERIAL_TEXT_OVER_LIMIT",
@@ -414,6 +559,7 @@ class PptMaterialStore:
                 "blocksCount": len(reading["blocks"]),
                 "fragmentsCount": len(reading["fragments"]),
                 "tableCellsCount": reading["limits"].get("extractedTableCells", 0),
+                "fullReading": reading["fullReading"],
                 "importedAt": now_iso,
                 "updatedAt": now_iso,
             }
@@ -445,6 +591,7 @@ class PptMaterialStore:
                 "blocks": reading["blocks"],
                 "fragments": reading["fragments"],
                 "toc": reading.get("headings", reading.get("toc", [])),
+                "fullReading": reading["fullReading"],
                 "importedAt": now_iso,
                 "updatedAt": now_iso,
                 "documentSessionId": session_id,
@@ -481,7 +628,7 @@ class PptMaterialStore:
         with self._lock:
             self._check_busy(session_id)
             content = _decode_upload(content_base64)
-            _reject_wrong_type(file_name, "")
+            _reject_wrong_type(file_name + "x" if file_name.lower().endswith(".doc") else file_name, "")
             catalog = self.get_catalog(session_id)
             doc_idx = -1
             old_doc = None
@@ -505,7 +652,10 @@ class PptMaterialStore:
                 remaining_table_cells=MATERIAL_IMPORT_MAX_TABLE_CELLS - catalog.get("totalTableCells", 0) + old_doc.get("tableCellsCount", old_doc.get("extractedTableCells", 0)),
                 start_fragment_index=_next_fragment_index(catalog),
             )
-            char_count = reading["limits"]["readableCharacterCount"]
+            whole = extract_document(content, file_name)
+            reading["fullReading"] = {"complete": whole["complete"], "imageCount": len(whole["images"]),
+                                      "unreadObjects": whole["unreadObjects"]}
+            char_count = sum(len(b.get("text", "")) for b in whole["blocks"])
             old_chars = old_doc.get("readableCharacterCount", 0)
             new_total = catalog.get("totalCharacters", 0) - old_chars + char_count
             if new_total > MATERIAL_IMPORT_MAX_READABLE_CHARACTERS:
@@ -523,6 +673,7 @@ class PptMaterialStore:
 
             now_iso = _updated_at(old_doc.get("updatedAt", ""))
             old_cells = old_doc.get("tableCellsCount", old_doc.get("extractedTableCells", 0))
+            old_doc["fullReading"] = reading["fullReading"]
             old_doc["fileName"] = file_name
             old_doc["fileSha256"] = hashlib.sha256(content).hexdigest()
             old_doc["characterCount"] = char_count

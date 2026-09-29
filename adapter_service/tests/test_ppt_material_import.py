@@ -319,3 +319,53 @@ def test_runtime_ppt_clone_keeps_docx_and_catalog_in_one_source_version(temp_roo
     assert cloned["documents"][0]["fileName"] == "旧资料.docx"
     view = json.loads((target_dir / "materials" / (material_id + ".json")).read_text(encoding="utf-8"))
     assert view["fileName"] == "旧资料.docx"
+
+
+def test_ppt_full_document_requires_original_and_preserves_header(temp_roots):
+    word_dir, excel_dir, ppt_dir = temp_roots
+    store = PptMaterialStore(ppt_dir, word_dir, excel_dir)
+    output = BytesIO()
+    with zipfile.ZipFile(output, 'w') as archive:
+        archive.writestr('[Content_Types].xml', CONTENT_TYPES_XML)
+        archive.writestr('word/document.xml', DOCUMENT_XML)
+        archive.writestr('word/header1.xml', DOCUMENT_XML.replace('第一章'.encode(), '页眉独立事实'.encode()))
+    result = store.import_request({'documentSessionId': 'full', 'fileName': '材料.docx',
+                                   'contentBase64': base64.b64encode(output.getvalue()).decode()})
+    whole = store.get_full_document('full', result['materialId'])
+    assert whole['complete']
+    assert any('页眉独立事实' in b.get('text', '') for b in whole['blocks'])
+    (store._get_dir_for_session('full') / 'files' / (result['materialId'] + '.docx')).unlink()
+    with pytest.raises(AdapterError) as error:
+        store.get_full_document('full', result['materialId'])
+    assert error.value.code == 'MATERIAL_NOT_FOUND'
+
+
+def test_ppt_doc_conversion_is_session_bound_and_cleans_up(temp_roots):
+    store = PptMaterialStore(temp_roots[2], temp_roots[0], temp_roots[1])
+    stage = store.import_request({'documentSessionId': 'a', 'fileName': '材料.doc',
+                                  'contentBase64': base64.b64encode(bytes.fromhex('d0cf11e0a1b11ae1')).decode()})
+    with pytest.raises(AdapterError):
+        store.import_request({'documentSessionId': 'b', 'conversionId': stage['conversionId']})
+    Path(stage['targetPath']).write_bytes(build_docx())
+    result = store.import_request({'documentSessionId': 'a', 'conversionId': stage['conversionId']})
+    assert result['fileName'] == '材料.doc'
+    assert store.get_full_document('a', result['materialId'])['complete']
+    assert not Path(stage['sourcePath']).exists()
+
+
+def test_source_image_is_loaded_on_demand_and_rejects_other_session(temp_roots):
+    from tests.test_word_material_document import document, p, PNG
+    store = PptMaterialStore(temp_roots[2], temp_roots[0], temp_roots[1])
+    raw = document(p('图示') + '<w:p><w:r><w:drawing><a:blip r:embed="rId1"/></w:drawing></w:r></w:p>', {
+        'word/_rels/document.xml.rels': b'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/a.png"/></Relationships>', 'word/media/a.png': PNG})
+    imported = store.import_request({'documentSessionId': 'a', 'fileName': '图.docx', 'contentBase64': base64.b64encode(raw).decode()})
+    catalog, images = store.prepare_full_catalog('a')
+    assert 'imageDataUri' not in json.dumps(catalog)
+    mid = imported['materialId']
+    version = catalog['documents'][0]['updatedAt']
+    image = store.get_source_image('a', mid, images[0]['imageId'], version)
+    assert base64.b64decode(image['imageDataUri'].split(',')[1]) == PNG
+    with pytest.raises(AdapterError):
+        store.get_source_image('other', mid, images[0]['imageId'], version)
+    with pytest.raises(AdapterError):
+        store.get_source_image('a', mid, images[0]['imageId'], 'old-version')

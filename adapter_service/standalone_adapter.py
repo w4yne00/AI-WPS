@@ -2436,6 +2436,20 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
 
+        if path == "/ppt/materials/image":
+            query = parse_qs(parsed.query)
+            trace_id = new_trace_id("standalone-ppt-material-image")
+            try:
+                data = PPT_MATERIAL_STORE.get_source_image(
+                    query.get("documentSessionId", [""])[0], query.get("materialId", [""])[0],
+                    query.get("imageId", [""])[0], query.get("updatedAt", [""])[0])
+            except AdapterError as error:
+                self._write(error.status_code, envelope(trace_id, "ppt.material_outline", success=False,
+                            message=error.message, errors=[{"code": error.code, "message": error.message}]))
+                return
+            self._write(200, envelope(trace_id, "ppt.material_outline", data, message="image"))
+            return
+
         if path == "/ppt/materials/catalog":
             session = parse_qs(parsed.query).get("documentSessionId", [""])[0]
             trace_id = new_trace_id("standalone-ppt-material-catalog")
@@ -3614,12 +3628,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/ppt/materials/import":
             trace_id = new_trace_id("standalone-ppt-material-import")
             try:
-                data = PPT_MATERIAL_STORE.import_material(
-                    session_id=str(payload.get("documentSessionId") or "").strip(),
-                    doc_identity=str(payload.get("documentIdentity") or "").strip(),
-                    file_name=str(payload.get("fileName") or "").strip(),
-                    content_base64=str(payload.get("contentBase64") or "").strip(),
-                )
+                data = PPT_MATERIAL_STORE.import_request(payload)
             except AdapterError as error:
                 self._write(
                     error.status_code,
@@ -4625,12 +4634,7 @@ class Handler(BaseHTTPRequestHandler):
                 length = int(self.headers.get("Content-Length", 0))
                 raw_bytes = self.rfile.read(length) if length else b"{}"
                 payload = json.loads(raw_bytes.decode("utf-8") or "{}")
-                data = PPT_MATERIAL_STORE.update_material(
-                    session_id=str(payload.get("documentSessionId") or "").strip(),
-                    material_id=material_id,
-                    file_name=str(payload.get("fileName") or "").strip(),
-                    content_base64=str(payload.get("contentBase64") or "").strip(),
-                )
+                data = PPT_MATERIAL_STORE.import_request(payload, material_id)
             except AdapterError as error:
                 self._write(
                     error.status_code,

@@ -8,7 +8,8 @@
   var PPT_MATERIAL_OUTLINE_WORKFLOW_TASK_TYPE = "ppt.material_outline";
   var TASK_API_KEY_DEFS = [
     { taskType: "ppt.slide_assistant", label: "智能总结" },
-    { taskType: "ppt.structure_review", label: "结构审查" }
+    { taskType: "ppt.structure_review", label: "结构审查" },
+    { taskType: "ppt.material_outline", label: "资料大纲" }
   ];
   var PPT_SLIDE_POLL_INTERVAL_MS = 3000;
   var PPT_SLIDE_POLL_ERROR_RETRY_DELAY_MS = 15000;
@@ -2086,6 +2087,7 @@
   function ensureMaterialOutline() {
     if (!materialOutline && typeof window.createMaterialOutline === "function") {
       materialOutline = window.createMaterialOutline({
+        getWordApp: function () { return window.wps && typeof window.wps.WpsApplication === "function" ? window.wps.WpsApplication() : null; },
         request: request,
         storage: window.localStorage,
         getSessionId: getPptOutlineSessionId,
@@ -2104,6 +2106,7 @@
     }
     var v = view || (ensureMaterialOutline() && ensureMaterialOutline().stateFor(ensureMaterialOutline().current().documentSessionId));
     if (!v) return;
+    if (renderedOutlineInputSessionId && renderedOutlineInputSessionId !== v.documentSessionId) v.activeDrawerPageIndex = null;
 
     [
       ["ppt-outline-audience", v.audience],
@@ -2144,6 +2147,7 @@
         var id = helpers.escapeHtml(mat.materialId);
         return '<div class="outline-material-item"><span>' + helpers.escapeHtml(mat.fileName) +
           '（' + Number(mat.readableCharacterCount || 0) + ' 字）</span>' +
+          (mat.fullReading ? '<span class="field-hint">' + (mat.fullReading.complete ? '完整读取 · ' + Number(mat.fullReading.imageCount || 0) + ' 张原图' : '包含未读取对象，请处理后重传') + '</span>' : '<span class="field-hint">生成前核查完整原件</span>') +
           '<div><button type="button" class="text-action" data-outline-update="' + id + '"' + (v.busy ? ' disabled' : '') + '>更新</button> ' +
           '<button type="button" class="text-action" data-outline-remove="' + id + '"' + (v.busy ? ' disabled' : '') + '>移除</button></div></div>';
       }).join("");
@@ -2182,6 +2186,7 @@
       }
     }
 
+    if (byId("outline-extra-facts-summary")) byId("outline-extra-facts-summary").textContent = v.userFacts ? "补充事实（已填写）" : "补充事实（选填）";
     var resultOutput = byId("outline-result-output");
     var slideListEl = byId("outline-slide-list");
     var copyMdBtn = byId("btn-copy-outline-markdown");
@@ -2190,8 +2195,9 @@
 
     if (v.result && v.result.slides && v.result.slides.length) {
       if (resultOutput) {
-        resultOutput.hidden = !v.error;
-        resultOutput.textContent = v.error || "";
+        var coverageWarning = v.result.capacity && v.result.capacity.warning;
+        resultOutput.hidden = !(v.error || coverageWarning);
+        resultOutput.textContent = v.error || coverageWarning || "";
       }
       if (slideListEl) {
         slideListEl.hidden = false;
@@ -2224,7 +2230,9 @@
             '</div>' +
             '<input class="outline-slide-title-input" data-title-page="' + helpers.escapeHtml(slide.pageIndex) + '" value="' + helpers.escapeHtml(slide.title || "") + '" />' +
             '<ul class="outline-slide-keypoints">' + keyPointsHtml + '</ul>' +
-            missingHtml +
+            (slide.coreMessage ? '<p class="outline-core-message">' + helpers.escapeHtml(slide.coreMessage) + '</p>' : "") +
+            (slide.presentationAdvice ? '<p class="field-hint">表达建议：' + helpers.escapeHtml(slide.presentationAdvice) + '</p>' : "") +
+            (missingHtml ? '<details><summary>待补充 '+ (slide.missingItems || []).length +' 项</summary>'+missingHtml+'</details>' : "") +
             '<div style="margin-top:6px; display:flex; justify-content:flex-end;">' + sourcesBtnHtml + '</div>' +
           '</div>';
         }).join("");
@@ -2283,10 +2291,13 @@
         var activeSlide = v.result.slides.find(function (s) { return s.pageIndex === v.activeDrawerPageIndex; });
         if (activeSlide && activeSlide.sources && activeSlide.sources.length) {
           drawer.hidden = false;
-          drawerContent.innerHTML = activeSlide.sources.map(function (src) {
+          if (slideListEl) slideListEl.hidden = true;
+          drawerContent.innerHTML = (v.sourceImageError ? '<p role="alert">' + helpers.escapeHtml(v.sourceImageError) + '</p>' : "") + activeSlide.sources.map(function (src) {
+            var sourceImage = v.sourceImages && v.sourceImages[src.imageId];
             return '<div style="margin-bottom:6px; padding:4px 6px; background:#fff; border-radius:4px; font-size:11px;">' +
               '<strong>《' + helpers.escapeHtml(src.fileName || "资料") + '》- ' + helpers.escapeHtml(src.chapter || "正文") + '</strong>' +
               '<p style="margin:2px 0 0; color:#4b5563;">' + helpers.escapeHtml(src.text || "") + '</p>' +
+              (/^data:image\/(png|jpeg|gif|webp);base64,[A-Za-z0-9+/=]+$/.test(sourceImage || '') ? '<img class="outline-source-image" alt="资料原图" src="' + helpers.escapeHtml(sourceImage) + '" />' : '') +
             '</div>';
           }).join("");
         } else {
@@ -4787,6 +4798,8 @@
     if (maxOutInput) {
       maxOutInput.value = currentSelection && currentSelection.maxOutputTokens !== null && currentSelection.maxOutputTokens !== undefined ? currentSelection.maxOutputTokens : "";
     }
+    if (byId("ppt-task-image-mode-field")) byId("ppt-task-image-mode-field").hidden = getSettingsWorkflowTaskType() !== "ppt.material_outline";
+    if (byId("ppt-task-image-mode")) byId("ppt-task-image-mode").value = (currentSelection && currentSelection.imageInputMode) || "disabled";
     if (contextInput) {
       contextInput.value = currentSelection && currentSelection.contextWindowTokens ? currentSelection.contextWindowTokens : "";
     }
@@ -4816,6 +4829,7 @@
     if (tempInput) tempInput.disabled = mutationDisabled;
     if (maxOutInput) maxOutInput.disabled = mutationDisabled;
     if (contextInput) contextInput.disabled = mutationDisabled;
+    if (byId("ppt-task-image-mode")) byId("ppt-task-image-mode").disabled = mutationDisabled;
     if (byId("btn-save-task-model-selection")) byId("btn-save-task-model-selection").disabled = mutationDisabled;
     if (byId("btn-validate-task-model-selection")) byId("btn-validate-task-model-selection").disabled = mutationDisabled;
   }
@@ -4874,7 +4888,8 @@
       customModel: isCustom,
       temperature: tempVal !== "" ? Number(tempVal) : null,
       maxOutputTokens: maxOutVal !== "" && Number(maxOutVal) !== 0 ? Number(maxOutVal) : null,
-      contextWindowTokens: contextVal !== "" && Number(contextVal) !== 0 ? Number(contextVal) : null
+      contextWindowTokens: contextVal !== "" && Number(contextVal) !== 0 ? Number(contextVal) : null,
+      imageInputMode: getSettingsWorkflowTaskType() === "ppt.material_outline" && byId("ppt-task-image-mode") ? byId("ppt-task-image-mode").value : "disabled"
     };
   }
 
@@ -5028,7 +5043,7 @@
           } else {
             state.workflowProfileMutationBusy = false;
           }
-          var taskLabel = taskType === "ppt.structure_review" ? "结构审查" : "智能总结";
+          var taskLabel = taskType === "ppt.material_outline" ? "资料大纲" : (taskType === "ppt.structure_review" ? "结构审查" : "智能总结");
           setStatus(taskLabel + "接入直连服务已保存并设为当前。");
           if (statusNode) {
             statusNode.textContent = "已保存并设为当前。";
@@ -6123,8 +6138,10 @@
           var ctrl = ensureMaterialOutline();
           if (ctrl && !isNaN(pageIndex)) {
             var s = ctrl.current();
-            s.activeDrawerPageIndex = pageIndex;
-            renderMaterialOutlineView(s);
+            s.outlineReturnScroll = window.scrollY || 0;
+            s.outlineReturnPage = pageIndex;
+            ctrl.openSources(pageIndex);
+            byId("btn-close-outline-drawer").focus();
           }
         }
       });
@@ -6135,7 +6152,11 @@
         if (ctrl) {
           var s = ctrl.current();
           s.activeDrawerPageIndex = null;
+          s.sourceImages = {};
           renderMaterialOutlineView(s);
+          var origin = document.querySelector('[data-drawer-page="' + s.outlineReturnPage + '"]');
+          if (origin) origin.focus({ preventScroll: true });
+          window.scrollTo(0, s.outlineReturnScroll || 0);
         }
       });
     }

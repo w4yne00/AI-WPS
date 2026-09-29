@@ -304,3 +304,39 @@ class StandalonePptMaterialOutlineTestCase(unittest.TestCase):
             "instruction": oversized,
         })
         self.assertEqual(res["status"], 413)
+
+
+@pytest.mark.parametrize('runtime', ['fastapi', 'standalone'])
+def test_source_image_endpoint_checks_session_and_version(tmp_path, runtime):
+    from urllib.parse import urlencode
+    from tests.test_word_material_document import document, p, PNG
+    from app.services.ppt.material_store import PptMaterialStore
+    store = PptMaterialStore(tmp_path / 'ppt', tmp_path / 'word', tmp_path / 'excel')
+    raw = document(p('图示') + '<w:p><w:r><w:drawing><a:blip r:embed="rId1"/></w:drawing></w:r></w:p>', {
+        'word/_rels/document.xml.rels': b'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/a.png"/></Relationships>', 'word/media/a.png': PNG})
+    imported = store.import_request({'documentSessionId': 'a', 'fileName': '图.docx', 'contentBase64': base64.b64encode(raw).decode()})
+    catalog, images = store.prepare_full_catalog('a')
+    query = {'documentSessionId': 'a', 'materialId': imported['materialId'], 'imageId': images[0]['imageId'], 'updatedAt': catalog['documents'][0]['updatedAt']}
+    if runtime == 'fastapi':
+        from fastapi.testclient import TestClient
+        from app.main import app
+        from app.api import ppt
+        target, name = ppt, 'ppt_material_store'
+        def get(url):
+            response = TestClient(app).get(url)
+            return response.status_code, response.json()
+    else:
+        import standalone_adapter
+        target, name = standalone_adapter, 'PPT_MATERIAL_STORE'
+        def get(url):
+            result = StandalonePptMaterialOutlineTestCase()._invoke('do_GET', url)
+            return result['status'], result['body']
+    with patch.object(target, name, store):
+        status, body = get('/ppt/materials/image?' + urlencode(query))
+        assert status == 200
+        assert base64.b64decode(body['data']['imageDataUri'].split(',')[1]) == PNG
+        query['documentSessionId'] = 'other'
+        assert get('/ppt/materials/image?' + urlencode(query))[0] == 409
+        query['documentSessionId'] = 'a'
+        query['updatedAt'] = 'stale'
+        assert get('/ppt/materials/image?' + urlencode(query))[0] == 409

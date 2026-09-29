@@ -29,7 +29,7 @@
 
   var OUTLINE_PHASE_TEXT = {
     queued: "正在排队...",
-    preparing: "正在分析资料并建立索引...",
+    preparing: "正在完整读取资料...",
     provider_processing: "正在生成逐页大纲...",
     parsing: "正在校验页数与出处...",
     completed: "逐页大纲生成完成",
@@ -250,6 +250,44 @@
       return res;
     }
 
+    async function finishDocConversion(stage, sessionId, materialId) {
+      var url = materialId ? "/ppt/materials/" + encodeURIComponent(materialId) : "/ppt/materials/import";
+      var method = { method: materialId ? "PUT" : "POST" };
+      try {
+        var app = typeof opts.getWordApp === "function" ? opts.getWordApp() : null;
+        if (!app || !app.Documents || typeof app.Documents.Open !== "function") {
+          throw new Error("当前 PPT 无法调用 WPS DOC 转换，请另存为 DOCX 后上传。");
+        }
+        var security = app.AutomationSecurity, alerts = app.DisplayAlerts, hostOptions = app.Options;
+        if ([1, 2, 3].indexOf(security) < 0 || !hostOptions || typeof hostOptions.UpdateLinksAtOpen !== "boolean") {
+          throw new Error("无法核验 DOC 转换的宏和外链保护，请另存为 DOCX 后上传。");
+        }
+        var links = hostOptions.UpdateLinksAtOpen, active = app.ActiveDocument, temporary = null;
+        try {
+          app.AutomationSecurity = 3;
+          hostOptions.UpdateLinksAtOpen = false;
+          if (app.AutomationSecurity !== 3 || hostOptions.UpdateLinksAtOpen !== false) throw new Error("DOC 转换安全设置未生效。");
+          app.DisplayAlerts = 0;
+          temporary = app.Documents.Open(stage.sourcePath, false, true, false, "", "", false, "", "", undefined, undefined, false);
+          if (!temporary || typeof temporary.SaveAs2 !== "function") throw new Error("WPS 未提供 DOC 转换能力。");
+          temporary.SaveAs2(stage.targetPath, 12, false, "", false);
+        } finally {
+          try { if (temporary) temporary.Close(0); }
+          finally {
+            app.AutomationSecurity = security;
+            hostOptions.UpdateLinksAtOpen = links;
+            app.DisplayAlerts = alerts;
+            if (active && typeof active.Activate === "function") active.Activate();
+          }
+        }
+        return await request(url, {documentSessionId:sessionId, conversionId:stage.conversionId}, method);
+      } catch (error) {
+        try { await request(url, {documentSessionId:sessionId, conversionId:stage.conversionId, cancelConversion:true}, method); }
+        catch (cleanupError) { throw new Error(error.message + "；临时副本清理未确认，请重试。"); }
+        throw error;
+      }
+    }
+
     async function importMaterial(upload, base64OrMaterialId, docIdentity, sessionId) {
       var s = sessionId ? stateFor(sessionId) : current();
       var fileName = "";
@@ -285,6 +323,7 @@
         fileName: fileName,
         contentBase64: contentBase64
       }, { method: materialId ? "PUT" : "POST" });
+      if (res && res.data && res.data.conversionRequired) res = await finishDocConversion(res.data, s.documentSessionId, materialId);
       if (res && res.success) {
         await refreshCatalog(s.documentSessionId);
         await detectConflicts(s.documentSessionId);
@@ -309,6 +348,7 @@
         fileName: fileName,
         contentBase64: base64Content
       }, { method: "PUT" });
+      if (res && res.data && res.data.conversionRequired) res = await finishDocConversion(res.data, s.documentSessionId, materialId);
       if (res && res.success) {
         await refreshCatalog(s.documentSessionId);
         await detectConflicts(s.documentSessionId);
@@ -421,6 +461,7 @@
       if (s.busy) return;
       s.error = "";
       s.busy = true;
+      s.activeDrawerPageIndex = null;
       s.status = "running";
       s.phase = "preparing";
       s.phaseLabel = OUTLINE_PHASE_TEXT.preparing;
@@ -568,6 +609,33 @@
     }
 
     // Confirmation Gate
+    async function openSources(pageIndex) {
+      var s = current(), result = s.result;
+      s.activeDrawerPageIndex = pageIndex;
+      s.sourceImages = {};
+      s.sourceImageError = "";
+      render();
+      var slide = result && (result.slides || []).find(function (p) { return p.pageIndex === pageIndex; });
+      if (!slide) return;
+      try {
+        for (var i = 0; i < (slide.sources || []).length; i++) {
+          var src = slide.sources[i];
+          if (!src.imageId) continue;
+          var basis = (result.basisMaterials || []).find(function (b) { return b.materialId === src.materialId; });
+          var response = await request("/ppt/materials/image?documentSessionId=" + encodeURIComponent(s.documentSessionId) +
+            "&materialId=" + encodeURIComponent(src.materialId) + "&imageId=" + encodeURIComponent(src.imageId) +
+            "&updatedAt=" + encodeURIComponent(basis ? basis.updatedAt : ""), null, { method: "GET" });
+          if (current() !== s || s.result !== result || s.activeDrawerPageIndex !== pageIndex) return;
+          s.sourceImages[src.imageId] = response.data.imageDataUri;
+          render();
+        }
+      } catch (error) {
+        if (current() !== s || s.result !== result || s.activeDrawerPageIndex !== pageIndex) return;
+        s.sourceImageError = error.message || "出处图片读取失败";
+        render();
+      }
+    }
+
     function confirmOutline() {
       var s = current();
       if (!s.result || !s.result.slides || !s.result.slides.length) {
@@ -633,6 +701,8 @@
       outline.slides.forEach(function (slide) {
         var roleLabel = PAGE_ROLE_NAMES[slide.pageRole] || slide.pageRole || "内容页";
         lines.push("## 第 " + slide.pageIndex + " 页（" + roleLabel + "）：" + (slide.title || ""));
+        if (slide.coreMessage) lines.push("核心观点：" + slide.coreMessage);
+        if (slide.presentationAdvice) lines.push("表达建议：" + slide.presentationAdvice);
         if (slide.keyPoints && slide.keyPoints.length) {
           slide.keyPoints.forEach(function (point) {
             lines.push("- " + point);
@@ -659,6 +729,7 @@
     function clearResult() {
       var s = current();
       s.result = null;
+      s.activeDrawerPageIndex = null;
       s.confirmedOutline = null;
       s.confirmationStatus = "unconfirmed";
       s.confirmedAt = null;
@@ -690,6 +761,7 @@
       submit: submit,
       poll: poll,
       cancel: cancel,
+      openSources: openSources,
       confirmOutline: confirmOutline,
       hasConfirmedOutline: hasConfirmedOutline,
       getConfirmedOutline: getConfirmedOutline,

@@ -23,7 +23,7 @@ function resolveMode(controlId) {
 var ribbonIconMap = {
   btnAiPptSlideAssistant: "assets/icon-ppt-slide-assistant.png",
   btnAiPptStructureReview: "assets/icon-ppt-structure-review.png",
-  btnAiPptMaterialOutline: "assets/icon-ppt-slide-assistant.png",
+  btnAiPptMaterialOutline: "assets/icon-ppt-material-outline.png",
   btnAiSettings: "assets/icon-settings.png"
 };
 
