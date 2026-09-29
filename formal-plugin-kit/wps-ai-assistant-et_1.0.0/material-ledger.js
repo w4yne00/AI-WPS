@@ -67,6 +67,7 @@
         states[sessionId] = {
           documentSessionId: sessionId,
           headers: (saved && Array.isArray(saved.headers) && saved.headers.length) ? saved.headers.slice() : DEFAULT_LEDGER_HEADERS.slice(),
+          uncheckedHeaders: (saved && saved.uncheckedHeaders) || [],
           instruction: (saved && saved.instruction) || "",
           userFacts: (saved && saved.userFacts) || "",
           catalogSummary: catalogSummary,
@@ -105,6 +106,7 @@
       try {
         storage.setItem("excel.material-ledger:" + s.documentSessionId, JSON.stringify({
           headers: s.headers,
+          uncheckedHeaders: s.uncheckedHeaders,
           instruction: s.instruction,
           userFacts: s.userFacts,
           catalogSummary: s.catalogSummary,
@@ -135,7 +137,11 @@
     function setHeaders(headers) {
       var s = current();
       if (Array.isArray(headers) && headers.length) {
-        s.headers = headers.map(function (h) { return String(h || "").trim(); }).filter(Boolean);
+        var clean = headers.map(function (h) { return String(h || "").trim(); });
+        if (clean.some(function (h) { return !h; })) throw new Error("表头包含空白列，请修正后读取。");
+        if (clean.some(function (h, i) { return clean.indexOf(h) !== i; })) throw new Error("表头存在重名，请修正后读取。");
+        s.headers = clean;
+        s.uncheckedHeaders = [];
       } else {
         s.headers = DEFAULT_LEDGER_HEADERS.slice();
       }
@@ -144,6 +150,15 @@
       persist(s);
       notify(s);
       return s.headers;
+    }
+
+    function setHeaderSelected(index, selected) {
+      var s = current();
+      if (s.busy || !s.headers[index]) return;
+      s.uncheckedHeaders = s.uncheckedHeaders.filter(function (h) { return h !== s.headers[index]; });
+      if (!selected) s.uncheckedHeaders.push(s.headers[index]);
+      persist(s);
+      notify(s);
     }
 
     function addHeader(name) {
@@ -171,6 +186,7 @@
     }
 
     function readSelectionHeaders(app) {
+      if (!app || !app.Selection || !app.Selection.Rows || Number(app.Selection.Rows.Count) !== 1) throw new Error("请选择单行表头。");
       var helpers = (typeof window !== "undefined" && window.WpsAiAssistantHelpers) || {};
       var extracted = [];
       if (typeof helpers.readSelectionHeaders === "function") {
@@ -183,10 +199,11 @@
           try {
             var cell = typeof cells.Item === "function" ? cells.Item(1, c) : (cells.item ? cells.item(1, c) : null);
             var val = cell ? String(cell.Text || cell.Value2 || cell.Value || "").trim() : "";
-            if (val) extracted.push(val);
-          } catch (e) {}
+            extracted.push(val);
+          } catch (e) { throw new Error("无法读取所选表头。"); }
         }
       }
+      if (extracted.length !== Number(app.Selection.Columns.Count)) throw new Error("表头包含空白或重名列，请修正后读取。");
       if (extracted.length) {
         setHeaders(extracted);
       }
@@ -292,6 +309,44 @@
       }
     }
 
+    async function finishDocConversion(stage, sessionId, materialId) {
+      var url = materialId ? "/excel/materials/" + encodeURIComponent(materialId) : "/excel/materials/import";
+      var method = { method: materialId ? "PUT" : "POST" };
+      try {
+        var app = typeof opts.getWordApp === "function" ? opts.getWordApp() : null;
+        if (!app || !app.Documents || typeof app.Documents.Open !== "function") {
+          throw new Error("当前 Excel 无法调用 WPS DOC 转换，请另存为 DOCX 后上传。");
+        }
+        var security = app.AutomationSecurity, alerts = app.DisplayAlerts, hostOptions = app.Options;
+        if ([1, 2, 3].indexOf(security) < 0 || !hostOptions || typeof hostOptions.UpdateLinksAtOpen !== "boolean") {
+          throw new Error("无法核验 DOC 转换的宏和外链保护，请另存为 DOCX 后上传。");
+        }
+        var links = hostOptions.UpdateLinksAtOpen, active = app.ActiveDocument, temporary = null;
+        try {
+          app.AutomationSecurity = 3;
+          hostOptions.UpdateLinksAtOpen = false;
+          if (app.AutomationSecurity !== 3 || hostOptions.UpdateLinksAtOpen !== false) throw new Error("DOC 转换安全设置未生效。");
+          app.DisplayAlerts = 0;
+          temporary = app.Documents.Open(stage.sourcePath, false, true, false, "", "", false, "", "", undefined, undefined, false);
+          if (!temporary || typeof temporary.SaveAs2 !== "function") throw new Error("WPS 未提供 DOC 转换能力。");
+          temporary.SaveAs2(stage.targetPath, 12, false, "", false);
+        } finally {
+          try { if (temporary) temporary.Close(0); }
+          finally {
+            app.AutomationSecurity = security;
+            hostOptions.UpdateLinksAtOpen = links;
+            app.DisplayAlerts = alerts;
+            if (active && typeof active.Activate === "function") active.Activate();
+          }
+        }
+        return await request(url, {documentSessionId:sessionId, conversionId:stage.conversionId}, method);
+      } catch (error) {
+        try { await request(url, {documentSessionId:sessionId, conversionId:stage.conversionId, cancelConversion:true}, method); }
+        catch (cleanupError) { throw new Error(error.message + "；临时副本清理未确认，请重试。"); }
+        throw error;
+      }
+    }
+
     async function importMaterial(upload, materialId, sessionId) {
       var s = stateFor(sessionId || getSessionId());
       if (s.busy) throw new Error("当前工作簿正在处理任务，请稍后变更资料。");
@@ -320,6 +375,9 @@
           fileName: fileName,
           contentBase64: contentBase64
         }, { method: materialId ? "PUT" : "POST" });
+        if (res && res.data && res.data.conversionRequired) {
+          res = await finishDocConversion(res.data, s.documentSessionId, materialId);
+        }
         if (res && res.data && res.data.catalogSummary) {
           s.catalogSummary = res.data.catalogSummary;
         } else {
@@ -410,6 +468,9 @@
       var s = current();
       if (s.busy) return;
       var payload = s.pendingRequest;
+      var selectedHeaders = s.headers.filter(function (h) { return s.uncheckedHeaders.indexOf(h) < 0; });
+      if (!payload && !selectedHeaders.length) { s.error = "至少选择一列台账表头。"; notify(s); return; }
+      s.activeDrawerRowIndex = null;
       s.busy = true;
       s.error = "";
       notify(s);
@@ -426,7 +487,7 @@
         payload = clone({
           documentSessionId: s.documentSessionId,
           clientJobId: "job_" + Math.random().toString(36).slice(2, 10),
-          headers: s.headers,
+          headers: selectedHeaders,
           instruction: s.instruction,
           userFacts: s.userFacts,
           conflictResolutions: s.conflictResolutions
@@ -702,6 +763,7 @@
     return {
       getState: current,
       setHeaders: setHeaders,
+      setHeaderSelected: setHeaderSelected,
       addHeader: addHeader,
       removeHeader: removeHeader,
       readSelectionHeaders: readSelectionHeaders,

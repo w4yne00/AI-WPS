@@ -396,7 +396,7 @@ function ledgerPaneHarness() {
   const byId = id => { if (!nodes.has(id)) nodes.set(id, node()); return nodes.get(id); };
   const head = node(), body = node();
   byId('ledger-preview-table').querySelector = selector => selector === 'thead' ? head : body;
-  const context = { state: { currentMode: 'excelLedger' }, byId, helpers, document: { createElement: node }, setStatus() {}, ensureMaterialLedger() {} };
+  const context = { state: { currentMode: 'excelLedger' }, byId, helpers, document: { createElement: node, createTextNode: text => ({textContent:text}), querySelector: () => null }, setStatus() {}, ensureMaterialLedger() {} };
   const start = source.indexOf('function renderMaterialLedgerView(');
   const end = source.indexOf('\n  function ', start + 1);
   const render = vm.runInNewContext('(' + source.slice(start, end) + ')', context);
@@ -410,7 +410,7 @@ test('the actual pane displays backend values and source quotes using result hea
       sources: [{ fileName: '方案.docx', chapter: '第一章', text: '原文网络改造' }] }] } });
   assert.match(pane.head.innerHTML, /工作事项/);
   assert.match(pane.body.children[0].innerHTML, /网络改造/);
-  assert.match(pane.body.children[0].innerHTML, /查看出处/);
+  assert.match(pane.body.children[0].innerHTML, /出处/);
   assert.match(pane.byId('drawer-content').children[0].innerHTML, /第一章/);
   assert.match(pane.byId('drawer-content').children[0].innerHTML, /原文网络改造/);
 });
@@ -522,7 +522,14 @@ window.fetch=async function(url,options){
     run('click', '.btn-view-citation');
     run('wait', '--text', '开展网络改造');
     assert.match(run('get', 'text', '#drawer-content'), /第一章/);
+    assert.equal(run('eval', "document.querySelector('.ledger-table-scroll').hidden").trim(), 'true');
     run('click', '#btn-close-drawer');
+    assert.equal(run('eval', "document.querySelector('.ledger-table-scroll').hidden").trim(), 'false');
+    assert.equal(run('eval', "document.activeElement.classList.contains('btn-view-citation')").trim(), 'true');
+    for (const width of [320,420]) {
+      run('set', 'viewport', String(width), '900');
+      assert.equal(run('eval', "document.querySelector('.ledger-table-scroll').getBoundingClientRect().width <= document.querySelector('#excel-ledger-result').getBoundingClientRect().width").trim(), 'true');
+    }
     run('eval', "document.querySelector('[data-ledger-update]').click()");
     upload('更新版.docx');
     run('wait', '--text', '更新版.docx');
@@ -1387,4 +1394,34 @@ window.fetch=async function(url,options){
     try { run('close'); } catch (_) {}
     fs.rmSync(temp, { recursive: true, force: true });
   }
+});
+
+test('DOC conversion stops safely without a Word host and cancels temporary copy', async () => {
+  const h = createTestHarness();
+  h.requestHandler = async (url, body) => ({data: body && body.cancelConversion ? {cancelled:true} : {conversionRequired:true, conversionId:'conversion-1', sourcePath:'/tmp/source.doc', targetPath:'/tmp/out.docx'}});
+  await assert.rejects(h.api.importMaterial({name:'材料.doc',contentBase64:'ZG9j'}), /DOC 转换/);
+  assert.equal(h.calls.at(-1).body.cancelConversion, true);
+  assert.equal(h.calls.at(-1).body.documentSessionId, h.session);
+});
+
+test('ledger submits only checked headers in original order and rejects zero selected', async () => {
+  const h = createTestHarness();
+  h.api.setHeaders(['事项','部门','日期']);
+  h.api.setHeaderSelected(1, false);
+  await h.api.generate();
+  assert.deepEqual(Array.from(h.calls.find(c=>c.url==='/excel/material-ledger/jobs').body.headers), ['事项','日期']);
+  const empty = createTestHarness();
+  empty.api.setHeaders(['事项']);
+  empty.api.setHeaderSelected(0, false);
+  await empty.api.generate();
+  assert.match(empty.last().error, /至少选择/);
+  assert.equal(empty.calls.some(c=>c.url==='/excel/material-ledger/jobs'), false);
+});
+
+test('ledger refuses ambiguous headers without changing existing selection', () => {
+  const h = createTestHarness();
+  assert.throws(()=>h.api.setHeaders(['事项','事项']), /重名/);
+  assert.throws(()=>h.api.setHeaders(['事项','']), /空白/);
+  h.mockApp.Selection.Rows.Count = 2;
+  assert.throws(()=>h.api.readSelectionHeaders(h.mockApp), /单行/);
 });

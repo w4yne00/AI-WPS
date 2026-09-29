@@ -53,9 +53,9 @@
       "sha256": "9be04cf903cf847d25fa97009ee84cfbe499fa83627f1e90596af3cd10b1f479"
     },
     "excel.material_ledger": {
-      "version": "2026-09-27.1",
+      "version": "2026-09-29-full-document",
       "file": "excel-material-ledger.md",
-      "sha256": "8df7f228e21060c24e5563158350db4c1b82530c25ac2ac7c4fd86a36c134a5d"
+      "sha256": "253c2853c0c0091bd53523849b0fb92fa58789c3adf630c2dc04eab8c27330ee"
     },
     "ppt.material_outline": {
       "version": "2026-09-27.1",

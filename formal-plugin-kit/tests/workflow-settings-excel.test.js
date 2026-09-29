@@ -64,7 +64,8 @@ function assertCompactMarkupContract() {
   assert.ok(html.includes('role="tab" data-workflow-task-tab="excel.analysis" aria-selected="true">智能分析</button>'));
   assert.ok(html.includes('role="tab" data-workflow-task-tab="excel.formula_assistant" aria-selected="false">公式助手</button>'));
   assert.ok(html.includes('role="tab" data-workflow-task-tab="excel.smart_fill" aria-selected="false">智能填写</button>'));
-  assert.strictEqual((html.match(/data-workflow-task-tab=/g) || []).length, 3, "Excel must expose three task tabs");
+  assert.ok(html.includes('data-workflow-task-tab="excel.material_ledger"'));
+  assert.strictEqual((html.match(/data-workflow-task-tab=/g) || []).length, 4, "Excel must expose four task tabs");
   ["word.smart_write", "word.smart_imitation", "word.document_review", "word.format_review", "ppt.slide_assistant"]
     .forEach((task) => assert.ok(!html.includes(`data-workflow-task-tab="${task}"`), `Excel exposes ${task}`));
 

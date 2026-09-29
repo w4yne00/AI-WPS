@@ -370,6 +370,7 @@ test("Code review fixes: loadDirectServices array-to-map, draft customModel, and
   };
 
   const draftCtx = {
+    state: {workflowTaskType:"excel.analysis"},
     byId(id) { return mockNodes[id] || null; }
   };
   const getDraft = loadFn("getTaskModelSelectionDraft", draftCtx);
@@ -677,6 +678,18 @@ test("saveTaskModelSelection and validateTaskModelSelection support formula assi
   assert.ok(actReqFill, "must call activate for smart_fill");
   assert.strictEqual(actReqFill.payload.taskType, "excel.smart_fill");
   assert.strictEqual(state.workflowProfileSelections["excel.smart_fill"], "direct_svc_1");
+  state.workflowTaskType = "excel.material_ledger";
+  state.taskApiKeys["excel.material_ledger"] = {};
+  state.workflowProfilesByTask["excel.material_ledger"] = { activeProfileId: "direct_svc_1" };
+  mockNodes["excel-task-image-mode"] = {value:"openai_image_url"};
+  requestsMade.length = 0;
+  await ctx.saveTaskModelSelection();
+  const ledger = requestsMade.find(r => r.url.includes("/activate"));
+  assert.equal(ledger.payload.taskType, "excel.material_ledger");
+  assert.equal(ledger.payload.taskModelSelection.temperature, 0.5);
+  assert.equal(ledger.payload.taskModelSelection.maxOutputTokens, 1000);
+  assert.equal(ledger.payload.taskModelSelection.contextWindowTokens, 32000);
+  assert.equal(ledger.payload.taskModelSelection.imageInputMode, "openai_image_url");
 });
 
 test("Delete protection and URL change impact disclose formula assistant and smart fill", () => {
@@ -826,3 +839,8 @@ for (const taskType of ["excel.analysis", "excel.formula_assistant", "excel.smar
     });
   }
 }
+
+test('ledger has an independent model tab and explicit image input choice', () => {
+  assert.match(html, /data-workflow-task-tab="excel\.material_ledger"/);
+  assert.match(html, /id="excel-task-image-mode"/);
+});

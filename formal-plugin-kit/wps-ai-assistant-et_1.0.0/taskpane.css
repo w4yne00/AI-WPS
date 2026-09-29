@@ -2106,6 +2106,25 @@ body[data-task-mode="excelSmartFill"] .icon-button {
   color: #cf222e;
 }
 
+/* 任务台账：表格优先，细节同区下钻。 */
+.ledger-options { display: grid; gap: 12px; }
+.ledger-options[hidden], .ledger-table-scroll[hidden], .ledger-source-drawer[hidden] { display: none; }
+.ledger-column-choice { cursor: pointer; gap: 6px; padding: 6px 9px; white-space: nowrap; }
+.ledger-column-choice input { accent-color: var(--host-accent, #217346); width: 14px; height: 14px; min-height: 14px; padding: 0; margin: 0; flex: 0 0 14px; }
+.ledger-options summary, #ledger-review-details summary { cursor: pointer; font-size: 12px; color: var(--text-secondary, #57606a); padding: 5px 0; }
+#ledger-review-content { white-space: pre-wrap; font-size: 12px; line-height: 1.65; }
+.ledger-table td { white-space: pre-wrap; min-width: 100px; max-width: 260px; overflow-wrap: anywhere; }
+.ledger-table td:last-child { min-width: 70px; }
+.ledger-table-scroll { max-height: 60vh; overflow: auto; }
+.ledger-source-drawer { margin-top: 6px; background: transparent; border: 0; padding: 0; }
+.citation-location { font-size: 11px; color: var(--text-secondary, #57606a); overflow-wrap: anywhere; }
+.excel-ledger-duplicate-badge { color: #8a5b00; background: transparent; font-weight: 400; display: block; }
+.ledger-column-choice:focus-within { outline: 2px solid var(--accent, #1677ff); outline-offset: 2px; }
+
+body[data-task-mode="excelLedger"] #btn-copy-result { display: none; }
+.ledger-include-headers-label { white-space: nowrap; display: inline-flex; align-items: center; gap: 6px; }
+.ledger-include-headers-label input { width: 14px; height: 14px; min-height: 14px; padding: 0; margin: 0; flex: 0 0 14px; accent-color: var(--host-accent, #217346); }
+
 /* Shared restrained settings and interaction treatment. */
 .model-interface-card,
 .workflow-settings-card,

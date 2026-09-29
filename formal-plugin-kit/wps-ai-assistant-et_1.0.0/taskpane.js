@@ -3293,6 +3293,7 @@
 
   var materialLedger = null;
   var ledgerUploadTarget = null;
+  var ledgerReturnView = null;
 
   function ensureMaterialLedger() {
     if (!materialLedger && typeof window.createMaterialLedger === "function") {
@@ -3303,6 +3304,9 @@
         getSessionId: getCurrentExcelDocumentSession,
         getApp: function () {
           return typeof getEtApplication === "function" ? getEtApplication() : (window.Application || null);
+        },
+        getWordApp: function () {
+          return window.wps && typeof window.wps.WpsApplication === "function" ? window.wps.WpsApplication() : null;
         },
         render: renderMaterialLedgerView,
         copyText: function (text) {
@@ -3343,12 +3347,23 @@
       reusableSelect.value = currentVal;
     }
 
+    var inputCoverage = byId("ledger-input-coverage");
+    if (inputCoverage) {
+      var selection = (state.taskModelSelections || {})["excel.material_ledger"] || {};
+      inputCoverage.textContent = selection.imageInputMode === "openai_image_url"
+        ? "本次按支持图片模式处理全文与原图；图片容量由模型服务核验。"
+        : "当前模型仅处理文本，图片内容未参与生成。";
+    }
     var materialList = byId("ledger-material-list");
     if (materialList) {
       materialList.innerHTML = ((view.catalogSummary && view.catalogSummary.documents) || []).map(function (material) {
         var id = helpers.escapeHtml(material.materialId);
         return '<div class="ledger-material-item"><span>' + helpers.escapeHtml(material.fileName) +
           '（' + Number(material.readableCharacterCount || 0) + ' 字）</span>' +
+          '<details class="ledger-reading-details"><summary>读取详情</summary><span>' +
+          (material.fullReading ? Number(material.fullReading.imageCount || 0) + ' 张图片' : '生成前重新完整读取原件') +
+          ((material.fullReading || {}).hiddenContentIncluded ? '；含隐藏工作表或行列' : '') +
+          (((material.fullReading || {}).unreadObjects || []).length ? '；存在未读取对象，生成时按模型模式核查' : '') + '</span></details>' +
           '<button type="button" class="text-action" data-ledger-update="' + id + '"' + (view.busy ? ' disabled' : '') + '>更新</button>' +
           '<button type="button" class="text-action" data-ledger-remove="' + id + '"' + (view.busy ? ' disabled' : '') + '>移除</button></div>';
       }).join("");
@@ -3381,24 +3396,21 @@
     if (tagContainer) {
       tagContainer.innerHTML = "";
       (view.headers || []).forEach(function (header, idx) {
-        var chip = document.createElement("span");
-        chip.className = "tag-chip";
-        chip.textContent = header;
-        var removeBtn = document.createElement("button");
-        removeBtn.type = "button";
-        removeBtn.className = "tag-chip-remove";
-        removeBtn.textContent = "×";
-        removeBtn.title = "移除列";
-        removeBtn.addEventListener("click", function (e) {
-          e.stopPropagation();
-          var ctrl = ensureMaterialLedger();
-          if (ctrl) ctrl.removeHeader(idx);
-        });
-        chip.appendChild(removeBtn);
+        var chip = document.createElement("label");
+        chip.className = "tag-chip ledger-column-choice";
+        var checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.checked = (view.uncheckedHeaders || []).indexOf(header) < 0;
+        checkbox.disabled = Boolean(view.busy);
+        checkbox.addEventListener("change", function () { ensureMaterialLedger().setHeaderSelected(idx, checkbox.checked); });
+        chip.appendChild(checkbox);
+        chip.appendChild(document.createTextNode(header));
         tagContainer.appendChild(chip);
       });
     }
 
+    var factsSummary = byId("ledger-user-facts-summary");
+    if (factsSummary) factsSummary.textContent = view.userFacts ? "补充事实（已填写，将参与生成）" : "补充事实（选填）";
     var instructionInput = byId("excel-ledger-instruction");
     if (instructionInput && document.activeElement !== instructionInput) {
       if (typeof view.instruction === "string" && view.instruction !== instructionInput.value) {
@@ -3437,9 +3449,22 @@
 
       var metaSpan = byId("ledger-result-meta");
       if (metaSpan) {
-        metaSpan.textContent = "共提取 " + view.result.rows.length + " 项任务台账";
+        metaSpan.textContent = "共生成 " + view.result.rows.length + " 项任务台账";
       }
 
+      var coverage = byId("ledger-result-coverage");
+      if (coverage) coverage.textContent = ((view.result.inputCoverage || {}).warnings || []).join("；");
+      var reviewRows = view.result.rows.map(function (row, index) {
+        var notes = [];
+        if (row.missingFields && row.missingFields.length) notes.push("待补充：" + row.missingFields.join("、"));
+        if (row.isDuplicate) notes.push("疑似重复：" + (row.duplicateReason || "请核对"));
+        return notes.length ? "第 " + (index + 1) + " 行 · " + notes.join("；") : "";
+      }).filter(Boolean);
+      if (byId("ledger-review-details")) {
+        byId("ledger-review-details").hidden = !reviewRows.length;
+        byId("ledger-review-summary").textContent = reviewRows.length + " 行待核对（缺项或疑似重复）";
+        byId("ledger-review-content").textContent = reviewRows.join("\n");
+      }
       var resultHeaders = view.result.headers || [];
       var table = byId("ledger-preview-table");
       if (table) {
@@ -3450,7 +3475,7 @@
           resultHeaders.forEach(function (h) {
             headerHtml += "<th>" + (helpers.escapeHtml ? helpers.escapeHtml(h) : h) + "</th>";
           });
-          headerHtml += "<th>操作/出处</th></tr>";
+          headerHtml += "<th>出处</th></tr>";
           thead.innerHTML = headerHtml;
         }
         if (tbody) {
@@ -3473,10 +3498,10 @@
 
             var actionHtml = '<td>';
             if (row.isDuplicate) {
-              actionHtml += '<span class="excel-ledger-duplicate-badge" title="疑似与第 ' + ((row.duplicateOfIndex || 0) + 1) + ' 行重复: ' + (helpers.escapeHtml ? helpers.escapeHtml(row.duplicateReason || "") : (row.duplicateReason || "")) + '">[疑似重复]</span>';
+              actionHtml += '<span class="excel-ledger-duplicate-badge" title="疑似与第 ' + ((row.duplicateOfIndex || 0) + 1) + ' 行重复: ' + (helpers.escapeHtml ? helpers.escapeHtml(row.duplicateReason || "") : (row.duplicateReason || "")) + '">疑似重复</span>';
             }
             if (row.sources && row.sources.length) {
-              actionHtml += '<button type="button" class="text-action btn-view-citation" data-row-index="' + rIdx + '">查看出处 (' + row.sources.length + ')</button>';
+              actionHtml += '<button type="button" class="text-action btn-view-citation" data-row-index="' + rIdx + '">出处 (' + row.sources.length + ')</button>';
             } else {
               actionHtml += '<span class="field-hint">无出处</span>';
             }
@@ -3488,6 +3513,9 @@
         }
       }
 
+      var inDetails = typeof view.activeDrawerRowIndex === "number" && Boolean(view.result.rows[view.activeDrawerRowIndex]);
+      var tableScroll = document.querySelector(".ledger-table-scroll");
+      if (tableScroll) tableScroll.hidden = inDetails;
       var drawer = byId("ledger-source-drawer");
       if (drawer) {
         if (typeof view.activeDrawerRowIndex === "number" && view.result.rows[view.activeDrawerRowIndex]) {
@@ -3504,7 +3532,9 @@
               selectedRow.sources.forEach(function (cite) {
                 var card = document.createElement("div");
                 card.className = "citation-card";
-                card.innerHTML = '<div class="citation-source">' + (helpers.escapeHtml ? helpers.escapeHtml(cite.fileName || "未知资料") : (cite.fileName || "未知资料")) + ' - ' + (helpers.escapeHtml ? helpers.escapeHtml(cite.chapter || "未知章节") : (cite.chapter || "未知章节")) + '</div>' +
+                var source = cite.source || {};
+                var location = [source.sheetName, source.address, source.row ? "第 " + source.row + " 行" : "", source.part].filter(Boolean).join(" · ");
+                card.innerHTML = '<div class="citation-location">' + helpers.escapeHtml(location) + '</div><div class="citation-source">' + (helpers.escapeHtml ? helpers.escapeHtml(cite.fileName || "未知资料") : (cite.fileName || "未知资料")) + ' - ' + (helpers.escapeHtml ? helpers.escapeHtml(cite.chapter || "未知章节") : (cite.chapter || "未知章节")) + '</div>' +
                   '<blockquote class="citation-quote">' + (helpers.escapeHtml ? helpers.escapeHtml(cite.text || "") : (cite.text || "")) + '</blockquote>';
                 drawerContent.appendChild(card);
               });
@@ -3519,7 +3549,7 @@
 
       var writeSection = byId("ledger-write-section");
       if (writeSection) {
-        writeSection.hidden = false;
+        writeSection.hidden = inDetails;
       }
       var targetSummary = byId("ledger-target-summary");
       if (targetSummary) {
@@ -6205,7 +6235,7 @@
       : { visibleText: "未配置", statusText: "未配置", ariaLabel: "未配置" };
     var taskLabel = taskType === EXCEL_FORMULA_WORKFLOW_TASK_TYPE
       ? "选择公式助手模型配置"
-      : (taskType === EXCEL_SMART_FILL_WORKFLOW_TASK_TYPE ? "选择智能填写模型配置" : "选择智能分析模型配置");
+      : (taskType === "excel.material_ledger" ? "选择任务台账模型配置" : (taskType === EXCEL_SMART_FILL_WORKFLOW_TASK_TYPE ? "选择智能填写模型配置" : "选择智能分析模型配置"));
     if (!strip || !trigger || !label || !statusNode || !feedback) {
       return;
     }
@@ -6336,7 +6366,7 @@
     var taskType = event.target.getAttribute("data-workflow-task-tab");
     if (taskType !== EXCEL_WORKFLOW_TASK_TYPE &&
         taskType !== EXCEL_FORMULA_WORKFLOW_TASK_TYPE &&
-        taskType !== EXCEL_SMART_FILL_WORKFLOW_TASK_TYPE) {
+        taskType !== EXCEL_SMART_FILL_WORKFLOW_TASK_TYPE && taskType !== "excel.material_ledger") {
       return;
     }
     state.workflowTaskType = taskType;
@@ -7551,7 +7581,7 @@
 
     var isExcelTask = taskType === EXCEL_WORKFLOW_TASK_TYPE ||
       taskType === EXCEL_FORMULA_WORKFLOW_TASK_TYPE ||
-      taskType === EXCEL_SMART_FILL_WORKFLOW_TASK_TYPE;
+      taskType === EXCEL_SMART_FILL_WORKFLOW_TASK_TYPE || taskType === "excel.material_ledger";
 
     section.hidden = !isExcelTask;
     if (section.hidden) {
@@ -7633,6 +7663,8 @@
     if (contextInput) {
       contextInput.value = currentSelection && currentSelection.contextWindowTokens ? currentSelection.contextWindowTokens : "";
     }
+    if (byId("excel-task-image-field")) byId("excel-task-image-field").hidden = taskType !== "excel.material_ledger";
+    if (byId("excel-task-image-mode")) byId("excel-task-image-mode").value = (currentSelection && currentSelection.imageInputMode) || "disabled";
     if (costWarning) {
       costWarning.hidden = false;
       costWarning.textContent = "验证调用会真实请求模型，可能产生费用并等待服务返回。";
@@ -7706,7 +7738,8 @@
       customModel: isCustom,
       temperature: tempVal !== "" ? Number(tempVal) : null,
       maxOutputTokens: maxOutVal !== "" && Number(maxOutVal) !== 0 ? Number(maxOutVal) : null,
-      contextWindowTokens: contextVal !== "" && Number(contextVal) !== 0 ? Number(contextVal) : null
+      contextWindowTokens: contextVal !== "" && Number(contextVal) !== 0 ? Number(contextVal) : null,
+      imageInputMode: state.workflowTaskType === "excel.material_ledger" && byId("excel-task-image-mode") ? byId("excel-task-image-mode").value : "disabled"
     };
   }
 
@@ -7837,7 +7870,7 @@
           setWorkflowMutationBusy(false);
           var taskLabel = taskType === EXCEL_FORMULA_WORKFLOW_TASK_TYPE
             ? "公式助手"
-            : (taskType === EXCEL_SMART_FILL_WORKFLOW_TASK_TYPE ? "智能填写" : "智能分析");
+            : (taskType === "excel.material_ledger" ? "任务台账" : (taskType === EXCEL_SMART_FILL_WORKFLOW_TASK_TYPE ? "智能填写" : "智能分析"));
           setStatus(taskLabel + "接入直连服务已保存并设为当前。");
           if (statusNode) {
             statusNode.textContent = "已保存并设为当前。";
@@ -8532,7 +8565,8 @@
       byId("btn-read-selection-headers").addEventListener("click", function () {
         var ctrl = ensureMaterialLedger();
         var app = typeof getEtApplication === "function" ? getEtApplication() : null;
-        if (ctrl) ctrl.readSelectionHeaders(app);
+        try { if (ctrl) ctrl.readSelectionHeaders(app); }
+        catch (error) { setStatus(error.message); }
       });
     }
     if (byId("btn-add-ledger-tag")) {
@@ -8629,7 +8663,11 @@
           var rIdx = parseInt(target.getAttribute("data-row-index"), 10);
           if (!isNaN(rIdx)) {
             var ctrl = ensureMaterialLedger();
+            var scroll = document.querySelector(".ledger-table-scroll");
+            ledgerReturnView = {row:rIdx, left:scroll ? scroll.scrollLeft : 0, top:scroll ? scroll.scrollTop : 0,
+              page:window.scrollY, session:getCurrentExcelDocumentSession()};
             if (ctrl) ctrl.openSourceDrawer(rIdx);
+            if (byId("btn-close-drawer")) byId("btn-close-drawer").focus();
           }
         }
       });
@@ -8638,6 +8676,15 @@
       byId("btn-close-drawer").addEventListener("click", function () {
         var ctrl = ensureMaterialLedger();
         if (ctrl) ctrl.closeSourceDrawer();
+        if (ledgerReturnView && ledgerReturnView.session === getCurrentExcelDocumentSession()) {
+          var position = ledgerReturnView;
+          var scroll = document.querySelector(".ledger-table-scroll");
+          var button = document.querySelector('.btn-view-citation[data-row-index="' + position.row + '"]');
+          if (button) button.focus({preventScroll:true});
+          if (scroll) { scroll.scrollLeft = position.left; scroll.scrollTop = position.top; }
+          window.scrollTo(0, position.page);
+        }
+        ledgerReturnView = null;
       });
     }
     if (byId("btn-refresh-ledger-target")) {

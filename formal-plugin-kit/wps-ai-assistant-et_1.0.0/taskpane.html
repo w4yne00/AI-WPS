@@ -81,7 +81,7 @@
               <span id="ledger-material-count-label" class="field-hint">未添加资料</span>
               <div class="ledger-source-actions">
                 <button id="btn-import-ledger-material" class="ghost-action" type="button">导入资料</button>
-                <input id="excel-ledger-file-input" type="file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" style="display:none;" />
+                <input id="excel-ledger-file-input" type="file" accept=".docx,.doc,.csv,.xlsx" style="display:none;" />
               </div>
             </div>
             <div id="ledger-reusable-section" class="ledger-reusable-section" style="margin-top: 8px;">
@@ -94,25 +94,28 @@
             </div>
             <div id="ledger-material-list" aria-live="polite"></div>
             <div id="ledger-conflicts" hidden></div>
+            <p id="ledger-input-coverage" class="field-hint" aria-live="polite">按当前模型能力处理全文；仅文本模型不读取图片内容。</p>
             <div class="ledger-headers-section" style="margin-top: 8px;">
               <div class="ledger-headers-head" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
                 <span class="field-label" style="font-size: 13px; font-weight: 600;">台账表头列</span>
                 <button id="btn-read-selection-headers" class="text-action" type="button">从选区读取表头</button>
               </div>
               <div id="ledger-tag-chips" class="tag-input-container"></div>
+              <details class="ledger-manual-headers"><summary>手动添加表头</summary>
               <div class="tag-input-row" style="display: flex; gap: 6px; margin-top: 6px;">
                 <input id="ledger-new-tag-input" type="text" placeholder="输入列名并回车" style="flex: 1;" />
                 <button id="btn-add-ledger-tag" class="ghost-action" type="button">添加</button>
-              </div>
+              </div></details>
             </div>
             <label class="field" for="excel-ledger-instruction" style="margin-top: 8px;">
-              <span>提取要求</span>
+              <span>编写要求</span>
               <textarea id="excel-ledger-instruction" rows="3" placeholder="例如：提取所有任务计划、责任人和交付成果。"></textarea>
             </label>
+            <details id="ledger-user-facts-details"><summary id="ledger-user-facts-summary">补充事实（选填）</summary>
             <label class="field" for="excel-ledger-user-facts" style="margin-top: 6px;">
               <span>补充事实</span>
               <textarea id="excel-ledger-user-facts" rows="2" placeholder="选填。补充资料未提及的最新背景或变更说明。"></textarea>
-            </label>
+            </label></details>
           </div>
 
           <div class="button-cluster action-bar">
@@ -150,7 +153,9 @@
               <span id="ledger-result-meta" class="field-hint"></span>
               <button id="btn-copy-ledger-tsv" class="ghost-action" type="button">复制表格 (TSV)</button>
             </div>
-            <div class="ledger-table-scroll">
+            <p id="ledger-result-coverage" class="field-hint" aria-live="polite"></p>
+            <details id="ledger-review-details" hidden><summary id="ledger-review-summary"></summary><div id="ledger-review-content"></div></details>
+            <div class="ledger-table-scroll" tabindex="0" aria-label="台账结果表格">
               <table id="ledger-preview-table" class="ledger-table">
                 <thead></thead>
                 <tbody></tbody>
@@ -159,7 +164,7 @@
             <div id="ledger-source-drawer" class="ledger-source-drawer" hidden>
               <div class="drawer-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
                 <h4 id="drawer-title" style="margin: 0; font-size: 13px;">来源出处与证据</h4>
-                <button id="btn-close-drawer" class="icon-button" type="button" style="border:none; background:none; cursor:pointer; font-size:16px;">×</button>
+                <button id="btn-close-drawer" class="text-action" type="button" >← 返回表格</button>
               </div>
               <div id="drawer-content" class="drawer-content"></div>
             </div>
@@ -259,6 +264,7 @@
                 <button type="button" role="tab" data-workflow-task-tab="excel.analysis" aria-selected="true">智能分析</button>
                 <button type="button" role="tab" data-workflow-task-tab="excel.formula_assistant" aria-selected="false">公式助手</button>
                 <button type="button" role="tab" data-workflow-task-tab="excel.smart_fill" aria-selected="false">智能填写</button>
+                <button type="button" role="tab" data-workflow-task-tab="excel.material_ledger" aria-selected="false">任务台账</button>
               </div>
               <section class="model-configuration-home">
                 <section id="excel-task-direct-service-section" class="task-model-selection-card">
@@ -277,6 +283,10 @@
                       <select id="excel-task-model-select">
                         <option value="">继承服务默认模型</option>
                       </select>
+                    </label>
+                    <label id="excel-task-image-field" class="field" hidden><span>资料图片</span>
+                      <select id="excel-task-image-mode"><option value="disabled">仅处理文本（默认）</option><option value="openai_image_url">当前模型支持图片，一并处理</option></select>
+                      <small>仅在确认模型支持图片时开启；请求失败不会自动删图重试。</small>
                     </label>
                     <div class="grid-three-col">
                       <label class="field"><span>温度</span><input id="excel-task-temperature" type="number" min="0" max="2" step="0.1" placeholder="默认" /></label>

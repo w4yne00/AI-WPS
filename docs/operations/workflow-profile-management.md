@@ -2,10 +2,10 @@
 
 ## 适用范围
 
-九类任务使用两种接入方式：工作流平台按功能独立配置；模型直连使用共享直连服务。Word、Excel、PPT 只显示当前宿主已有功能的选项卡，互不交叉：
+各项任务使用两种接入方式：工作流平台按功能独立配置；模型直连使用共享直连服务。Word、Excel、PPT 只显示当前宿主已有功能的选项卡，互不交叉：
 
 - Word：智能编写、智能仿写、文档审查、格式审查。
-- Excel：智能分析、公式助手、智能填写。
+- Excel：智能分析、公式助手、智能填写、任务台账。
 - PPT：智能总结、结构审查。
 
 工作流平台每项任务可保存多个配置，任务页只显示字段完整的配置。选择后立即生效，但不会改变已提交后台任务的认证和参数快照。模型直连的服务地址和 API Key 在设置首页统一维护，见 `shared-direct-service.md`。
@@ -25,7 +25,7 @@ Adapter 继续兼容旧版 `inputs.query` 和新版顶层 `query/files` 输入�
 
 ### 模型直连
 
-用于兼容 OpenAI Chat Completions 协议的模型网关。已知目标包括 GLM 5.2 和 DeepSeek V4 Flash。共享直连服务在同一 Adapter 运行环境只录入一次服务地址和 API Key；默认模型和任务模型均从该服务返回的模型目录中选择，九类任务各自保存温度、Token、图片参数。固定应用路径为 `/chat/completions`。操作步骤见 `shared-direct-service.md`，模型目录见 `direct-service-model-catalog.md`。
+用于兼容 OpenAI Chat Completions 协议的模型网关。已知目标包括 GLM 5.2 和 DeepSeek V4 Flash。共享直连服务在同一 Adapter 运行环境只录入一次服务地址和 API Key；默认模型和任务模型均从该服务返回的模型目录中选择，各项任务各自保存温度、Token、图片参数。固定应用路径为 `/chat/completions`。操作步骤见 `shared-direct-service.md`，模型目录见 `direct-service-model-catalog.md`。
 
 Adapter 将对应任务的版本化 System Prompt 与用户输入分别放入 `system`、`user` 消息。System Prompt 位于 `adapter_service/system_prompts/`，启动和交付构建会按清单哈希校验。
 
@@ -83,3 +83,13 @@ Adapter 将对应任务的版本化 System Prompt 与用户输入分别放入 `s
 3. 保存后执行“验证调用”，查看耗时和错误摘要；服务验证成功不等于任务验证成功。
 4. 在“高级诊断”核对配置 ID、接入方式、请求路径、System Prompt 版本和错误码。
 5. 长任务已提交但任务窗格短暂断开时，不要重复提交；重新打开对应任务页，按文档会话恢复未结束任务。活动结果与历史见 `task-result-lifecycle.md`。
+
+## 任务台账
+
+设置 → 模型配置 → 任务台账，对应 `excel.material_ledger`。独立选择服务与模型，保存温度、最大输出 Token 和上下文容量；修改不影响其他任务。资料图片默认仅文本，确认所选模型支持图片后可开启“一并处理”；未知能力保持文本模式，不因请求失败自动删图重试。
+
+任务页支持上传 DOCX、DOC、CSV、XLSX 或复用其他文档资料。DOC 需要 Excel 宿主能安全调用 WPS Word 转换接口；未验证或不支持时明确报错，可手动另存为 DOCX。CSV 支持 UTF-8/BOM、GB18030；XLSX 包括隐藏工作表及行列、公式表达式和可用缓存值，不执行公式或外链。
+
+读取单行台账表头后勾选所需列，填写编写要求再生成。完整材料在后端装配，不通过任务提交体重复上传；超容量明确拒绝，不筛选片段或截断。旧材料原件缺失时要求重新导入。结果按选定列顺序预览，“出处”进入同区详情，返回恢复位置；复制与确认写入沿用空白区域保护。
+
+导入/更新入口保留原协议，并支持 DOC 转换往返：首次返回 `conversionRequired`、`conversionId`、`sourcePath`、`targetPath`；宿主转换后在同一入口提交 `documentSessionId` 与 `conversionId`，取消时加 `cancelConversion: true`。转换令牌绑定工作簿与更新目标，10 分钟过期。生成结果新增 `inputCoverage`（`mode`、`omittedImageCount`、`warnings`），来源项补充 `source` 定位和可选 `imageId`；原行数据与写入协议不变。

@@ -3240,10 +3240,10 @@ class ProviderClient:
         user_content = query
         if image_files:
             content_parts = [{"type": "text", "text": query}]
-            if task_type == "word.material_composer":
+            if task_type in ("word.material_composer", "excel.material_ledger"):
                 validate_composer_multimodal_input(resolved_task_auth, prompt_asset["content"], query, image_files)
             for image in image_files:
-                if task_type == "word.material_composer":
+                if task_type in ("word.material_composer", "excel.material_ledger"):
                     content_parts.append({"type": "text", "text": str(image.get("imageId", ""))})
                     image_uri = _composer_image_data_uri(image)
                 else:
@@ -3825,7 +3825,7 @@ class ProviderClient:
                 allow_response_format_fallback=allow_response_format_fallback,
                 progress_callback=progress_callback,
             )
-        if task_type == "word.material_composer" and image_files:
+        if task_type in ("word.material_composer", "excel.material_ledger") and image_files:
             raise AdapterError("MODEL_IMAGE_INPUT_UNSUPPORTED", "当前接入方式无法完整发送原图，请为按需编写选择支持图片的直连模型。", status_code=400)
         provider_base_url = str(
             resolved_task_auth.get("providerBaseUrl") or self.settings.provider_base_url.rstrip("/")

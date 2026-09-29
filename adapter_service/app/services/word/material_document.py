@@ -13,7 +13,7 @@ A = 'http://schemas.openxmlformats.org/drawingml/2006/main'
 V = 'urn:schemas-microsoft-com:vml'
 
 
-def extract_document(content: bytes, file_name: str) -> dict:
+def extract_document(content: bytes, file_name: str, read_shape_text: bool = False) -> dict:
     """Return ordered blocks, original image bytes and explicit unread objects.
 
     Package security is checked before reading any XML or image. DOC conversion
@@ -57,6 +57,9 @@ def extract_document(content: bytes, file_name: str) -> dict:
                     return
                 if tag in ('group', 'line', 'arc', 'curve', 'polyline', 'rect', 'oval', 'roundrect', 'wsp', 'cxnSp', 'sp', 'grpSp'):
                     missing(part, path, 'vector_drawing')
+                    if read_shape_text:
+                        for index, child in enumerate(node):
+                            walk(child, path + (index,), table_path, cell)
                     return
                 if tag in ('oMath', 'object', 'chart', 'altChunk', 'del', 'ins'):
                     missing(part, path, tag)
@@ -65,6 +68,11 @@ def extract_document(content: bytes, file_name: str) -> dict:
                     # Choosing a representation without checking support can hide
                     # content; disclose it until a reliable renderer is available.
                     missing(part, path, tag)
+                    return
+                if read_shape_text and node.tag == '{%s}p' % A:
+                    text = ''.join(child.text or '' for child in node.iter() if child.tag == '{%s}t' % A)
+                    if text:
+                        blocks.append({'kind': 'paragraph', 'text': text, 'source': source})
                     return
                 if tag == 'tbl':
                     from app.services.word.material_import import _grid_span, MATERIAL_IMPORT_MAX_TABLE_COLUMNS, MATERIAL_IMPORT_MAX_TABLE_CELLS

@@ -25,7 +25,7 @@ var ribbonIconMap = {
   btnAiExcelAnalysis: "assets/icon-excel-analysis.png",
   btnAiExcelFormulaAssistant: "assets/icon-excel-formula-assistant.png",
   btnAiExcelSmartFill: "assets/icon-excel-smart-fill.png",
-  btnAiExcelLedger: "assets/icon-excel-ledger.png",
+  btnAiExcelLedger: "assets/icon-excel-material-ledger.png",
   btnAiSettings: "assets/icon-settings.png"
 };
 

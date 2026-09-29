@@ -3499,12 +3499,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/excel/materials/import":
             trace_id = new_trace_id("standalone-excel-material-import")
             try:
-                data = EXCEL_MATERIAL_STORE.import_material(
-                    session_id=str(payload.get("documentSessionId") or "").strip(),
-                    doc_identity=str(payload.get("documentIdentity") or "").strip(),
-                    file_name=str(payload.get("fileName") or "").strip(),
-                    content_base64=str(payload.get("contentBase64") or "").strip(),
-                )
+                data = EXCEL_MATERIAL_STORE.import_request(payload)
             except AdapterError as error:
                 self._write(
                     error.status_code,
@@ -4591,12 +4586,7 @@ class Handler(BaseHTTPRequestHandler):
                 length = int(self.headers.get("Content-Length", 0))
                 raw_bytes = self.rfile.read(length) if length else b"{}"
                 payload = json.loads(raw_bytes.decode("utf-8") or "{}")
-                data = EXCEL_MATERIAL_STORE.update_material(
-                    session_id=str(payload.get("documentSessionId") or "").strip(),
-                    material_id=material_id,
-                    file_name=str(payload.get("fileName") or "").strip(),
-                    content_base64=str(payload.get("contentBase64") or "").strip(),
-                )
+                data = EXCEL_MATERIAL_STORE.import_request(payload, material_id)
             except AdapterError as error:
                 self._write(
                     error.status_code,

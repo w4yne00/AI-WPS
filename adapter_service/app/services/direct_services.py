@@ -3018,7 +3018,7 @@ class DirectServiceStore:
             raise DirectServiceError(
                 "DIRECT_SERVICE_PARAM_INVALID", f"无效的图片输入模式: {mode}"
             )
-        if task_type != "word.format_review" and clean != "disabled":
+        if task_type not in ("word.format_review", "excel.material_ledger") and clean != "disabled":
             return "disabled"
         return clean
 

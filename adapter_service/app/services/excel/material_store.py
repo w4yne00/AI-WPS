@@ -8,9 +8,12 @@ import secrets
 import shutil
 import threading
 import tempfile
+import time
 from contextlib import nullcontext
 from typing import Dict, List, Optional
 
+from copy import deepcopy
+from app.services.excel.material_document import extract_document
 from app.core.errors import AdapterError
 from app.core.runtime_paths import resolve_runtime_paths
 from app.services.long_task_coordinator import (
@@ -19,7 +22,6 @@ from app.services.long_task_coordinator import (
 )
 from app.services.ppt.docx_security import (
     DOCX_MAX_PACKAGE_BYTES,
-    DocxSecurityError,
     validate_docx_bytes,
 )
 from app.services.word.material_import import (
@@ -29,8 +31,6 @@ from app.services.word.material_import import (
     MATERIAL_IMPORT_MAX_TABLE_CELLS,
     CHARACTER_COUNT_METHOD,
     _decode_upload,
-    _reject_wrong_type,
-    _security_error,
     _read_document,
     _next_fragment_index,
     _updated_at,
@@ -89,6 +89,7 @@ class ExcelMaterialStore:
             self.word_base_dir = word_store.base_dir
         self.coordinator = coordinator or get_long_task_coordinator()
         self._lock = threading.RLock()
+        self._conversions = {}
         self._memory_catalogs: Dict[str, dict] = {}
 
     def _check_busy(self, session_id: Optional[str]) -> None:
@@ -380,6 +381,94 @@ class ExcelMaterialStore:
                 "fragments": {},
             }
 
+    def import_request(self, payload: dict, material_id: str = "") -> dict:
+        """Import/update, or finish a session-bound native DOC conversion."""
+        with self._lock:
+            for token, entry in list(self._conversions.items()):
+                if time.monotonic() - entry["created"] > 600:
+                    entry["directory"].cleanup()
+                    del self._conversions[token]
+            session_id = str(payload.get("documentSessionId") or "").strip()
+            if not session_id:
+                raise AdapterError("REQUEST_VALIDATION_FAILED", "缺少工作簿会话。", status_code=422)
+            self._check_busy(session_id)
+            token = payload.get("conversionId")
+            if token:
+                entry = self._conversions.get(token) if isinstance(token, str) else None
+                if not entry or entry["payload"]["documentSessionId"] != session_id or entry["materialId"] != material_id:
+                    raise AdapterError("MATERIAL_CONVERSION_EXPIRED", "转换会话已失效，请重新选择文件。", status_code=409)
+                try:
+                    if payload.get("cancelConversion") is True:
+                        return {"cancelled": True}
+                    path = Path(entry["directory"].name) / "converted.docx"
+                    if path.is_symlink() or not path.is_file() or path.stat().st_size > DOCX_MAX_PACKAGE_BYTES:
+                        raise AdapterError("MATERIAL_CONVERSION_FAILED", "WPS 未生成有效 DOCX 副本。", status_code=422)
+                    request = entry["payload"]
+                    encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+                    if material_id:
+                        return self.update_material(session_id, material_id, request["fileName"], encoded)
+                    return self.import_material(session_id, request.get("documentIdentity", ""), request["fileName"], encoded)
+                finally:
+                    entry["directory"].cleanup()
+                    del self._conversions[token]
+            file_name = str(payload.get("fileName") or "").strip()
+            encoded = str(payload.get("contentBase64") or "")
+            if file_name.lower().endswith(".doc"):
+                content = _decode_upload(encoded)
+                if not content.startswith(bytes.fromhex("d0cf11e0a1b11ae1")):
+                    raise AdapterError("MATERIAL_FILE_REJECTED", "DOC 文件格式无效。", status_code=422)
+                for old_token, entry in list(self._conversions.items()):
+                    if entry["payload"]["documentSessionId"] == session_id:
+                        entry["directory"].cleanup()
+                        del self._conversions[old_token]
+                directory = tempfile.TemporaryDirectory(prefix="ai-wps-ledger-doc-")
+                source = Path(directory.name) / "source.doc"
+                source.write_bytes(content)
+                token = secrets.token_urlsafe(24)
+                self._conversions[token] = {"directory": directory, "created": time.monotonic(),
+                                           "payload": dict(payload, documentSessionId=session_id), "materialId": material_id}
+                return {"conversionRequired": True, "conversionId": token, "documentSessionId": session_id,
+                        "sourcePath": str(source), "targetPath": str(Path(directory.name) / "converted.docx")}
+            if material_id:
+                return self.update_material(session_id, material_id, file_name, encoded)
+            return self.import_material(session_id, str(payload.get("documentIdentity") or ""), file_name, encoded)
+
+    def get_full_document(self, session_id: str, material_id: str) -> dict:
+        with self._lock:
+            doc = next((d for d in self.get_catalog(session_id)["documents"] if d["materialId"] == material_id), None)
+            if not doc or not re.fullmatch(r"mat_[a-f0-9]{16}", material_id):
+                raise AdapterError("MATERIAL_NOT_FOUND", "当前工作簿没有该资料。", status_code=404)
+            directory = self._get_dir_for_session(session_id)
+            suffix = Path(doc["fileName"]).suffix.lower()
+            suffix = ".docx" if suffix == ".doc" else suffix
+            path = directory / "files" / (material_id + suffix) if directory else None
+            if path is None or path.is_symlink() or not path.is_file():
+                raise AdapterError("MATERIAL_NOT_FOUND", "资料原始副本缺失，请重新导入。", status_code=404)
+            return extract_document(path.read_bytes(), doc["fileName"])
+
+    def _read_material(self, content, file_name, remaining_table_cells, start_fragment_index):
+        whole = extract_document(content, file_name)
+        if Path(file_name).suffix.lower() in (".docx", ".doc"):
+            validated = validate_docx_bytes(content)
+            reading = _read_document(validated.document_xml, validated.style_names, content,
+                                     remaining_table_cells=remaining_table_cells,
+                                     start_fragment_index=start_fragment_index)
+        else:
+            cells = whole.get("tableCellsCount", 0)
+            if cells > remaining_table_cells:
+                raise AdapterError("MATERIAL_TABLE_OVER_LIMIT", "表格单元格超过上限，未截断。", status_code=413)
+            blocks = whole["blocks"]
+            reading = {"blocks": blocks,
+                       "fragments": [dict(b, fragmentId="frag-%d" % (start_fragment_index + i))
+                                     for i, b in enumerate(blocks) if b.get("text")],
+                       "limits": {"readableCharacterCount": sum(len(b.get("text", "")) for b in blocks),
+                                  "extractedTableCells": cells}}
+        reading["limits"]["readableCharacterCount"] = sum(len(b.get("text", "")) for b in whole["blocks"])
+        reading["fullReading"] = {"complete": whole["complete"], "imageCount": len(whole["images"]),
+                                  "unreadObjects": whole["unreadObjects"],
+                                  "hiddenContentIncluded": whole.get("hiddenContentIncluded", False)}
+        return reading
+
     def import_material(
         self,
         session_id: str,
@@ -390,26 +479,18 @@ class ExcelMaterialStore:
         with self._lock:
             self._check_busy(session_id)
             content = _decode_upload(content_base64)
-            _reject_wrong_type(file_name, "")
-            catalog = self.get_catalog(session_id)
+            catalog = deepcopy(self.get_catalog(session_id))
             if len(catalog.get("documents", [])) >= MATERIAL_IMPORT_MAX_DOCUMENTS:
                 raise AdapterError(
                     "MATERIAL_COUNT_OVER_LIMIT",
                     "资料份数超过上限（最多5份），已拒绝导入，未截断内容。",
                     status_code=400,
                 )
-            try:
-                validated = validate_docx_bytes(content)
-            except DocxSecurityError as exc:
-                raise _security_error(exc) from exc
-
             existing_cells = catalog.get("totalTableCells", 0)
             start_fragment_index = _next_fragment_index(catalog)
 
-            reading = _read_document(
-                validated.document_xml,
-                validated.style_names,
-                content,
+            reading = self._read_material(
+                content, file_name,
                 remaining_table_cells=MATERIAL_IMPORT_MAX_TABLE_CELLS - existing_cells,
                 start_fragment_index=start_fragment_index,
             )
@@ -435,6 +516,7 @@ class ExcelMaterialStore:
                 "fileSha256": hashlib.sha256(content).hexdigest(),
                 "readableCharacterCount": char_count,
                 "blocksCount": len(reading["blocks"]),
+                "fullReading": reading["fullReading"],
                 "fragmentsCount": len(reading["fragments"]),
                 "tableCellsCount": reading["limits"].get("extractedTableCells", 0),
                 "importedAt": now_iso,
@@ -459,13 +541,14 @@ class ExcelMaterialStore:
             mats_dir = d / "materials"
             mats_dir.mkdir(parents=True, exist_ok=True)
 
-            (files_dir / "{0}.docx".format(material_id)).write_bytes(content)
+            (files_dir / "{0}{1}".format(material_id, ".docx" if file_name.lower().endswith(".doc") else Path(file_name).suffix.lower())).write_bytes(content)
 
             view = {
                 "materialId": material_id,
                 "fileName": file_name,
                 "readableCharacterCount": char_count,
                 "blocks": reading["blocks"],
+                "fullReading": reading["fullReading"],
                 "fragments": reading["fragments"],
                 "toc": reading.get("headings", reading.get("toc", [])),
                 "importedAt": now_iso,
@@ -499,8 +582,7 @@ class ExcelMaterialStore:
         with self._lock:
             self._check_busy(session_id)
             content = _decode_upload(content_base64)
-            _reject_wrong_type(file_name, "")
-            catalog = self.get_catalog(session_id)
+            catalog = deepcopy(self.get_catalog(session_id))
             doc_idx = -1
             old_doc = None
             for idx, d in enumerate(catalog.get("documents", [])):
@@ -511,15 +593,8 @@ class ExcelMaterialStore:
             if doc_idx < 0 or not old_doc:
                 raise AdapterError("MATERIAL_NOT_FOUND", "待更新的资料不存在或已删除。", status_code=404)
 
-            try:
-                validated = validate_docx_bytes(content)
-            except DocxSecurityError as exc:
-                raise _security_error(exc) from exc
-
-            reading = _read_document(
-                validated.document_xml,
-                validated.style_names,
-                content,
+            reading = self._read_material(
+                content, file_name,
                 remaining_table_cells=MATERIAL_IMPORT_MAX_TABLE_CELLS - catalog.get("totalTableCells", 0) + old_doc.get("tableCellsCount", old_doc.get("extractedTableCells", 0)),
                 start_fragment_index=_next_fragment_index(catalog),
             )
@@ -541,6 +616,7 @@ class ExcelMaterialStore:
 
             now_iso = _updated_at(old_doc.get("updatedAt", ""))
             old_cells = old_doc.get("tableCellsCount", old_doc.get("extractedTableCells", 0))
+            old_doc["fullReading"] = reading["fullReading"]
             old_doc["fileName"] = file_name
             old_doc["fileSha256"] = hashlib.sha256(content).hexdigest()
             old_doc["readableCharacterCount"] = char_count
@@ -569,12 +645,13 @@ class ExcelMaterialStore:
             mats_dir = d / "materials"
             mats_dir.mkdir(parents=True, exist_ok=True)
 
-            (files_dir / "{0}.docx".format(material_id)).write_bytes(content)
+            (files_dir / "{0}{1}".format(material_id, ".docx" if file_name.lower().endswith(".doc") else Path(file_name).suffix.lower())).write_bytes(content)
             view = {
                 "materialId": material_id,
                 "fileName": file_name,
                 "readableCharacterCount": char_count,
                 "blocks": reading["blocks"],
+                "fullReading": reading["fullReading"],
                 "fragments": reading["fragments"],
                 "toc": reading.get("headings", reading.get("toc", [])),
                 "importedAt": old_doc.get("importedAt", now_iso),
@@ -604,7 +681,7 @@ class ExcelMaterialStore:
     def delete_material(self, session_id: str, material_id: str) -> dict:
         with self._lock:
             self._check_busy(session_id)
-            catalog = self.get_catalog(session_id)
+            catalog = deepcopy(self.get_catalog(session_id))
             catalog["documents"] = [d for d in catalog.get("documents", []) if d.get("materialId") != material_id]
             catalog["blocks"] = [b for b in catalog.get("blocks", []) if b.get("materialId") != material_id]
             catalog["fragmentsList"] = [f for f in catalog.get("fragmentsList", []) if f.get("materialId") != material_id]
@@ -615,9 +692,12 @@ class ExcelMaterialStore:
 
             d = self._get_dir_for_session(session_id)
             if d and d.exists():
-                docx_file = d / "files" / "{0}.docx".format(material_id)
-                if docx_file.exists():
-                    docx_file.unlink()
+                if not re.fullmatch(r"mat_[a-f0-9]{16}", material_id):
+                    raise AdapterError("MATERIAL_NOT_FOUND", "资料编号无效。", status_code=404)
+                for suffix in (".docx", ".csv", ".xlsx"):
+                    original = d / "files" / (material_id + suffix)
+                    if original.exists():
+                        original.unlink()
                 mat_file = d / "materials" / "{0}.json".format(material_id)
                 if mat_file.exists():
                     mat_file.unlink()

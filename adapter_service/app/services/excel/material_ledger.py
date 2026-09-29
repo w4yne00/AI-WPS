@@ -24,6 +24,7 @@ from app.services.provider_client import (
     _extract_json_payload,
     _estimate_direct_tokens,
     extract_answer,
+    validate_composer_multimodal_input,
 )
 from app.services.system_prompts import SystemPromptStore
 from app.services.word.material_composer import (
@@ -86,6 +87,8 @@ class ExcelMaterialLedgerCoordinator:
         else:
             raise AdapterError("REQUEST_VALIDATION_FAILED", "表头必须为包含有效字段名称的非空数组。", status_code=422)
 
+        if len(set(headers)) != len(headers):
+            raise AdapterError("REQUEST_VALIDATION_FAILED", "表头存在重名，请修正后生成。", status_code=422)
         instruction = str(payload.get("instruction") or "").strip()
         user_facts = str(payload.get("userFacts") or payload.get("user_facts") or "").strip()
         conflict_resolutions = payload.get("conflictResolutions") or payload.get("conflict_resolutions") or []
@@ -113,6 +116,8 @@ class ExcelMaterialLedgerCoordinator:
             catalog = self.store.get_catalog(session_id)
             if not catalog.get("documents"):
                 raise AdapterError("MATERIAL_NOT_FOUND", "当前工作簿尚未导入或复用参考资料，请先添加资料。", status_code=400)
+            auth = self.provider.resolve_task_auth(TASK_TYPE)
+            catalog, image_files, coverage = self._complete_catalog(session_id, catalog, auth)
             conflicts = detect_material_conflicts(catalog, user_facts=user_facts)
             normalized_choices = []
             for conflict in conflicts:
@@ -137,8 +142,6 @@ class ExcelMaterialLedgerCoordinator:
             system_prompt_asset = SystemPromptStore().load(TASK_TYPE)
             system_prompt = system_prompt_asset["content"]
 
-            auth = self.provider.resolve_task_auth(TASK_TYPE)
-
             snapshot = {
                 "request": request_repr,
                 "catalog": deepcopy(catalog),
@@ -149,6 +152,8 @@ class ExcelMaterialLedgerCoordinator:
                 "conflictResolutions": conflict_resolutions,
                 "traceId": trace_id or client_job_id,
                 "taskAuth": deepcopy(auth),
+                "imageFiles": image_files,
+                "inputCoverage": coverage,
             }
 
             return self.coordinator.submit(
@@ -167,20 +172,83 @@ class ExcelMaterialLedgerCoordinator:
                     "MATERIAL_LEDGER_INVALID_SCHEMA",
                     "MODEL_INPUT_OVER_BUDGET",
                     "PROVIDER_TIMEOUT",
+                    "MATERIAL_LEDGER_INCOMPLETE",
+                    "MODEL_CONFIG_INCOMPLETE",
+                    "MODEL_IMAGE_INPUT_UNSUPPORTED",
+                    "IMAGE_ASSET_SIZE_LIMIT",
+                    "IMAGE_ASSET_TYPE_INVALID",
                 },
                 priority_class=PRIORITY_INTERACTIVE,
                 allow_running_cancel=True,
             )
 
+    def _complete_catalog(self, session_id, catalog, auth):
+        catalog = deepcopy(catalog)
+        multimodal = auth.get("accessMethod") == "direct_model" and auth.get("imageInputMode") == "openai_image_url"
+        fragments, blocks, images, warnings = [], [], [], []
+        old = list(catalog.get("fragmentsList", []))
+        next_id = max([int(f["fragmentId"][5:]) for f in old if re.fullmatch(r"frag-[0-9]+", f.get("fragmentId", ""))] or [0]) + 1
+        omitted = 0
+        visual_kinds = {"image", "unsupported_image", "drawing", "vector_drawing", "chart", "object", "embedded_attachment"}
+        for doc in catalog["documents"]:
+            mid = doc["materialId"]
+            whole = self.store.get_full_document(session_id, mid)
+            unread = whole.get("unreadObjects", [])
+            if unread and (multimodal or any(item.get("kind") not in visual_kinds for item in unread)):
+                raise AdapterError("MATERIAL_READ_INCOMPLETE", "资料「" + doc["fileName"] + "」存在未读取内容，请重新整理资料后导入。", status_code=422)
+            if not multimodal:
+                count = len(whole["images"]) + len(unread)
+                omitted += count
+                if count:
+                    warnings.append(doc["fileName"] + "：" + str(count) + " 个图片或视觉对象未参与生成")
+            image_ids = {i["imageId"]: mid + "-" + i["imageId"] for i in whole["images"]}
+            if multimodal:
+                images.extend(dict(i, imageId=image_ids[i["imageId"]]) for i in whole["images"])
+            for raw in whole["blocks"]:
+                if raw["kind"] == "image" and not multimodal:
+                    continue
+                block = dict(raw, materialId=mid, fileName=doc["fileName"])
+                if block["kind"] == "image":
+                    block["imageId"] = image_ids[block["imageId"]]
+                    block["text"] = "原图 " + block["imageId"] + "（图中文字和数值须核对）"
+                if not block.get("text"):
+                    if block.get("kind") == "table_cell":
+                        block["text"] = "〔原表空白单元格〕"
+                    elif block.get("kind") == "note_reference":
+                        block["text"] = "注释引用：" + str(block.get("noteType", "")) + " " + str(block.get("noteId", ""))
+                    else:
+                        continue
+                match = next((f for f in old if f.get("materialId") == mid and f.get("text") == block["text"]
+                              and f.get("source", {}).get("part") == block.get("source", {}).get("part")), None)
+                if match:
+                    fid = match["fragmentId"]
+                    old.remove(match)
+                else:
+                    fid = "frag-%d" % next_id
+                    next_id += 1
+                block["blockId"] = mid + "-" + block["blockId"]
+                blocks.append(block)
+                fragments.append(dict(block, fragmentId=fid))
+        if not fragments:
+            raise AdapterError("MATERIAL_READ_INCOMPLETE", "当前模式没有可读取文本，请使用支持图片的模型或提供文字资料。", status_code=422)
+        catalog.update(blocks=blocks, fragmentsList=fragments, fragments={f["fragmentId"]: f for f in fragments})
+        if not multimodal:
+            warnings.insert(0, "当前模型仅处理文本，图片内容未参与生成。")
+        elif images:
+            warnings.append("图片 Token 无法可靠预估，由模型服务核验容量。")
+        return catalog, images, {"mode": "multimodal" if multimodal else "text", "omittedImageCount": omitted, "warnings": warnings}
+
     def _call_provider_model(self, system_prompt: str, user_content: str,
-                             task_auth=None, trace_id: str = "", progress=None) -> str:
+                             task_auth=None, trace_id: str = "", progress=None, image_files=None) -> str:
         auth = task_auth if task_auth is not None else self.provider.resolve_task_auth(TASK_TYPE)
         if not auth.get("providerBaseUrl") or not auth.get("apiKey"):
             raise AdapterError("MODEL_CONFIG_INCOMPLETE", "任务台账尚未配置模型，请前往设置。", status_code=400)
         body = self.provider.post_task(
             TASK_TYPE, trace_id, {}, system_prompt + "\n" + user_content,
-            task_auth=auth, progress_callback=progress,
+            task_auth=auth, progress_callback=progress, image_files=image_files,
         )
+        if body.get("finishReason") in ("length", "max_tokens", "content_filter"):
+            raise AdapterError("MATERIAL_LEDGER_INCOMPLETE", "模型输出未完成，请调整输出容量或要求后重新生成。", status_code=502)
         return extract_answer(body)
 
     def _build_user_prompt(
@@ -195,7 +263,7 @@ class ExcelMaterialLedgerCoordinator:
             "【表头字段】\n{0}".format(", ".join(headers)),
         ]
         if instruction:
-            prompt_parts.append("【提取要求】\n{0}".format(instruction))
+            prompt_parts.append("【编写要求】\n{0}".format(instruction))
         if user_facts:
             prompt_parts.append("【用户补充事实】\n{0}".format(json.dumps(parse_user_facts(user_facts)[0], ensure_ascii=False)))
         if conflict_resolutions:
@@ -207,9 +275,10 @@ class ExcelMaterialLedgerCoordinator:
             fname = f.get("fileName", "资料")
             fhead = f.get("heading") or f.get("chapter") or "正文"
             ftext = f.get("text", "")
+            ftext += "\n[原文位置与结构] " + json.dumps({k: f[k] for k in ("source", "values", "table", "cell", "noteId", "noteType") if k in f}, ensure_ascii=False)
             fragments_repr.append("[片段编号 {0}] 《{1}》- {2}：\n{3}".format(fid, fname, fhead, ftext))
 
-        prompt_parts.append("【参考资料片段】\n" + "\n\n".join(fragments_repr))
+        prompt_parts.append("【完整参考资料（编号用于引用）】\n" + "\n\n".join(fragments_repr))
         return "\n\n".join(prompt_parts)
 
     def _run_job(self, snapshot: dict, progress) -> dict:
@@ -251,14 +320,16 @@ class ExcelMaterialLedgerCoordinator:
         )
         if _estimate_direct_tokens(system_prompt, system_prompt + "\n" + user_content) > budget:
             raise AdapterError("MODEL_INPUT_OVER_BUDGET", "资料超过单次模型预算，请缩小资料范围；未截断资料。", status_code=413)
+        validate_composer_multimodal_input(auth, system_prompt, system_prompt + "\n" + user_content, snapshot.get("imageFiles", []))
         check_cancel()
         progress("provider_processing")
         raw_response = self._call_provider_model(system_prompt, user_content,
-                                                 task_auth=auth, trace_id=snapshot["traceId"], progress=progress)
+                                                 task_auth=auth, trace_id=snapshot["traceId"], progress=progress, image_files=snapshot.get("imageFiles") or None)
 
         check_cancel()
         progress("parsing")
         validated_result = self._parse_and_validate_ledger(raw_response, headers, catalog, user_facts=user_facts)
+        validated_result["inputCoverage"] = snapshot.get("inputCoverage", {})
         return validated_result
 
     def _parse_and_validate_ledger(self, raw_response: str, headers: List[str], catalog: dict, user_facts: str = "") -> dict:
@@ -365,6 +436,8 @@ class ExcelMaterialLedgerCoordinator:
                     "fileName": frag.get("fileName", "参考资料"),
                     "chapter": chapters.get((frag.get("materialId", ""), frag.get("blockId")), frag.get("heading") or frag.get("chapter") or "正文"),
                     "text": frag.get("text", ""),
+                    "source": frag.get("source", {}),
+                    "imageId": frag.get("imageId", ""),
                 })
 
             validated_rows.append({
@@ -420,4 +493,5 @@ class ExcelMaterialLedgerCoordinator:
         catalog = self.store.get_catalog(document_session_id)
         if not catalog or not catalog.get("documents"):
             return []
+        catalog, _, _ = self._complete_catalog(document_session_id, catalog, self.provider.resolve_task_auth(TASK_TYPE))
         return detect_material_conflicts(catalog, user_facts=user_facts)

@@ -93,7 +93,8 @@
       "source": "formal-plugin-kit/wps-ai-assistant-et_1.0.0",
       "target": "packages/wps-ai-assistant-et_1.0.0",
       "include": [
-        "assets/icon-excel-smart-fill.png"
+        "assets/icon-excel-smart-fill.png",
+        "assets/icon-excel-material-ledger.png"
       ]
     },
     {
@@ -158,6 +159,11 @@
       "type": "file",
       "source": "formal-plugin-kit/wps-ai-assistant_1.0.0/material-composer.js",
       "target": "packages/wps-ai-assistant_1.0.0/material-composer.js"
+    },
+    {
+      "type": "file",
+      "source": "adapter_service/app/services/excel/material_document.py",
+      "target": "packages/adapter-start-kit/adapter_service/app/services/excel/material_document.py"
     },
     {
       "type": "file",

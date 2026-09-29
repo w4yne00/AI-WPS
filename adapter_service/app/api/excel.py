@@ -384,12 +384,7 @@ def clone_excel_material(request: dict) -> dict:
 @router.post("/excel/materials/import")
 def import_excel_material(request: dict) -> dict:
     trace_id = new_trace_id("excel-material-import")
-    data = excel_material_store.import_material(
-        session_id=str(request.get("documentSessionId") or "").strip(),
-        doc_identity=str(request.get("documentIdentity") or "").strip(),
-        file_name=str(request.get("fileName") or "").strip(),
-        content_base64=str(request.get("contentBase64") or "").strip(),
-    )
+    data = excel_material_store.import_request(request)
     return _ledger_envelope(data, trace_id=trace_id, message="imported")
 
 
@@ -402,12 +397,7 @@ def get_excel_materials_catalog(documentSessionId: str = "") -> dict:
 
 @router.put("/excel/materials/{material_id}")
 def update_excel_material(material_id: str, request: dict) -> dict:
-    data = excel_material_store.update_material(
-        session_id=str(request.get("documentSessionId") or "").strip(),
-        material_id=material_id,
-        file_name=str(request.get("fileName") or "").strip(),
-        content_base64=str(request.get("contentBase64") or "").strip(),
-    )
+    data = excel_material_store.import_request(request, material_id)
     return _ledger_envelope(data, trace_id=material_id, message="updated")
 
 

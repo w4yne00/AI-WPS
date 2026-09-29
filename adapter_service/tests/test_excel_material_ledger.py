@@ -232,8 +232,8 @@ def test_ledger_rejects_second_job_in_same_workbook(ledger_setup):
         ledger.wait_job(first_id, "excel_test_sess")
 
 
-@pytest.mark.parametrize("method", ["direct_model", "workflow_platform"])
-def test_ledger_runs_through_real_provider_transport(ledger_setup, method):
+@pytest.mark.parametrize("method,image_mode", [("direct_model", "disabled"), ("direct_model", "openai_image_url"), ("workflow_platform", "disabled")])
+def test_ledger_runs_through_real_provider_transport(ledger_setup, method, image_mode):
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
     import threading
     store, ledger = ledger_setup
@@ -258,15 +258,31 @@ def test_ledger_runs_through_real_provider_transport(ledger_setup, method):
     worker.start()
     auth = {"accessMethod": method, "providerBaseUrl": "http://127.0.0.1:{0}".format(server.server_port),
             "providerChatPath": "/chat-messages", "providerMode": "blocking", "apiKey": "test-key",
-            "modelName": "test-model", "maxOutputTokens": 8000, "contextWindowTokens": 40000}
+            "modelName": "test-model", "temperature": 0.35, "maxOutputTokens": 8000, "contextWindowTokens": 40000, "imageInputMode": image_mode}
+    original = store.get_full_document
+    def whole(session, mid):
+        data = original(session, mid)
+        data['images'] = [{'imageId':'image-1','data':b'\x89PNG\r\n\x1a\nimage','mimeType':'image/png'}]
+        data['blocks'].append({'kind':'image','blockId':'img','imageId':'image-1','source':{'part':'word/document.xml'}})
+        return data
     try:
-        with patch.object(ledger.provider, "resolve_task_auth", return_value=auth):
-            job = ledger.submit_job({"documentSessionId": "excel_test_sess", "clientJobId": "transport_" + method})
+        with patch.object(ledger.provider, "resolve_task_auth", return_value=auth), patch.object(store, "get_full_document", side_effect=whole):
+            job = ledger.submit_job({"documentSessionId": "excel_test_sess", "clientJobId": "transport_" + method + image_mode})
             result = ledger.wait_job(job["jobId"], "excel_test_sess")
         assert result["status"] == "completed", result.get("error")
         assert result["result"]["rows"][0]["values"]["工作事项"] == "基础网络改造"
         assert len(received) == 1
         assert received[0][0] == ("/chat/completions" if method == "direct_model" else "/chat-messages")
+        if method == "direct_model":
+            payload = received[0][1]
+            assert payload['temperature'] == 0.35
+            assert payload['max_tokens'] == 8000
+            content = payload['messages'][-1]['content']
+            if image_mode == 'openai_image_url':
+                assert any(p.get('type') == 'image_url' and p['image_url']['url'].startswith('data:image/png;base64,') for p in content)
+            else:
+                assert isinstance(content, str)
+                assert result['result']['inputCoverage']['omittedImageCount'] == 1
     finally:
         server.shutdown()
         server.server_close()
@@ -303,3 +319,55 @@ def test_ledger_conflict_choices_are_validated_against_current_materials(ledger_
                 {"conflictId": "conflict-1", "chosenCandidateId": "opt-1-1", "chosenValue": "100万元"}
             ]})
             assert ledger.wait_job(job["jobId"], "excel_test_sess")["status"] == "completed"
+
+
+@pytest.mark.parametrize('image_mode, expected_images', [('openai_image_url', 1), ('disabled', 0)])
+def test_full_material_and_image_mode_reach_provider(ledger_setup, image_mode, expected_images):
+    store, coordinator = ledger_setup
+    original = store.get_full_document if hasattr(store, 'get_full_document') else None
+    def whole(session, mid):
+        data = original(session, mid)
+        data['blocks'].extend([
+            {'blockId':'last', 'kind':'text', 'text':'全文尾部唯一事实', 'source':{'part':'word/footer1.xml'}},
+            {'blockId':'img', 'kind':'image', 'imageId':'image-1', 'source':{'part':'word/document.xml'}},
+        ])
+        data['images'] = [{'imageId':'image-1', 'mimeType':'image/png', 'data':b'\x89PNG\r\n\x1a\nimage'}]
+        return data
+    auth = {'accessMethod':'direct_model', 'imageInputMode':image_mode, 'providerBaseUrl':'http://model', 'apiKey':'test', 'temperature':0.2, 'maxOutputTokens':1200, 'contextWindowTokens':32000}
+    captured = {}
+    def post(*args, **kwargs):
+        captured['query'] = args[3]
+        captured.update(kwargs)
+        return {'answer':json.dumps({'schemaVersion':'excel.material_ledger.v1','rows':[{'values':{'工作事项':'任务'},'fragmentIds':[1]}]})}
+    with patch.object(store, 'get_full_document', side_effect=whole, create=True), patch.object(coordinator.provider, 'resolve_task_auth', return_value=auth), patch.object(coordinator.provider, 'post_task', side_effect=post):
+        coordinator.submit_job({'documentSessionId':'excel_test_sess', 'clientJobId':'full-'+image_mode, 'headers':['工作事项']})
+        job = coordinator.wait_job('full-'+image_mode, 'excel_test_sess')
+    assert job['status'] == 'completed', job
+    assert '全文尾部唯一事实' in captured['query']
+    assert len(captured.get('image_files') or []) == expected_images
+    assert captured['task_auth']['temperature'] == 0.2
+    assert job['result']['inputCoverage']['omittedImageCount'] == 1 - expected_images
+
+
+def test_missing_retained_original_rejected_even_with_cached_fragments(ledger_setup):
+    store, coordinator = ledger_setup
+    for path in store.base_dir.glob('*/files/*'):
+        path.unlink()
+    with pytest.raises(AdapterError, match='重新导入'):
+        coordinator.submit_job({'documentSessionId':'excel_test_sess','clientJobId':'missing-original'})
+
+
+def test_ledger_image_mode_can_be_explicitly_configured():
+    from app.services.direct_services import DirectServiceStore
+    assert DirectServiceStore._validate_image_input_mode('excel.material_ledger', 'openai_image_url') == 'openai_image_url'
+    assert DirectServiceStore._validate_image_input_mode('excel.material_ledger', None) == 'disabled'
+
+
+def test_truncated_model_output_never_becomes_completed(ledger_setup):
+    _, coordinator = ledger_setup
+    auth = {'accessMethod':'direct_model', 'providerBaseUrl':'http://model', 'apiKey':'test'}
+    body = {'finishReason':'length', 'answer':json.dumps({'schemaVersion':'excel.material_ledger.v1','rows':[{'values':{'工作事项':'任务'},'fragmentIds':[1]}]})}
+    with patch.object(coordinator.provider, 'resolve_task_auth', return_value=auth), patch.object(coordinator.provider, 'post_task', return_value=body):
+        coordinator.submit_job({'documentSessionId':'excel_test_sess','clientJobId':'truncated','headers':['工作事项']})
+        job = coordinator.wait_job('truncated','excel_test_sess')
+    assert job['status'] == 'failed'
