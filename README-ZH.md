@@ -16,10 +16,10 @@
 | 版本规则号 | `AI-WPS-WORD-EXCEL-PPT-0.26.0-preview.1` |
 | 当前阶段 | `P1` 平台底座 + Word + Excel + PPT |
 | 运行目标 | 麒麟 V10 ARM、Python 3.8、WPS 原生 JS 插件 |
-| 交付状态 | 自动化候选 `20260929-02f5362` 已登记为 `candidate`；Issue #154 目标机验收保持 `manual-pending` |
+| 交付状态 | 自动化候选 `20260930-58f13cc` 已登记为 `candidate`；Issue #154 目标机验收保持 `manual-pending` |
 | 基线状态 | `v0.25.3-alpha` 已依据 Issue #59 完成目标机验收，状态为 `target-accepted` |
 
-当前自动化候选为 [`ai-wps-delivery-20260929-02f5362-v0260-preview1.tar.gz`](./dist-preview-delivery-kit/ai-wps-delivery-20260929-02f5362-v0260-preview1.tar.gz)，源码提交为 `02f5362e198dca3961931fbb44916aa3c18872db`，SHA-256 为 `fb9d0a3b3aeb7ae30fcb88947d872e53ccd69f8750260a265bc5ced844a0fa34`。本候选更新 Word“按需编写”：全文文字、表格与原图一同输入多模态模型，复用智能编写的写作规范，以简化界面生成段落或整篇。结果正文占满预览宽度，段末点击“出处”下钻查看原文，返回时恢复阅读位置与焦点。DOC 通过 WPS 原生接口转换临时副本，不新增依赖；超容量不截断或删图。自动化回归、交付审计及麒麟 Python 3.8 安装升级检查已通过，真实 DOC 转换、插入和实际模型识图仍待 Issue #154 验收。`v0.25.3-alpha` 的已验收基线继续保留。
+当前自动化候选为 [`ai-wps-delivery-20260930-58f13cc-v0260-preview1.tar.gz`](./dist-preview-delivery-kit/ai-wps-delivery-20260930-58f13cc-v0260-preview1.tar.gz)，源码提交为 `58f13cc9f366ec215863f205d1b457215ccc767f`，SHA-256 为 `cef7b2cf70085ec0a90769a16c360140cf57d3bb06c8230f58d22b609b8cc502`。本候选包含 Excel“任务台账”和 PPT“资料大纲”重新设计：完整材料输入、出处下钻及独立模型参数；资料大纲支持 DOCX/DOC 全文、表格与原图生成逐页建议。包内插件回归、麒麟 Python 3.8 后端回归、交付审计及安装升级检查已通过。真实 WPS DOC 转换、模型识图和生成质量仍待现场验收，状态保持 `candidate` / `manual-pending`。已验收基线及上一候选保留。
 
 2026-09-28 清理：已移除今天之前被替代的 18 套旧安装包。保留今天的候选，以及构建或回归需要的 v0.25.3、20260811-v0.23.1 和 v0.25.0 基线。
 
