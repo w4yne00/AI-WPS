@@ -140,6 +140,7 @@ def read_direct_text_stream(
     timeout: float = 600.0,
     max_bytes: int = MAX_DIRECT_STREAM_RESPONSE_BYTES,
     cancel_checker: Optional[Callable[[], bool]] = None,
+    activity_callback: Optional[Callable[[str], None]] = None,
 ) -> Dict:
     decoder = codecs.getincrementaldecoder("utf-8")("replace")
     think_filter = StreamingThinkFilter()
@@ -147,6 +148,7 @@ def read_direct_text_stream(
     received_bytes = 0
     accumulated_chunks = []
     first_visible_recorded = False
+    reasoning_reported = False
     terminated = False
     finish_reason = None
     line_buffer = ""
@@ -168,7 +170,7 @@ def read_direct_text_stream(
         accumulated_chunks.append(text)
 
     def process_event() -> None:
-        nonlocal terminated, finish_reason, usage, response_id, response_model
+        nonlocal terminated, finish_reason, usage, response_id, response_model, reasoning_reported
         if not event_data_lines:
             return
         data_content = "\n".join(event_data_lines)
@@ -213,6 +215,10 @@ def read_direct_text_stream(
         choice = choices[0] if isinstance(choices[0], dict) else {}
         delta = choice.get("delta") if isinstance(choice, dict) else {}
         if isinstance(delta, dict):
+            if (delta.get("reasoning_content") or delta.get("reasoning")) and not reasoning_reported:
+                reasoning_reported = True
+                if activity_callback:
+                    activity_callback("provider_reasoning")
             content = delta.get("content") or delta.get("text") or ""
             if content:
                 filtered = think_filter.feed(content)

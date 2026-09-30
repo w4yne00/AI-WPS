@@ -389,6 +389,7 @@ def test_outline_original_images_reach_http_request_without_id_collisions(outlin
         store.import_material('ppt_test_sess', '', name, base64.b64encode(document(p('文首') + image + p('文尾'), parts)).decode())
     captured = []
     class Response:
+        headers = {'Content-Type': 'application/json'}
         def __enter__(self): return self
         def __exit__(self, *args): pass
         def read(self):

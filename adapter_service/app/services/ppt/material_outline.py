@@ -175,6 +175,7 @@ class PptMaterialOutlineCoordinator:
                 "catalog": deepcopy(catalog),
                 "imageFiles": image_files,
                 "systemPrompt": system_prompt,
+                "systemPromptAsset": deepcopy(system_prompt_asset),
                 "audience": audience,
                 "slideCount": slide_count,
                 "instruction": instruction,
@@ -211,7 +212,7 @@ class PptMaterialOutlineCoordinator:
             )
 
     def _call_provider_model(self, system_prompt: str, user_content: str,
-                             task_auth=None, trace_id: str = "", progress=None, image_files=None) -> str:
+                             task_auth=None, trace_id: str = "", progress=None, image_files=None, prompt_asset=None) -> str:
         auth = task_auth if task_auth is not None else self.provider.resolve_task_auth(TASK_TYPE)
         if not auth.get("providerBaseUrl") or not auth.get("apiKey"):
             raise AdapterError("MODEL_CONFIG_INCOMPLETE", "逐页大纲任务尚未配置模型，请前往设置。", status_code=400)
@@ -223,6 +224,7 @@ class PptMaterialOutlineCoordinator:
             progress_callback=progress,
             task_auth=auth,
             image_files=image_files or None,
+            prompt_asset=prompt_asset or {"content": system_prompt, "version": "task-snapshot", "hashPrefix": ""},
         )
         if body.get("finishReason") in ("length", "max_tokens", "content_filter"):
             raise AdapterError("MATERIAL_OUTLINE_INCOMPLETE", "模型输出未完成，请调整输出容量后重新生成。", status_code=502)
@@ -310,6 +312,7 @@ class PptMaterialOutlineCoordinator:
             task_auth=auth,
             trace_id=snapshot["traceId"],
             progress=progress,
+            prompt_asset=snapshot.get("systemPromptAsset"),
             **({"image_files": snapshot["imageFiles"]} if snapshot.get("imageFiles") else {})
         )
 

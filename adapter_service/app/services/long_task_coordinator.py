@@ -28,6 +28,7 @@ PUBLIC_PHASES = {
     "provider_processing",
     "provider_connecting",
     "provider_waiting",
+    "provider_reasoning",
     "streaming",
     "stopping",
     "retrying",

@@ -57,6 +57,7 @@ from app.core.features import (
     streaming_capability_validated,
 )
 from app.services.direct_text_stream import read_direct_text_stream
+from app.services.long_task_coordinator import LongTaskCancelled
 from app.services.ppt.document_text_extractor import extract_staged_document_text
 from app.services.word.image_semantics import ImageSemanticConfigStore
 
@@ -882,7 +883,7 @@ def _should_retry_without_response_format(
 def _sanitize_provider_body(body: Dict) -> Dict:
     inputs = body.get("inputs") if isinstance(body.get("inputs"), dict) else {}
     query = str(body.get("query", "") or "")
-    return {
+    result = {
         "bodyKeys": sorted(body.keys()),
         "inputsKeys": sorted(inputs.keys()),
         "queryLength": len(query),
@@ -891,6 +892,17 @@ def _sanitize_provider_body(body: Dict) -> Dict:
         "filesCount": len(body.get("files") or []),
         "user": body.get("user", ""),
     }
+
+    if isinstance(body.get("messages"), list):
+        messages = body["messages"]
+        result["queryLength"] = sum(len(m.get("content", "")) if isinstance(m.get("content"), str)
+                                    else sum(len(str(p.get("text") or "")) for p in (m.get("content") or []) if isinstance(p, dict) and p.get("type") == "text")
+                                    for m in messages if isinstance(m, dict) and m.get("role") == "user")
+        result["messageCount"] = len(messages)
+        result["stream"] = body.get("stream") is True
+        result["maxOutputTokens"] = body.get("max_tokens")
+        result["modelName"] = str(body.get("model") or "")
+    return result
 
 
 def _summarize_answer_format(answer: str) -> Dict:
@@ -1242,6 +1254,10 @@ def record_provider_debug(event: Dict) -> None:
             debug[field] = event[field]
     with _LAST_PROVIDER_DEBUG_LOCK:
         trace_id = str(debug.get("traceId", "")).strip()
+        if event.get("taskType") == "ppt.material_outline" and "request" not in event:
+            previous = _TRACE_PROVIDER_DEBUG.get(trace_id, {})
+            if previous.get("request"):
+                debug["request"] = deepcopy(previous["request"])
         _merge_trace_provider_performance_locked(trace_id, debug)
         _LAST_PROVIDER_DEBUG.clear()
         _LAST_PROVIDER_DEBUG.update(debug)
@@ -3220,7 +3236,7 @@ class ProviderClient:
             or DEFAULT_CONTEXT_WINDOW_TOKENS
         )
         max_output_tokens = resolved_task_auth.get("maxOutputTokens")
-        if task_type == "word.material_composer" and max_output_tokens is None:
+        if task_type in ("word.material_composer", "ppt.material_outline") and max_output_tokens is None:
             max_output_tokens = DEFAULT_RESERVED_OUTPUT_TOKENS
         reserved_output = int(max_output_tokens or DEFAULT_RESERVED_OUTPUT_TOKENS)
         input_budget, safety_margin = direct_model_input_budget(
@@ -3261,10 +3277,10 @@ class ProviderClient:
         should_stream = bool(
             allow_streaming_fallback
             and streaming_enabled
-            and streaming_capability_validated(
+            and (task_type == "ppt.material_outline" or streaming_capability_validated(
                 resolved_task_auth.get("streamingCapability")
-            )
-            and task_type in ("word.smart_write", "word.smart_imitation")
+            ))
+            and task_type in ("word.smart_write", "word.smart_imitation", "ppt.material_outline")
             and response_format is None
         )
         payload_body = {
@@ -3285,6 +3301,8 @@ class ProviderClient:
         debug_metadata = self.build_debug_metadata(task_type, task_auth=resolved_task_auth)
         safe_validation = {
             "stage": "model-processing",
+            "timeoutSeconds": timeout,
+            "transport": "stream" if should_stream else "blocking",
             "promptVersion": prompt_asset["version"],
             "promptHashPrefix": prompt_asset["hashPrefix"],
             "contextWindowTokens": context_window,
@@ -3349,6 +3367,11 @@ class ProviderClient:
                     pass
             with _open_task_response(req, timeout, task_type, progress_callback) as response:
                 t_headers = time.monotonic()
+                if (should_stream and task_type == "ppt.material_outline"
+                        and "text/event-stream" not in str(response.headers.get("Content-Type", "")).lower()):
+                    # A gateway may ignore stream=true. Consume this response;
+                    # submitting it again could duplicate a costly generation.
+                    should_stream = False
                 if should_stream:
                     content_type = str(
                         response.headers.get("Content-Type", "")
@@ -3406,14 +3429,14 @@ class ProviderClient:
                                     progress_callback("streaming")
                                 except Exception:
                                     pass
-                        if progress_callback and hasattr(progress_callback, "publish_text"):
+                        if task_type != "ppt.material_outline" and progress_callback and hasattr(progress_callback, "publish_text"):
                             progress_callback.publish_text(delta)
 
                     def record_metric(name: str, value: int) -> None:
                         nonlocal first_visible_ms
                         if name == "providerFirstVisibleMs":
                             first_visible_ms = value
-                        if progress_callback and hasattr(progress_callback, "record_metric"):
+                        if task_type != "ppt.material_outline" and progress_callback and hasattr(progress_callback, "record_metric"):
                             progress_callback.record_metric(name, value)
 
                     cancel_checker = (
@@ -3451,9 +3474,15 @@ class ProviderClient:
                             publish_callback=on_delta,
                             record_metric_callback=record_metric,
                             start_mono=t_start,
-                            timeout=float(timeout),
+                            timeout=(max(0.0, float(timeout) - (time.monotonic() - t_start))
+                                     if task_type == "ppt.material_outline" else float(timeout)),
                             cancel_checker=cancel_checker,
+                            activity_callback=(progress_callback if task_type == "ppt.material_outline" else None),
                         )
+                    except LongTaskCancelled:
+                        if task_type == "ppt.material_outline":
+                            raise LongTaskCancelled() from None
+                        raise
                     finally:
                         if (
                             cancel_callback is not None
@@ -3632,7 +3661,7 @@ class ProviderClient:
             t_headers = time.monotonic()
             status = int(exc.code)
             raw_error_body, error_body_complete = _read_http_error_raw_result(
-                exc, progress_callback if task_type == "word.material_composer" else None
+                exc, progress_callback if task_type in ("word.material_composer", "ppt.material_outline") else None
             )
             t_complete = time.monotonic() if error_body_complete else None
             perf_metrics = _provider_performance_metrics(
@@ -3664,6 +3693,7 @@ class ProviderClient:
             )
             if (
                 should_stream
+                and task_type != "ppt.material_outline"
                 and allow_streaming_fallback
                 and not first_delta_seen
                 and status in (400, 404, 415, 422, 501)
@@ -3801,6 +3831,7 @@ class ProviderClient:
         response_format: Optional[Dict] = None,
         allow_response_format_fallback: bool = False,
         progress_callback=None,
+        prompt_asset: Optional[Dict] = None,
     ) -> Dict:
         resolved_task_auth = task_auth if task_auth is not None else self.resolve_task_auth(task_type)
         timeout = timeout_seconds or self.settings.timeout_seconds
@@ -3819,6 +3850,7 @@ class ProviderClient:
                 query,
                 resolved_task_auth,
                 timeout,
+                prompt_asset=prompt_asset,
                 input_token_limit=input_token_limit,
                 image_files=image_files,
                 response_format=response_format,
@@ -4007,7 +4039,7 @@ class ProviderClient:
             except error.HTTPError as exc:
                 t_headers = time.monotonic()
                 raw_error_body, error_body_complete = _read_http_error_raw_result(
-                    exc, progress_callback if task_type == "word.material_composer" else None
+                    exc, progress_callback if task_type in ("word.material_composer", "ppt.material_outline") else None
                 )
                 error_body = _sanitize_provider_error_body(
                     raw_error_body,
