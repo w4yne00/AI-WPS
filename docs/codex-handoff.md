@@ -1,5 +1,13 @@
 # Codex Handoff - AI-WPS
 
+## DOCX 兼容修复交付候选（2026-09-30）
+
+- 当前候选：`dist-preview-delivery-kit/ai-wps-delivery-20260930-f035121-v0260-preview1.tar.gz`；源码 `f03512136ef4661ca3db361b65b9e290e3a6880f`；SHA-256 `7420aef68c325e29c484705ff78e3aa1715954a025ee24cea3dd9b5dc9e14ea3`。修复外部模板元数据误拒绝及普通页脚文本框读取，未放宽其他外部内容、ZIP 或 XML 安全限制。
+- 源码核验 353 个输入、装配 291 个文件、包内兼容扫描 98 个 Python 文件；正式插件 524 通过、原型 12 通过且构建成功；麒麟 Python 3.8 后端全量 1736 通过、55 跳过、0 失败。
+- 同一归档经校验传输，在麒麟通过运行、全新安装、历史边界、Preview 升级与旧直连配置迁移；最终归档审计及本地 SHA-256 复核通过。
+- 仍为 `candidate` / `manual-pending`，未更新 UTM 当前运行安装。上一候选 `20260930-58f13cc` 原样保留；源码和本次归档推送到既有 `origin/main`。
+
+
 ## DOCX 模板引用与页码文本框兼容修复（2026-09-30，源码）
 
 - 在 UTM 桌面的用户报告 DOCX 复现导入拒绝。已安装版本与测试副本的 DOCX 校验器一致；根因是 `word/_rels/settings.xml.rels` 的外部 `attachedTemplate` 元数据被当作不安全内容关系。仅对此准确类型与来源允许本地解析忽略，不读取、下载或执行外部模板；外部图片、对象、其他关系及 ZIP/XML 安全限制保持原有行为。
@@ -628,7 +636,7 @@
 
 版本规则号：`AI-WPS-WORD-EXCEL-PPT-0.26.0-preview.1`
 
-`v0.26.0-preview.1` 当前自动化候选为 `dist-preview-delivery-kit/ai-wps-delivery-20260930-58f13cc-v0260-preview1.tar.gz`（SHA-256：`cef7b2cf70085ec0a90769a16c360140cf57d3bb06c8230f58d22b609b8cc502`，源码：`58f13cc9f366ec215863f205d1b457215ccc767f`），完整目标环境回归、归档审计和麒麟 Python 3.8 安装升级检查通过。包含资料大纲与任务台账重新设计；真实 WPS 与模型验收保持 `manual-pending`；上一候选 `20260929-02f5362` 保留。
+`v0.26.0-preview.1` 当前自动化候选为 `dist-preview-delivery-kit/ai-wps-delivery-20260930-f035121-v0260-preview1.tar.gz`（SHA-256：`7420aef68c325e29c484705ff78e3aa1715954a025ee24cea3dd9b5dc9e14ea3`，源码：`f03512136ef4661ca3db361b65b9e290e3a6880f`），麒麟完整回归、归档审计和安装升级检查通过。包含 DOCX 模板引用与页码文本框兼容修复；真实 WPS 与模型验收保持 `manual-pending`；上一候选 `20260930-58f13cc` 保留。
 
 `v0.25.3-alpha` 是已验收基线：当前唯一自动化候选为 `AI-WPS-P1-WORD-EXCEL-PPT-0.25.3-20260826-d1a346b0d7e1301f74b37e692664fd31085ee050`，源码提交为 `d1a346b0d7e1301f74b37e692664fd31085ee050`，归档为 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260826-d1a346b-v0253.tar.gz`，SHA-256 为 `120a2cfd8decd956224c3702721d85846bdaecf91d71b87b31c0f7be1b258cb7`，目标机验收状态为 `target-accepted`（Issue #59 已完成并关闭）。冻结的 `v0.25.2-alpha` 唯一自动化候选仍为 `AI-WPS-P1-WORD-EXCEL-PPT-0.25.2-20260825-850871c10a17f03c8a58abd02ca58c2f3fc70fc9`，源码提交为 `850871c10a17f03c8a58abd02ca58c2f3fc70fc9`，归档为 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260825-850871c-v0252.tar.gz`，SHA-256 为 `c5d663d1249147104bee66790fea60f5e15675418a51c0c1a7a0fc028a285a92`，自动化状态为 `candidate`。图像语义补充默认开启与视觉关闭降级保持不变。
 
