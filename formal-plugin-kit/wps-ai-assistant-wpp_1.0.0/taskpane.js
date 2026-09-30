@@ -4718,7 +4718,7 @@
     }
 
     var currentTask = getSettingsWorkflowTaskType();
-    var isSupportedTask = (currentTask === "ppt.slide_assistant" || currentTask === "ppt.structure_review");
+    var isSupportedTask = (currentTask === "ppt.slide_assistant" || currentTask === "ppt.structure_review" || currentTask === "ppt.material_outline");
     section.hidden = !isSupportedTask;
     if (!isSupportedTask) {
       return;

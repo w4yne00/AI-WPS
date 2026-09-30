@@ -36,7 +36,7 @@ function pane(failConfig = false, mode = '') {
       return { ok: true, status: 200, json: async () => ({ success: true, data: JSON.parse(JSON.stringify(data)) }) };
     }
   };
-  const exported = source.replace('  if (document.readyState === "loading") {', '  window.testApi = { state, initialize, refreshSettings, request, getWorkflowProfileData, validateActiveDirectTaskSelection, applyTaskModelConfigMenuItem, saveTaskModelSelection, finishWorkflowEditorSave, submitPptSlideJob, submitStructureReviewJob };\n  if (document.readyState === "loading") {');
+  const exported = source.replace('  if (document.readyState === "loading") {', '  window.testApi = { state, initialize, refreshSettings, request, renderTaskModelSelectionSection, getTaskModelSelectionDraft, getWorkflowProfileData, validateActiveDirectTaskSelection, applyTaskModelConfigMenuItem, saveTaskModelSelection, finishWorkflowEditorSave, submitPptSlideJob, submitStructureReviewJob };\n  if (document.readyState === "loading") {');
   vm.runInNewContext(exported, context);
   return { ...context.window.testApi, node, calls, setTaskStatus(task, status) { taskApiKeys[task] = status; } };
 }
@@ -112,4 +112,26 @@ test('incomplete task status is unavailable, while explicit unconfigured status 
   p.setTaskStatus(tasks[0], { configured: false, accessMethod: '', activeProfileId: '' });
   await p.refreshSettings({ silent: true });
   assert.equal(p.state.taskConfigurationReady, true);
+});
+
+
+test('every PPT model tab exposes access selection and its own parameter values', () => {
+  const p = pane();
+  p.state.directServices = [{id: 'direct_svc_one', name: '测试接入', defaultModel: 'vision', modelList: ['vision']}];
+  for (const task of tasks) {
+    p.state.workflowTaskType = task;
+    p.state.taskModelSelections[task] = {serviceId: 'direct_svc_one', modelName: 'vision', temperature: 0, maxOutputTokens: 8000, contextWindowTokens: 64000, imageInputMode: 'openai_image_url'};
+    p.renderTaskModelSelectionSection();
+    assert.equal(p.node('ppt-task-direct-service-section').hidden, false, task + ' must expose access selection');
+    assert.match(p.node('ppt-task-direct-service-select').innerHTML, /测试接入/);
+    assert.equal(p.node('ppt-task-direct-params').hidden, false);
+    assert.equal(p.node('ppt-task-temperature').value, 0);
+    assert.equal(p.node('ppt-task-max-output').value, 8000);
+    assert.equal(p.node('ppt-task-context').value, 64000);
+    assert.equal(p.node('ppt-task-image-mode-field').hidden, task !== 'ppt.material_outline');
+  }
+  p.state.taskModelSelections['ppt.material_outline'] = {};
+  p.renderTaskModelSelectionSection();
+  assert.equal(p.node('ppt-task-direct-service-section').hidden, false, 'unconfigured outline still needs access selection');
+  assert.equal(p.node('ppt-task-direct-params').hidden, true);
 });
