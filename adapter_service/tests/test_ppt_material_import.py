@@ -369,3 +369,39 @@ def test_source_image_is_loaded_on_demand_and_rejects_other_session(temp_roots):
         store.get_source_image('other', mid, images[0]['imageId'], version)
     with pytest.raises(AdapterError):
         store.get_source_image('a', mid, images[0]['imageId'], 'old-version')
+
+
+def docx_with_template_relationship(target, relationship_type='attachedTemplate', part='word/_rels/settings.xml.rels'):
+    from xml.sax.saxutils import quoteattr
+    output = BytesIO()
+    with zipfile.ZipFile(output, 'w') as archive:
+        archive.writestr('[Content_Types].xml', CONTENT_TYPES_XML)
+        archive.writestr('word/document.xml', DOCUMENT_XML)
+        archive.writestr('word/settings.xml', '<w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:attachedTemplate r:id="rId1"/></w:settings>')
+        archive.writestr(part, '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/%s" Target=%s TargetMode="External"/></Relationships>' % (relationship_type, quoteattr(target)))
+    return output.getvalue()
+
+
+@pytest.mark.parametrize('target', ['/missing/templates/report.dotx', 'file:///C:/Templates/report.dotx', 'https://example.invalid/report.dotm'])
+def test_ppt_import_ignores_external_template_metadata_without_loading_template(temp_roots, target):
+    store = PptMaterialStore(temp_roots[2], temp_roots[0], temp_roots[1])
+    content = docx_with_template_relationship(target)
+    result = store.import_request({'documentSessionId': 'templates', 'fileName': '报告.docx',
+                                   'contentBase64': base64.b64encode(content).decode()})
+    whole = store.get_full_document('templates', result['materialId'])
+    assert whole['complete']
+    assert any('总体实施方案' in b.get('text', '') for b in whole['blocks'])
+    assert all(target not in b.get('text', '') for b in whole['blocks'])
+
+
+@pytest.mark.parametrize('relationship_type,part', [
+    ('image', 'word/_rels/settings.xml.rels'),
+    ('oleObject', 'word/_rels/document.xml.rels'),
+    ('attachedTemplate', 'word/_rels/document.xml.rels'),
+])
+def test_template_compatibility_does_not_allow_external_content(temp_roots, relationship_type, part):
+    store = PptMaterialStore(temp_roots[2], temp_roots[0], temp_roots[1])
+    with pytest.raises(AdapterError) as error:
+        store.import_request({'documentSessionId': 'templates', 'fileName': '报告.docx',
+                              'contentBase64': base64.b64encode(docx_with_template_relationship('https://example.invalid/resource', relationship_type, part)).decode()})
+    assert error.value.code == 'MATERIAL_FILE_REJECTED'

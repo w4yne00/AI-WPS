@@ -383,6 +383,18 @@ def _validate_relationships(
                 raise DocxSecurityError("DOCX contains too many relationships")
             target = _attribute(relationship, "Target").strip()
             target_mode = _attribute(relationship, "TargetMode").strip().lower()
+            # Attached templates are editor metadata, not document content.
+            # Local extraction never loads them (including remote/macro templates).
+            # Keep this exception scoped to the settings part and exact type;
+            # external images, objects and other relationships remain rejected.
+            if (
+                target
+                and target_mode == "external"
+                and relationship_part == "word/_rels/settings.xml.rels"
+                and _attribute(relationship, "Type")
+                == "http://schemas.openxmlformats.org/officeDocument/2006/relationships/attachedTemplate"
+            ):
+                continue
             if (
                 not target
                 or target_mode == "external"

@@ -119,3 +119,14 @@ def test_missing_note_and_empty_merged_cell_are_explicit():
     assert any(b['source'].get('verticalMerge') == 'continue' for b in result['blocks'])
     assert result['complete'] is False
     assert any(o['kind'] == 'missing_note' for o in result['unreadObjects'])
+
+
+def test_plain_textbox_alternate_content_reads_one_representation():
+    footer = '''<w:ftr xmlns:w="%s" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" xmlns:a="%s"><w:p><w:r><mc:AlternateContent><mc:Choice Requires="wps"><w:drawing><wps:wsp><wps:cNvSpPr txBox="1"/><wps:spPr><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/><a:ln><a:noFill/></a:ln></wps:spPr><wps:txbx><w:txbxContent>%s</w:txbxContent></wps:txbx></wps:wsp></w:drawing></mc:Choice><mc:Fallback>%s</mc:Fallback></mc:AlternateContent></w:r></w:p></w:ftr>''' % (W, A, p('2'), p('2'))
+    result = extract(document(p('正文'), {'word/footer1.xml': footer.encode()}))
+    assert result['complete']
+    assert [b.get('text') for b in result['blocks']] == ['正文', '2']
+    assert result['blocks'][1]['source']['part'] == 'word/footer1.xml'
+    # A visible diagram shape is not a plain, invisible text container.
+    unsupported = footer.replace('prst="rect"', 'prst="ellipse"')
+    assert not extract(document(p('正文'), {'word/footer1.xml': unsupported.encode()}))['complete']

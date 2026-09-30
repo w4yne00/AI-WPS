@@ -11,6 +11,25 @@ W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
 R = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
 A = 'http://schemas.openxmlformats.org/drawingml/2006/main'
 V = 'urn:schemas-microsoft-com:vml'
+MC = 'http://schemas.openxmlformats.org/markup-compatibility/2006'
+WPS = 'http://schemas.microsoft.com/office/word/2010/wordprocessingShape'
+
+
+def _plain_textbox(node):
+    """Recognize an invisible rectangular text container, not a diagram."""
+    if node.tag != '{%s}wsp' % WPS:
+        return None
+    properties = node.find('{%s}cNvSpPr' % WPS)
+    shape = node.find('{%s}spPr' % WPS)
+    if properties is None or properties.get('txBox') not in ('1', 'true') or shape is None:
+        return None
+    geometry = shape.find('{%s}prstGeom' % A)
+    line = shape.find('{%s}ln' % A)
+    if (geometry is None or geometry.get('prst') != 'rect'
+            or shape.find('{%s}noFill' % A) is None
+            or (line is not None and line.find('{%s}noFill' % A) is None)):
+        return None
+    return node.find('{%s}txbx/{%s}txbxContent' % (WPS, W))
 
 
 def extract_document(content: bytes, file_name: str, read_shape_text: bool = False) -> dict:
@@ -56,6 +75,11 @@ def extract_document(content: bytes, file_name: str, read_shape_text: bool = Fal
                                    'noteType': tag.replace('Reference', ''), 'source': source})
                     return
                 if tag in ('group', 'line', 'arc', 'curve', 'polyline', 'rect', 'oval', 'roundrect', 'wsp', 'cxnSp', 'sp', 'grpSp'):
+                    textbox = _plain_textbox(node)
+                    if textbox is not None:
+                        for index, child in enumerate(node):
+                            walk(child, path + (index,), table_path, cell)
+                        return
                     missing(part, path, 'vector_drawing')
                     if read_shape_text:
                         for index, child in enumerate(node):
@@ -65,8 +89,14 @@ def extract_document(content: bytes, file_name: str, read_shape_text: bool = Fal
                     missing(part, path, tag)
                     return
                 if tag == 'AlternateContent':
-                    # Choosing a representation without checking support can hide
-                    # content; disclose it until a reliable renderer is available.
+                    # Word stores modern textboxes and a legacy representation of
+                    # the same content. Read only the explicitly supported branch.
+                    for index, choice in enumerate(node):
+                        if (choice.tag == '{%s}Choice' % MC
+                                and choice.get('Requires', '').split() == ['wps']
+                                and any(_plain_textbox(item) is not None for item in choice.iter())):
+                            walk(choice, path + (index,), table_path, cell)
+                            return
                     missing(part, path, tag)
                     return
                 if read_shape_text and node.tag == '{%s}p' % A:
