@@ -16,10 +16,10 @@
 | 版本规则号 | `AI-WPS-WORD-EXCEL-PPT-0.26.0-preview.1` |
 | 当前阶段 | `P1` 平台底座 + Word + Excel + PPT |
 | 运行目标 | 麒麟 V10 ARM、Python 3.8、WPS 原生 JS 插件 |
-| 交付状态 | 自动化候选 `20260930-8ff053d` 已登记为 `candidate`；Issue #154 目标机验收保持 `manual-pending` |
+| 交付状态 | 自动化候选 `20260930-e7ff92b` 已登记为 `candidate`；Issue #154 目标机验收保持 `manual-pending` |
 | 基线状态 | `v0.25.3-alpha` 已依据 Issue #59 完成目标机验收，状态为 `target-accepted` |
 
-当前自动化候选为 [`ai-wps-delivery-20260930-8ff053d-v0260-preview1.tar.gz`](./dist-preview-delivery-kit/ai-wps-delivery-20260930-8ff053d-v0260-preview1.tar.gz)，源码提交为 `8ff053d4701cb66c6db3eb76a22bde011cf83962`，SHA-256 为 `c614466375c4e748cca5d12af0d7a78cd049ad3c06c55ae412bc8a1ea658738a`。本候选将 PPT 资料大纲模型等待时限提升至至少 600 秒，保留更长配置并支持取消连接；包含此前模型设置显示和 DOCX 兼容修复。包内插件、麒麟 Python 3.8 后端全量、安装升级及归档审计均通过。真实模型重跑仍未验证，UTM 更新后须从有效安装目录重启 Adapter；状态保持 `candidate` / `manual-pending`。
+当前自动化候选为 [`ai-wps-delivery-20260930-e7ff92b-v0260-preview1.tar.gz`](./dist-preview-delivery-kit/ai-wps-delivery-20260930-e7ff92b-v0260-preview1.tar.gz)，源码提交为 `e7ff92b49158f22597b04d75a4e160468ea2c641`，SHA-256 为 `3120efb9064f591e90c94faf7f3cf06d407e3844688a5fe840b7527ce0a2ba4c`。本候选修复资料大纲的流式接收、模型阶段显示、错误重复请求、取消处理、请求预算及提示词快照一致性和诊断信息。修复源码在原模型与原 80000 Token 配置下已实测约 236 秒一次完成 8 页大纲。包内插件、麒麟后端全量、安装升级及归档审计通过；状态仍为 `candidate` / `manual-pending`，尚未更新 UTM 当前安装。
 
 2026-09-28 清理：已移除今天之前被替代的 18 套旧安装包。保留今天的候选，以及构建或回归需要的 v0.25.3、20260811-v0.23.1 和 v0.25.0 基线。
 

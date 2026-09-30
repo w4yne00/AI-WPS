@@ -1,5 +1,13 @@
 # Codex Handoff - AI-WPS
 
+## 资料大纲完整链路修复交付候选（2026-09-30）
+
+- 当前候选：`dist-preview-delivery-kit/ai-wps-delivery-20260930-e7ff92b-v0260-preview1.tar.gz`；源码 `e7ff92b49158f22597b04d75a4e160468ea2c641`；SHA-256 `3120efb9064f591e90c94faf7f3cf06d407e3844688a5fe840b7527ce0a2ba4c`。包含流式接收、推理阶段显示、请求预算/提示词快照、错误不重复请求、取消与脱敏诊断修复，等待时限未继续加长。
+- 源码核验 353 个输入、装配 291 个文件、包内兼容扫描 98 个 Python 文件；正式插件 525 通过、原型 12 通过且构建成功；麒麟 Python 3.8 后端 1752 通过、55 跳过、0 失败。
+- 首次安装升级检查因 UTM 中 wpp 仍运行而正常中止。用户保存并关闭 WPS 后，对已传输保留的同一份归档重新执行完整生命周期检查，运行、全新安装、历史边界、Preview 升级及旧直连配置迁移均通过。恢复归档时复核 SHA-256，最终归档审计通过后才改为正式候选文件名；未跳过门禁或强制关闭 WPS。
+- 本轮代码、归档及校验文件推送至 `origin/main`。状态为 `candidate` / `manual-pending`，尚未更新 UTM 当前安装；保留用户已有文档修改与旧包删除记录。源码实测生成成功记录见下节，安装后的 WPS 全流程仍需验收。
+
+
 ## PPT 资料大纲全链路超时核查与修复（2026-09-30，源码）
 
 - 现场运行路径有效、代码已含 600 秒修复。任务记录确认单次模型调用持续 600161ms，排队及资料准备耗时为 0，未收到响应头，未进入解析；排除“旧 75 秒代码仍在运行”与解析耗时导致超时。配置为 `glm-5.3-flash`、最大输出 80000 Token、上下文 512000，输入估算 7704 Token。未修改现场配置。
@@ -681,7 +689,7 @@
 
 版本规则号：`AI-WPS-WORD-EXCEL-PPT-0.26.0-preview.1`
 
-`v0.26.0-preview.1` 当前自动化候选为 `dist-preview-delivery-kit/ai-wps-delivery-20260930-8ff053d-v0260-preview1.tar.gz`（SHA-256：`c614466375c4e748cca5d12af0d7a78cd049ad3c06c55ae412bc8a1ea658738a`，源码：`8ff053d4701cb66c6db3eb76a22bde011cf83962`），目标环境回归、归档审计及麒麟安装升级检查通过。包含资料大纲等待时限、接入选择显示与 DOCX 兼容修复；真实 WPS 和模型验收保持 `manual-pending`，历史旧包清理遵循已合并的远端提交。
+`v0.26.0-preview.1` 当前自动化候选为 `dist-preview-delivery-kit/ai-wps-delivery-20260930-e7ff92b-v0260-preview1.tar.gz`（SHA-256：`3120efb9064f591e90c94faf7f3cf06d407e3844688a5fe840b7527ce0a2ba4c`，源码：`e7ff92b49158f22597b04d75a4e160468ea2c641`），目标环境回归、归档审计及麒麟安装升级检查通过。包含资料大纲完整处理链路修复；真实 WPS 安装后验收保持 `manual-pending`。
 
 `v0.25.3-alpha` 是已验收基线：当前唯一自动化候选为 `AI-WPS-P1-WORD-EXCEL-PPT-0.25.3-20260826-d1a346b0d7e1301f74b37e692664fd31085ee050`，源码提交为 `d1a346b0d7e1301f74b37e692664fd31085ee050`，归档为 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260826-d1a346b-v0253.tar.gz`，SHA-256 为 `120a2cfd8decd956224c3702721d85846bdaecf91d71b87b31c0f7be1b258cb7`，目标机验收状态为 `target-accepted`（Issue #59 已完成并关闭）。冻结的 `v0.25.2-alpha` 唯一自动化候选仍为 `AI-WPS-P1-WORD-EXCEL-PPT-0.25.2-20260825-850871c10a17f03c8a58abd02ca58c2f3fc70fc9`，源码提交为 `850871c10a17f03c8a58abd02ca58c2f3fc70fc9`，归档为 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260825-850871c-v0252.tar.gz`，SHA-256 为 `c5d663d1249147104bee66790fea60f5e15675418a51c0c1a7a0fc028a285a92`，自动化状态为 `candidate`。图像语义补充默认开启与视觉关闭降级保持不变。
 
