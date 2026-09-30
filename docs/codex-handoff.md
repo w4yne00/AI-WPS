@@ -1,5 +1,13 @@
 # Codex Handoff - AI-WPS
 
+## 资料大纲模型设置显示修复交付候选（2026-09-30）
+
+- 当前候选：`dist-preview-delivery-kit/ai-wps-delivery-20260930-70a1132-v0260-preview1.tar.gz`；源码 `70a113269563337259ab2266aa83365c39595323`；SHA-256 `d691a0c5d241628e1108868462893603abc05a76bc3e49dead5e28505d0d2f17`。修复资料大纲选项卡接入选择区域隐藏，保留 DOCX 兼容改进。
+- 源码输入 353 个、装配 291 个文件、包内兼容扫描 98 个 Python 文件；正式插件 525 通过、原型 12 通过且构建成功；麒麟 Python 3.8 后端 1736 通过、55 跳过、0 失败。
+- 同一归档通过麒麟运行、全新安装、历史边界、Preview 升级和旧直连配置迁移检查；最终归档审计及 SHA-256 复核通过。
+- 状态为 `candidate` / `manual-pending`。未更新 UTM 当前安装，上一候选 `20260930-f035121` 原样保留；本轮代码、归档及校验文件推送至 `origin/main`。
+
+
 ## PPT 资料大纲接入选择显示修复（2026-09-30，源码）
 
 - 根因：`renderTaskModelSelectionSection` 的任务显示条件仅允许智能总结和结构审查，遗漏已注册的 `ppt.material_outline`，导致资料大纲选项卡中的接入选择区域被隐藏。已补齐条件，沿用原有服务选择、参数加载和保存流程。
@@ -642,7 +650,7 @@
 
 版本规则号：`AI-WPS-WORD-EXCEL-PPT-0.26.0-preview.1`
 
-`v0.26.0-preview.1` 当前自动化候选为 `dist-preview-delivery-kit/ai-wps-delivery-20260930-f035121-v0260-preview1.tar.gz`（SHA-256：`7420aef68c325e29c484705ff78e3aa1715954a025ee24cea3dd9b5dc9e14ea3`，源码：`f03512136ef4661ca3db361b65b9e290e3a6880f`），麒麟完整回归、归档审计和安装升级检查通过。包含 DOCX 模板引用与页码文本框兼容修复；真实 WPS 与模型验收保持 `manual-pending`；上一候选 `20260930-58f13cc` 保留。
+`v0.26.0-preview.1` 当前自动化候选为 `dist-preview-delivery-kit/ai-wps-delivery-20260930-70a1132-v0260-preview1.tar.gz`（SHA-256：`d691a0c5d241628e1108868462893603abc05a76bc3e49dead5e28505d0d2f17`，源码：`70a113269563337259ab2266aa83365c39595323`），目标环境回归、归档审计和麒麟安装升级检查通过。包含资料大纲接入选择显示及 DOCX 兼容修复；真实 WPS 与模型验收保持 `manual-pending`；上一候选 `20260930-f035121` 保留。
 
 `v0.25.3-alpha` 是已验收基线：当前唯一自动化候选为 `AI-WPS-P1-WORD-EXCEL-PPT-0.25.3-20260826-d1a346b0d7e1301f74b37e692664fd31085ee050`，源码提交为 `d1a346b0d7e1301f74b37e692664fd31085ee050`，归档为 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260826-d1a346b-v0253.tar.gz`，SHA-256 为 `120a2cfd8decd956224c3702721d85846bdaecf91d71b87b31c0f7be1b258cb7`，目标机验收状态为 `target-accepted`（Issue #59 已完成并关闭）。冻结的 `v0.25.2-alpha` 唯一自动化候选仍为 `AI-WPS-P1-WORD-EXCEL-PPT-0.25.2-20260825-850871c10a17f03c8a58abd02ca58c2f3fc70fc9`，源码提交为 `850871c10a17f03c8a58abd02ca58c2f3fc70fc9`，归档为 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260825-850871c-v0252.tar.gz`，SHA-256 为 `c5d663d1249147104bee66790fea60f5e15675418a51c0c1a7a0fc028a285a92`，自动化状态为 `candidate`。图像语义补充默认开启与视觉关闭降级保持不变。
 
