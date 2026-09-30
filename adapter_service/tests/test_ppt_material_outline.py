@@ -431,3 +431,26 @@ def test_conflict_preview_and_submit_use_the_same_complete_material(outline_setu
     with pytest.raises(AdapterError) as error:
         coordinator.submit_job({'documentSessionId': 'ppt_test_sess', 'slideCount': 3})
     assert error.value.code == 'MATERIAL_OUTLINE_CONFLICT_UNRESOLVED'
+
+
+@pytest.mark.parametrize('configured,expected', [(75, 600), (900, 900)])
+def test_outline_provider_wait_uses_full_document_budget(configured, expected):
+    from app.core.config import AppSettings
+    from app.services.provider_client import ProviderClient
+    provider = ProviderClient(AppSettings(timeout_seconds=configured))
+    with patch.object(provider, '_post_direct_task', return_value={'answer': 'ok'}) as submit:
+        provider.post_task('ppt.material_outline', 'outline-timeout', {}, '完整材料',
+                           task_auth={'accessMethod': 'direct_model'})
+    assert submit.call_args.args[4] == expected
+
+
+def test_outline_long_wait_can_interrupt_the_model_connection():
+    from contextlib import nullcontext
+    from app.services.provider_client import _open_task_response
+    control = MagicMock()
+    response = object()
+    with patch('app.services.provider_client._cancellable_urlopen', return_value=nullcontext(response)) as opener, \
+         patch('app.services.provider_client.urllib_request.urlopen', side_effect=AssertionError('uncancellable request')):
+        with _open_task_response(object(), 600, 'ppt.material_outline', control) as actual:
+            assert actual is response
+    assert opener.call_args.args[1:] == (600, control)

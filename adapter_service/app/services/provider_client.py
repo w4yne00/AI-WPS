@@ -140,7 +140,7 @@ def _cancellable_urlopen(request, timeout, control):
 
 
 def _open_task_response(request, timeout, task_type, control):
-    if (task_type == "word.material_composer" and control is not None
+    if (task_type in ("word.material_composer", "ppt.material_outline") and control is not None
             and hasattr(control, "set_cancel_callback") and hasattr(control, "clear_cancel_callback")):
         return _cancellable_urlopen(request, timeout, control)
     return urllib_request.urlopen(request, timeout=timeout)
@@ -3804,7 +3804,7 @@ class ProviderClient:
     ) -> Dict:
         resolved_task_auth = task_auth if task_auth is not None else self.resolve_task_auth(task_type)
         timeout = timeout_seconds or self.settings.timeout_seconds
-        if task_type == "word.material_composer":
+        if task_type in ("word.material_composer", "ppt.material_outline"):
             timeout = max(timeout, INTERACTIVE_WRITING_TIMEOUT_SECONDS)
         if str(resolved_task_auth.get("accessMethod", "")) == ACCESS_DIRECT_MODEL:
             if files:
