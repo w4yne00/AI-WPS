@@ -2806,24 +2806,8 @@ class DirectServiceStore:
                 return "available", True, ""
             return "unverified", False, "validation_required"
 
-        catalog = self._model_catalog_state(service)
-        models = catalog.get("models", [])
-        if catalog.get("usableForSelection"):
-            if model_name in models:
-                return "available", True, ""
-            return "unavailable", False, "disappeared"
-        if self._legacy_model_compatible(service, model_name):
-            return "available", True, "legacy_compatible"
-        if catalog.get("status") == "expired":
-            return "expired", False, "cache_expired"
-        if catalog.get("status") == "unavailable" or service.get("modelListInvalidated") or (
-            catalog.get("fetchStatus") == "error"
-            and catalog.get("cacheStatus") != "valid"
-        ):
-            return "unavailable", False, "catalog_unavailable"
-        if catalog.get("status") == "empty":
-            return "unavailable", False, "catalog_empty"
-        return "unavailable", False, "catalog_unavailable"
+        # Saved model id is called as stored; catalog state only assists selection.
+        return "available", True, ""
 
     def _ensure_task_model_ready(
         self,
@@ -2859,24 +2843,6 @@ class DirectServiceStore:
             raise DirectServiceError(
                 "DIRECT_SERVICE_CUSTOM_MODEL_NOT_ALLOWED",
                 "模型目录当前可用时不能使用高级手填模型。",
-            )
-        if availability == "unavailable" and reason == "disappeared":
-            raise DirectServiceError(
-                "DIRECT_SERVICE_MODEL_DISAPPEARED",
-                f"所选模型 {effective_model} 已从服务目录中移除，请重新选择模型。",
-            )
-        if availability == "expired":
-            raise DirectServiceError(
-                "DIRECT_SERVICE_MODEL_CATALOG_EXPIRED",
-                "模型目录缓存已过期，请先刷新目录后再提交任务。",
-            )
-        if availability == "unavailable" and reason in {
-            "catalog_unavailable",
-            "catalog_empty",
-        }:
-            raise DirectServiceError(
-                "DIRECT_SERVICE_MODEL_CATALOG_UNAVAILABLE",
-                "模型目录当前不可用，请刷新目录或先验证高级手填模型。",
             )
 
     @staticmethod

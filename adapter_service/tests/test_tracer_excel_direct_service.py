@@ -222,8 +222,8 @@ class TracerExcelDirectServiceTests(unittest.TestCase):
         self.assertEqual(auth["apiKey"], "sk-test-secret-42")
         self.assertEqual(auth["modelConfigurationName"], "直连服务A")
 
-    def test_model_disappeared_from_catalog_blocks_new_task(self) -> None:
-        """Requirement: If model disappears from new catalog, new task is blocked."""
+    def test_model_missing_from_new_catalog_still_uses_saved_model(self) -> None:
+        """A refreshed catalog that omits the saved model does not clear it or block the call."""
         service = self.direct_store.create_service(
             name="变更目录服务",
             service_base_url="https://api.openai.com/v1",
@@ -232,7 +232,6 @@ class TracerExcelDirectServiceTests(unittest.TestCase):
         self.direct_store.replace_api_key(service["id"], "sk-test", expected_revision=1)
         self.direct_store.update_model_list(service["id"], ["gpt-4o", "gpt-4o-mini"], expected_revision=2)
 
-        # Bind excel.analysis with gpt-4o
         self.direct_store.update_task_model_selection(
             "excel.analysis",
             service_id=service["id"],
@@ -244,17 +243,11 @@ class TracerExcelDirectServiceTests(unittest.TestCase):
         client = ProviderClient(model_configuration_store=self.model_store)
         client.direct_service_store = self.direct_store
 
-        # Initially valid
-        auth = client.resolve_task_auth("excel.analysis")
-        self.assertEqual(auth["modelName"], "gpt-4o")
-
-        # Now catalog refreshes and gpt-4o is gone!
         self.direct_store.update_model_list(service["id"], ["gpt-4o-mini"], expected_revision=3)
 
-        # Resolving task auth now blocks with DIRECT_SERVICE_MODEL_DISAPPEARED
-        with self.assertRaises(AdapterError) as ctx:
-            client.resolve_task_auth("excel.analysis")
-        self.assertEqual(ctx.exception.code, "DIRECT_SERVICE_MODEL_DISAPPEARED")
+        auth = client.resolve_task_auth("excel.analysis")
+        self.assertEqual(auth["modelName"], "gpt-4o")
+        self.assertEqual(self.direct_store.get_service(service["id"])["defaultModel"], "gpt-4o")
 
     def test_end_to_end_excel_analysis_with_shared_direct_service(self) -> None:
         """Requirement: Full excel.analysis call runs against OpenAI-compatible chat completions."""

@@ -943,13 +943,16 @@ class DirectServiceMigrationTests(unittest.TestCase):
             DirectServiceError("DIRECT_SERVICE_AUTH_FAILED", "API Key 认证失败。"),
         )
         after = self.store.get_task_model_selection("word.smart_write")
-        self.assertNotEqual(after.get("modelUnavailableReason"), "legacy_compatible")
-        self.assertNotEqual(after.get("modelAvailability"), "available")
-        self.assertFalse(after.get("modelAvailable"))
+        self.assertEqual(after["modelName"], "glm-5.2")
+        self.assertTrue(after["modelAvailable"])
+        self.assertEqual(
+            self.store.get_service(service_id)["modelCatalog"]["lastError"]["code"],
+            "DIRECT_SERVICE_AUTH_FAILED",
+        )
         client = ProviderClient(direct_service_store=self.store)
-        with self.assertRaises(AdapterError) as cm:
-            client.resolve_task_auth("word.smart_write")
-        self.assertEqual(cm.exception.code, "DIRECT_SERVICE_MODEL_CATALOG_UNAVAILABLE")
+        auth = client.resolve_task_auth("word.smart_write")
+        self.assertEqual(auth["modelName"], "glm-5.2")
+        self.assertEqual(auth["apiKey"], "sk-bad")
 
     def test_legacy_compatibility_requires_valid_expiring_proof(self):
         self._seed_legacy_config(
