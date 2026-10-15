@@ -452,6 +452,7 @@
         sourceKeyPoints: page.sourceKeyPoints || page.keyPoints,
         keyPoints: page.keyPoints
       }, "请精简到模板容量内，不要截断或丢弃已确认事实。", getSessionId(), (getConfirmedOutline() || {}).userFacts).then(function (data) {
+        if (state.pages.indexOf(page) < 0) return null;
         var result = data.result || {};
         page.title = result.title || page.title;
         page.keyPoints = result.keyPoints || page.keyPoints;
@@ -463,6 +464,9 @@
         state.elapsedMs += Number(data.elapsedMs) || 0;
         notify(state);
         return page;
+      }).catch(function (err) {
+        if (state.pages.indexOf(page) < 0) return null;
+        throw err;
       });
     }
 

@@ -6290,9 +6290,14 @@
           } catch (err) { setStatus(err.message || String(err)); }
           return;
         }
-        ctrl.simplifyPage(pageId).then(function () {
+        var docSession = helpers.getDocumentSessionId(getActivePresentation());
+        ctrl.simplifyPage(pageId).then(function (page) {
+          if (!page || helpers.getDocumentSessionId(getActivePresentation()) !== docSession) return;
           setStatus("已按精简要求重新生成该页，请重新确认。");
-        }).catch(function (err) { setStatus(err.message || String(err)); });
+        }).catch(function (err) {
+          if (helpers.getDocumentSessionId(getActivePresentation()) !== docSession) return;
+          setStatus(err.message || String(err));
+        });
       });
     }
     byId("task-model-config-trigger").addEventListener("click", handleTaskModelConfigTriggerClick);

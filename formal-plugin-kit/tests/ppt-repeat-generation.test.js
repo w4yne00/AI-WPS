@@ -135,3 +135,26 @@ test("summary submission retains its originating session when the pane changes d
   assert.equal(completedSession, "doc-a");
   assert.equal(h.state.saved.documentSessionId, "doc-a");
 });
+
+for (const outcome of ["stale", "completed", "failed"]) {
+  test("旧精简" + outcome + "不能覆盖当前任务窗格提示", async () => {
+    const h = harness(), d = deferred();
+    let session = "doc-a";
+    Object.assign(h.ctx, {
+      ensureTemplateDeck: () => ({ simplifyPage: () => d.promise }),
+      getActivePresentation: () => ({})
+    });
+    h.ctx.helpers.getDocumentSessionId = () => session;
+    const marker = 'byId("ppt-template-deck-preview").addEventListener("click", function (event) {';
+    const start = source.indexOf(marker) + marker.length;
+    const end = source.indexOf('\n      });\n    }', start);
+    const click = vm.runInNewContext('(function (event) {' + source.slice(start, end) + '})', h.ctx);
+    click({ target: { getAttribute: name => name === "data-deck-action" ? "simplify" : "page-a" } });
+    if (outcome !== "stale") session = "doc-b";
+    h.state.status = "当前任务已确认";
+    if (outcome === "failed") d.reject(new Error("A精简失败"));
+    else d.resolve(outcome === "stale" ? null : { title: "A精简结果" });
+    await flush();
+    assert.equal(h.state.status, "当前任务已确认");
+  });
+}

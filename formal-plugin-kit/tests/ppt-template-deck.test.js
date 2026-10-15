@@ -606,3 +606,48 @@ test("整套第二页失败不能保留或确认不完整结果", async () => {
   assert.equal(h.ctrl.getState().contentConfirmed, false);
   assert.throws(() => h.ctrl.confirmContent(), /先生成/);
 });
+
+for (const outcome of ["completed", "failed", "rejected"]) {
+  test("旧精简" + outcome + "不影响后来整套结果的确认与追加", async () => {
+    const h = harness();
+    await h.ctrl.startGenerate();
+    const page = h.ctrl.getState().pages.find(page => page.pageRole === "content");
+    const jobs = new Map();
+    let release;
+    h.requestHandler = (url, body) => {
+      if (body) {
+        jobs.set(body.clientJobId, body);
+        return Promise.resolve({ success: true, data: { jobId: body.clientJobId } });
+      }
+      const id = decodeURIComponent(url.split("/jobs/")[1].split("?")[0]);
+      const job = jobs.get(id);
+      if (/精简/.test(job.instruction)) return new Promise((resolve, reject) => {
+        release = () => outcome === "rejected"
+          ? reject(new Error("旧精简网络错误"))
+          : resolve({ success: true, data: {
+            status: outcome, elapsedMs: 99,
+            result: { title: "旧精简结果", keyPoints: ["旧事实"] },
+            error: { message: "旧精简失败" }
+          } });
+      });
+      return Promise.resolve({ success: true, data: {
+        status: "completed", elapsedMs: 15,
+        result: { pageRole: job.pageRole, title: job.outlineTitle, keyPoints: job.outlineKeyPoints }
+      } });
+    };
+    const old = h.ctrl.simplifyPage(page.pageId);
+    await new Promise(resolve => setImmediate(resolve));
+    await h.ctrl.startGenerate();
+    h.ctrl.confirmContent();
+    const renders = h.views.length;
+    release();
+    assert.equal(await old, null);
+    const state = h.ctrl.getState();
+    assert.equal(state.contentConfirmed, true);
+    assert.equal(state.elapsedMs, 60);
+    assert.equal(state.pages[3].title, "分层设计");
+    assert.equal(state.error, null);
+    assert.equal(h.views.length, renders);
+    assert.equal(h.ctrl.append(h.host.app).completed, true);
+  });
+}
