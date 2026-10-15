@@ -506,7 +506,7 @@
       notify(s);
       try {
         var res = await request("/excel/material-ledger/jobs", payload, { method: "POST" });
-        if (s.clientJobId !== payload.clientJobId) return;
+        if (s.clientJobId !== payload.clientJobId || s.jobId !== payload.clientJobId) return;
         var job = res && res.data;
         if (!job || !job.jobId) throw new Error("未返回任务编号，请恢复查询。");
         s.jobId = job.jobId;
@@ -514,7 +514,7 @@
         finishJob(s, job);
         if (s.busy) pollJob(s.jobId, s.documentSessionId);
       } catch (err) {
-        if (s.clientJobId !== payload.clientJobId) return;
+        if (s.clientJobId !== payload.clientJobId || s.jobId !== payload.clientJobId) return;
         s.status = "interrupted";
         s.phase = "";
         s.busy = false;

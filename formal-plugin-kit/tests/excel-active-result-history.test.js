@@ -1,4 +1,5 @@
 const assert = require("assert");
+const { test } = require("node:test");
 const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
@@ -629,51 +630,6 @@ async function testMaterialLedgerIsolationAndLateResponse() {
     "result-output must display error message on failure"
   );
 
-  // 4. Late POST response dropping in material-ledger.js
-  const context = {
-    window: {},
-    console,
-    Promise,
-    Date,
-    Math,
-    Array,
-    Object,
-    setTimeout,
-    clearTimeout
-  };
-  vm.runInNewContext(materialLedgerSource, context);
-  let resolvePost;
-  const ledger = context.createMaterialLedger({
-    getSessionId: () => "sess-late",
-    request: (url, body) => {
-      if (url === "/excel/material-ledger/jobs" && body) {
-        return new Promise((resolve) => {
-          resolvePost = () => resolve({
-            data: {
-              jobId: body.clientJobId,
-              status: "completed",
-              rows: [{ values: { "工作事项": "延迟到达的旧数据" } }]
-            }
-          });
-        });
-      }
-      return Promise.resolve({ data: {} });
-    }
-  });
-
-  // Start first task
-  const p1 = ledger.generate();
-  // While first task is waiting for POST resolution, simulate user cancelling
-  ledger.cancel();
-  if (resolvePost) {
-    resolvePost();
-  }
-  await p1;
-  assert.strictEqual(
-    ledger.getState().result,
-    null,
-    "Delayed POST response after cancel must be dropped and not populate result"
-  );
 }
 
 // ==========================================
@@ -727,18 +683,78 @@ function testSourceContractInvariants() {
   );
 }
 
-async function runAll() {
-  testActiveTaskSlotGuard();
-  testConsecutiveClickGuarding();
-  await testRegenerateCreatesNewJobEvenWithIdenticalInput();
-  await testNetworkRetryVsRegenerate();
-  await testValidationFailurePreservesActiveResult();
-  await testMaterialLedgerIsolationAndLateResponse();
-  testSourceContractInvariants();
-  console.log("All Excel active result and history tests passed!");
+test("active task slots are isolated by task and session", testActiveTaskSlotGuard);
+test("rapid consecutive clicks submit only once", testConsecutiveClickGuarding);
+test("identical input generates a new task after completion", testRegenerateCreatesNewJobEvenWithIdenticalInput);
+test("an unconfirmed submission retry reuses the original task", testNetworkRetryVsRegenerate);
+test("local validation failure preserves the active result", testValidationFailurePreservesActiveResult);
+test("ledger progress and errors replace the old result", testMaterialLedgerIsolationAndLateResponse);
+test("existing source contract invariants", testSourceContractInvariants);
+
+for (const task of [
+  { name: "analysis", type: "excel.analysis", action: "runExcelAnalysisAction", mode: "excelAnalysis" },
+  { name: "formula", type: "excel.formula_assistant", action: "runExcelFormulaAction", mode: "excelFormulaAssistant" }
+]) {
+  for (const change of ["mode", "workbook"]) {
+    test(`${task.name} releases its slot when ${change} changes before extraction`, () => {
+      const h = createBaseTestContext({ state: { currentMode: task.mode } });
+      h.ctx.getCurrentExcelDocumentSession = () => h.ctx.defaultWorkbook.__ai_wps_doc_session__;
+      h.ctx.isExcelTaskVisible = vm.runInNewContext(`(${functionSource("isExcelTaskVisible")})`, h.ctx);
+      h.byId("excel-formula-requirement").value = "计算总额";
+      const run = vm.runInNewContext(`(${functionSource(task.action)})`, h.ctx);
+      run();
+      assert.strictEqual(helpers.isTaskSlotBusy(h.state.activeTaskSlots, "et", task.type, "doc_session_1"), true);
+      if (change === "mode") h.state.currentMode = "settings";
+      else h.ctx.defaultWorkbook.__ai_wps_doc_session__ = "doc_session_2";
+      helpers.claimTaskSlot(h.state.activeTaskSlots, "et", task.type, "doc_session_2", "other-job");
+      h.timeouts[0].fn();
+      assert.strictEqual(h.requests.length, 0, "an abandoned extraction must not submit");
+      assert.strictEqual(helpers.isTaskSlotBusy(h.state.activeTaskSlots, "et", task.type, "doc_session_1"), false);
+      assert.strictEqual(helpers.isTaskSlotBusy(h.state.activeTaskSlots, "et", task.type, "doc_session_2"), true);
+      h.state.currentMode = task.mode;
+      h.ctx.defaultWorkbook.__ai_wps_doc_session__ = "doc_session_1";
+      run();
+      assert.strictEqual(h.timeouts.length, 2, "returning to the task must allow another generation");
+    });
+  }
 }
 
-runAll().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+for (const response of ["running", "completed", "error"]) {
+  test(`a late ledger POST ${response} cannot replace confirmed cancellation`, { timeout: 2000 }, async () => {
+    const context = { window: {}, console, setTimeout, clearTimeout };
+    vm.runInNewContext(materialLedgerSource, context);
+    let settlePost;
+    let markPostStarted;
+    const postStarted = new Promise(resolve => { markPostStarted = resolve; });
+    const scheduled = [];
+    const ledger = context.createMaterialLedger({
+      getSessionId: () => "sess-late",
+      schedule: fn => { scheduled.push(fn); },
+      request: (url, body) => {
+        if (url === "/excel/material-ledger/jobs") {
+          return new Promise((resolve, reject) => {
+            settlePost = () => {
+              if (response === "error") reject(new Error("迟到的网络错误"));
+              else resolve({ data: { jobId: body.clientJobId, status: response,
+                result: { rows: [{ values: { "工作事项": "旧任务结果" } }] } } });
+            };
+            markPostStarted();
+          });
+        }
+        if (url.endsWith("/cancel")) return Promise.resolve({ data: { status: "cancelled" } });
+        return Promise.resolve({ data: { conflicts: [] } });
+      }
+    });
+    const pending = ledger.generate();
+    await postStarted;
+    await ledger.cancel();
+    assert.strictEqual(ledger.getState().status, "cancelled");
+    settlePost();
+    await pending;
+    assert.strictEqual(ledger.getState().status, "cancelled");
+    assert.strictEqual(ledger.getState().busy, false);
+    assert.strictEqual(ledger.getState().result, null);
+    assert.strictEqual(ledger.getState().error, "");
+    assert.strictEqual(scheduled.length, 0, "late submission must not restart polling");
+  });
+}

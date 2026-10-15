@@ -4121,7 +4121,13 @@
       : null;
 
     setTimeout(function () {
-      if (!isCurrentVisible()) { return; }
+      if (!isCurrentVisible()) {
+        if (helpers.releaseTaskSlot) {
+          helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.analysis", docSessionId, clientJobId);
+        }
+        setExcelTaskBusy(false, docSessionId, "excel.analysis");
+        return;
+      }
       var extractionStart = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
       try {
         state.latestExcelPayload = extractExcelRange();
@@ -4683,7 +4689,13 @@
       : null;
 
     setTimeout(function () {
-      if (!isCurrentVisible()) { return; }
+      if (!isCurrentVisible()) {
+        if (helpers.releaseTaskSlot) {
+          helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.formula_assistant", docSessionId, clientJobId);
+        }
+        setExcelTaskBusy(false, docSessionId, "excel.formula_assistant");
+        return;
+      }
       var payload;
       var extractionStart = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
       try {
