@@ -5325,7 +5325,9 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 elif action_type == "custom-models" and action_target:
                     model_name = unquote(action_target)
-                    service = store.delete_custom_model(service_id, model_name)
+                    service = store.delete_custom_model(
+                        service_id, model_name, expected_revision=expected_revision
+                    )
                     self._write(
                         200,
                         envelope(

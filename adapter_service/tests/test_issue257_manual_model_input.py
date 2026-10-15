@@ -93,6 +93,38 @@ class ManualModelInputStoreTests(unittest.TestCase):
         self.assertEqual(excel_sel.get("modelName"), "custom-m2")
         self.assertTrue(excel_sel.get("customModel"))
 
+    def test_deleting_default_custom_model_rejects_stale_service_update(self) -> None:
+        self.store.add_custom_model(self.service_id, "custom-default")
+        edited = self.store.update_service(
+            self.service_id,
+            name="Test Service",
+            expected_revision=1,
+            service_base_url="https://api.example.com/v1",
+            default_model="custom-default",
+        )
+
+        deleted = self.store.delete_custom_model(self.service_id, "custom-default")
+
+        with self.assertRaises(DirectServiceError) as ctx:
+            self.store.update_service(
+                self.service_id,
+                name="Stale Editor",
+                expected_revision=edited["revision"],
+                service_base_url="https://api.example.com/v1",
+                default_model="custom-default",
+            )
+        self.assertEqual(ctx.exception.code, "DIRECT_SERVICE_REVISION_CONFLICT")
+        self.assertEqual(deleted["revision"], 3)
+        self.assertEqual(self.store.get_service(self.service_id)["defaultModel"], "")
+        refreshed = self.store.update_service(
+            self.service_id,
+            name="Refreshed Editor",
+            expected_revision=deleted["revision"],
+            service_base_url="https://api.example.com/v1",
+            default_model="",
+        )
+        self.assertEqual(refreshed["revision"], 4)
+
     def test_custom_model_allowed_when_catalog_is_usable(self) -> None:
         # Mock catalog as usableForSelection
         svc = self.store.get_service(self.service_id)
@@ -244,6 +276,73 @@ class ManualModelInputApiAndClientTests(unittest.TestCase):
         )
         self.assertEqual(status, 200, body)
         self.assertNotIn("standalone-custom-1", body["data"]["directService"]["customModels"])
+
+    def test_both_runtimes_delete_custom_model_with_encoded_slash(self) -> None:
+        from fastapi.testclient import TestClient
+        from app.main import app
+
+        path = f"/provider/direct-services/{self.service_id}/custom-models/org%2Fmodel"
+        for runtime, previous_revision, deleted_revision in (("fastapi", 1, 3), ("standalone", 3, 5)):
+            with self.subTest(runtime=runtime):
+                self.store.add_custom_model(self.service_id, "org/model")
+                self.store.add_custom_model(self.service_id, "keep-model")
+                self.store.update_service(
+                    self.service_id,
+                    name="API Test Service",
+                    expected_revision=previous_revision,
+                    service_base_url="https://api.example.com/v1",
+                    default_model="org/model",
+                )
+                if runtime == "fastapi":
+                    with patch("app.api.provider.get_direct_service_store", return_value=self.store):
+                        response = TestClient(app).delete(path)
+                    status, body = response.status_code, response.json()
+                else:
+                    status, body = self._invoke_standalone("DELETE", path)
+                self.assertEqual(status, 200, body)
+                self.assertEqual(body["data"]["directService"]["customModels"], ["keep-model"])
+                self.assertEqual(body["data"]["directService"]["defaultModel"], "")
+                self.assertEqual(body["data"]["directService"]["revision"], deleted_revision)
+                self.assertEqual(self.store.get_service(self.service_id)["customModels"], ["keep-model"])
+
+    def test_fastapi_custom_model_delete_rejects_stale_revision(self) -> None:
+        self._assert_custom_model_delete_rejects_stale_revision("fastapi")
+
+    def test_standalone_custom_model_delete_rejects_stale_revision(self) -> None:
+        self._assert_custom_model_delete_rejects_stale_revision("standalone")
+
+    def _assert_custom_model_delete_rejects_stale_revision(self, runtime: str) -> None:
+        from fastapi.testclient import TestClient
+        from app.main import app
+
+        self.store.add_custom_model(self.service_id, "org/model")
+        other_host = DirectServiceStore(config_path=self.config_path, key_dir=self.key_dir)
+        updated = other_host.update_service(
+            self.service_id,
+            name="Other Host Service",
+            expected_revision=1,
+            service_base_url="https://other-host.example.com/v1",
+            default_model="org/model",
+        )
+        path = f"/provider/direct-services/{self.service_id}/custom-models/org%2Fmodel"
+        for revision, expected_status in ((1, 409), (2, 200)):
+            request_path = f"{path}?expectedRevision={revision}"
+            if runtime == "fastapi":
+                with patch("app.api.provider.get_direct_service_store", return_value=self.store):
+                    response = TestClient(app).delete(request_path)
+                status, body = response.status_code, response.json()
+            else:
+                status, body = self._invoke_standalone("DELETE", request_path)
+            self.assertEqual(status, expected_status, body)
+            if revision == 1:
+                self.assertEqual(other_host.get_service(self.service_id), updated)
+            else:
+                deleted = body["data"]["directService"]
+                self.assertEqual(deleted["revision"], 3)
+                self.assertEqual(deleted["customModels"], [])
+                self.assertEqual(deleted["defaultModel"], "")
+                self.assertEqual(deleted["name"], "Other Host Service")
+                self.assertEqual(deleted["serviceBaseUrl"], "https://other-host.example.com/v1")
 
     def test_provider_client_executes_unverified_custom_model(self) -> None:
         from app.core.config import AppSettings

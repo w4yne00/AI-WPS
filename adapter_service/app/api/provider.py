@@ -935,13 +935,15 @@ def add_direct_service_custom_model(
     }
 
 
-@router.delete("/provider/direct-services/{service_id}/custom-models/{model_name}")
+@router.delete("/provider/direct-services/{service_id}/custom-models/{model_name:path}")
 def delete_direct_service_custom_model(
-    service_id: str, model_name: str
+    service_id: str,
+    model_name: str,
+    expected_revision: Optional[int] = Query(default=None, alias="expectedRevision"),
 ) -> dict:
     try:
         service = get_direct_service_store().delete_custom_model(
-            service_id, model_name
+            service_id, model_name, expected_revision=expected_revision
         )
     except DirectServiceError as exc:
         _raise_direct_service_error(exc)

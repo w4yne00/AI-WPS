@@ -113,8 +113,10 @@
      - 请求体：`{"modelName": "custom-model-id"}`；
      - 行为：校验模型名非空有效后，将模型增量追加至该服务的 `customModels`，返回更新后的服务概要及模型列表。
    - `DELETE /provider/direct-services/{service_id}/custom-models/{model_name}`：
+     - 模型 ID 可含斜杠，前端编码后传入；支持可选查询参数 `expectedRevision`，三宿主删除时传入已加载的服务版本，过期版本返回 409 且不修改配置；未传参数的旧调用保持兼容。
      - 行为：从 `customModels` 移除指定模型；
      - **平滑重置级联**：若该服务的 `defaultModel == model_name`，自动将其清空为 `""`；同时扫描所有引用了 `(service_id, model_name)` 且 `customModel == True` 的 `taskModelSelections`，平滑重置其 `modelName = ""`、`customModel = False`、`customModelValidated = False`；返回更新后的状态。
+     - 清空默认模型时递增服务版本，成功响应返回最新版本；当前操作的编辑器同步该版本，其他宿主的旧编辑器继续受现有版本冲突保护。
 2. **解除目录与手填互斥限制**：
    - 移除 `DIRECT_SERVICE_CUSTOM_MODEL_NOT_ALLOWED` 阻断逻辑：无论 `catalog.get("usableForSelection")` 为 True 还是 False，均允许保存和选用手填模型；
    - 移除 `DIRECT_SERVICE_CUSTOM_MODEL_UNVERIFIED` 在保存配置或发起常规任务时的阻断限制：未测试模型可以正常设为当前配置并执行任务。

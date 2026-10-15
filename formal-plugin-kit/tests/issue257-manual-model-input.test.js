@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert");
 const fs = require("node:fs");
 const path = require("node:path");
+const vm = require("node:vm");
 
 const { wordRoot, etRoot, pptRoot } = require("./support/plugin-roots");
 
@@ -16,6 +17,109 @@ for (const host of hosts) {
   const css = fs.readFileSync(path.join(host.root, "taskpane.css"), "utf8");
   const js = fs.readFileSync(path.join(host.root, "taskpane.js"), "utf8");
   const helpers = require(path.join(host.root, "taskpane-helpers.js"));
+
+  function pane() {
+    const taskType = { Word: "word.smart_write", Excel: "excel.analysis", PPT: "ppt.slide_assistant" }[host.name];
+    const service = { id: "direct_svc_test", name: "测试服务", serviceBaseUrl: "https://api.example.com/v1", keyConfigured: true,
+      defaultModel: "catalog-model", modelList: ["catalog-model"], customModels: ["org/model"], revision: 1 };
+    const state = { directServices: [service], directServiceOperationId: 0, workflowProfileMutationBusy: false,
+      workflowTaskType: taskType, taskModelSelections: {}, taskApiKeys: {}, workflowProfileSelections: {},
+      directServiceEditor: { open: true, mode: "edit", serviceId: service.id, revision: 1 } };
+    const nodes = new Map();
+    const node = id => {
+      if (!nodes.has(id)) nodes.set(id, { value: "", innerHTML: "", textContent: "", hidden: false,
+        querySelectorAll() { return []; }, focus() {} });
+      return nodes.get(id);
+    };
+    node(host.prefix + "-direct-service-select").value = service.id;
+    node(host.prefix + "-model-select").value = "org/model";
+    node("direct-service-name").value = service.name;
+    node("direct-service-url").value = service.serviceBaseUrl;
+    node("direct-service-default-model").value = service.defaultModel;
+    const calls = [];
+    const context = { state, helpers, byId: node, TASK_API_KEY_DEFS: [], EXCEL_FORMULA_WORKFLOW_TASK_TYPE: "excel.formula_assistant",
+      EXCEL_SMART_FILL_WORKFLOW_TASK_TYPE: "excel.smart_fill", getSettingsWorkflowTaskType: () => taskType,
+      findDirectService: id => state.directServices.find(svc => svc.id === id),
+      escapeWorkflowText: helpers.escapeHtml, escaped: helpers.escapeHtml,
+      setWorkflowProfileMutationBusy: value => { state.workflowProfileMutationBusy = value; },
+      setWorkflowMutationBusy: value => { state.workflowProfileMutationBusy = value; },
+      setStatus() {}, describeFetchError: error => error.message, closeDirectServiceEditor() {},
+      loadWorkflowProfiles: async () => {}, loadWorkflowProfileForTask: async () => {}, loadProfiles: async () => {},
+      loadDirectServices: async () => {},
+      request: async (url, payload, options) => {
+        calls.push({ url, payload, options });
+        return { data: { taskModelSelection: payload && payload.taskModelSelection,
+          directService: Object.assign({}, service, { defaultModel: "", customModels: [], revision: 2 }) } };
+      } };
+    for (const name of ["getTaskModelSelectionDraft", "saveTaskModelSelection", "handleTaskDirectServiceSelectChange",
+      "saveDirectServiceEditor", "renderCustomModelsList", "renderDirectServiceDefaultModelOptions", "syncDirectServiceInMemory", "deleteCustomModel"]) {
+      const start = js.indexOf("  function " + name + "(");
+      assert.notStrictEqual(start, -1, name);
+      const end = js.indexOf("\n  function ", start + 3);
+      context[name] = vm.runInNewContext("(" + js.slice(start, end < 0 ? js.length : end) + ")", context);
+    }
+    return { ...context, node, service, taskType, calls };
+  }
+
+  test(`${host.name} saves an untested manual task model without a validation request`, async () => {
+    const p = pane();
+    await p.saveTaskModelSelection();
+    assert.strictEqual(p.calls.length, 1, p.node(host.prefix + "-model-validation-status").textContent);
+    assert.strictEqual(p.calls[0].url, "/provider/direct-services/direct_svc_test/activate");
+    assert.strictEqual(p.calls[0].payload.taskModelSelection.modelName, "org/model");
+    assert.strictEqual(p.calls[0].payload.taskModelSelection.customModel, true);
+    assert.notStrictEqual(p.calls[0].payload.taskModelSelection.customModelValidated, true);
+  });
+
+  test(`${host.name} can switch a saved manual task model back to default inheritance`, async () => {
+    const p = pane();
+    p.state.taskModelSelections[p.taskType] = { serviceId: p.service.id, modelName: "org/model", customModel: true };
+    p.node(host.prefix + "-model-select").value = "";
+    await p.saveTaskModelSelection();
+    assert.strictEqual(p.calls.length, 1, p.node(host.prefix + "-model-validation-status").textContent);
+    assert.strictEqual(p.calls[0].payload.taskModelSelection.modelName, "");
+    assert.strictEqual(p.calls[0].payload.taskModelSelection.customModel, false);
+  });
+
+  test(`${host.name} service switch keeps manual entry and the chosen service's saved models`, () => {
+    const p = pane();
+    p.service.modelList = [];
+    p.handleTaskDirectServiceSelectChange();
+    assert.ok(p.node(host.prefix + "-model-select").innerHTML.includes('value="__manual__"'));
+    assert.ok(p.node(host.prefix + "-model-select").innerHTML.includes('value="org/model"'));
+    assert.ok(p.node(host.prefix + "-custom-models-list").innerHTML.includes("org/model"));
+  });
+
+  test(`${host.name} cannot save the management entry as a default model`, async () => {
+    const p = pane();
+    p.node("direct-service-default-model").value = "__manual__";
+    await p.saveDirectServiceEditor();
+    assert.strictEqual(p.calls.length, 0);
+    assert.ok(p.node("direct-service-editor-error").textContent.includes("默认模型"));
+    assert.strictEqual(p.state.directServiceEditor.open, true);
+  });
+
+  test(`${host.name} opening task model management does not clear a saved override`, async () => {
+    const p = pane();
+    p.state.taskModelSelections[p.taskType] = { serviceId: p.service.id, modelName: "org/model", customModel: true };
+    p.node(host.prefix + "-model-select").value = "__manual__";
+    await p.saveTaskModelSelection();
+    assert.strictEqual(p.calls.length, 0);
+    assert.strictEqual(p.state.taskModelSelections[p.taskType].modelName, "org/model");
+    assert.ok(p.node(host.prefix + "-model-validation-status").textContent.includes("模型"));
+  });
+
+  test(`${host.name} deletion uses the returned revision for the next editor save`, async () => {
+    const p = pane();
+    p.service.defaultModel = "org/model";
+    p.node("direct-service-default-model").value = "org/model";
+    p.deleteCustomModel(p.service.id, "org/model", "direct-service");
+    for (let i = 0; i < 8; i++) await Promise.resolve();
+    assert.strictEqual(p.calls[0].url, "/provider/direct-services/direct_svc_test/custom-models/org%2Fmodel?expectedRevision=1");
+    await p.saveDirectServiceEditor();
+    assert.strictEqual(p.calls[1].payload.expectedRevision, 2);
+    assert.strictEqual(p.calls[1].payload.defaultModel, "");
+  });
 
   test(`${host.name} taskpane markup contains custom models panel containers for default and task models`, () => {
     assert.ok(html.includes('id="direct-service-custom-models-panel"'), `missing #direct-service-custom-models-panel in ${host.name}`);

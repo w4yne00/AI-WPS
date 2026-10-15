@@ -4312,14 +4312,19 @@
   function deleteCustomModel(serviceId, model, prefix) {
     var svc = findDirectService(serviceId);
     if (!svc) return;
+    var revision = svc.revision;
     if (typeof setWorkflowProfileMutationBusy === "function") setWorkflowProfileMutationBusy(true);
-    request("/provider/direct-services/" + encodeURIComponent(serviceId) + "/custom-models/" + encodeURIComponent(model), null, {
+    request("/provider/direct-services/" + encodeURIComponent(serviceId) + "/custom-models/" + encodeURIComponent(model) + "?expectedRevision=" + encodeURIComponent(revision), null, {
       method: "DELETE"
     }).then(function (body) {
       if (typeof setWorkflowProfileMutationBusy === "function") setWorkflowProfileMutationBusy(false);
       var updatedSvc = (body && body.data && body.data.directService) || null;
       if (updatedSvc) {
         syncDirectServiceInMemory(updatedSvc);
+        if (state.directServiceEditor && state.directServiceEditor.open &&
+            state.directServiceEditor.serviceId === serviceId && state.directServiceEditor.revision === revision) {
+          state.directServiceEditor.revision = updatedSvc.revision;
+        }
         svc = updatedSvc;
       } else if (svc.customModels) {
         var idx = svc.customModels.indexOf(model);
@@ -4500,6 +4505,10 @@
     var url = (urlInput && urlInput.value || "").trim();
     var key = (keyInput && keyInput.value || "").trim();
     var defaultModel = (defaultModelInput && defaultModelInput.value || "").trim();
+    if (defaultModel === "__manual__") {
+      if (errorBox) errorBox.textContent = "请先选择默认模型，或选择“不设置默认模型”，再保存。";
+      return;
+    }
 
     var draft = {
       name: name,
@@ -5046,13 +5055,13 @@
       : { usableForSelection: Boolean(svc && svc.modelList && svc.modelList.length), manualModelAllowed: true };
     var modelList = catalog.usableForSelection ? catalog.models : [];
     var defaultModel = (svc && svc.defaultModel) || "";
-    var modelOptionsHtml = ['<option value="">继承服务默认模型 (' + (escapeWorkflowText(defaultModel) || "未设置") + ')</option>'];
-    modelList.forEach(function (m) {
-      modelOptionsHtml.push('<option value="' + escapeWorkflowText(m) + '">' + escapeWorkflowText(m) + '</option>');
+    helpers.renderModelOptionsWithCustom(modelSelect, modelList, (svc && svc.customModels) || [], "", false, escapeWorkflowText(defaultModel) || "未设置");
+    renderCustomModelsList("ppt-task", svc, "", function chooseCustomModel(chosenModel) {
+      if (modelSelect) modelSelect.value = chosenModel;
+      renderCustomModelsList("ppt-task", svc, chosenModel, chooseCustomModel);
     });
-    if (modelSelect) {
-      modelSelect.innerHTML = modelOptionsHtml.join("");
-    }
+    var panel = byId("ppt-task-custom-models-panel");
+    if (panel) panel.hidden = true;
     if (statusNode) {
       statusNode.textContent = catalog.fetchStatus === "error" && catalog.cacheStatus === "valid"
         ? "目录刷新失败，当前继续使用有效缓存；请留意最近一次错误。"
@@ -5166,6 +5175,11 @@
     var draft = getTaskModelSelectionDraft();
     var taskType = getSettingsWorkflowTaskType();
     var statusNode = byId("ppt-task-model-validation-status");
+    var modelSelect = byId("ppt-task-model-select");
+    if (modelSelect && modelSelect.value === "__manual__") {
+      if (statusNode) statusNode.textContent = "请先选择任务模型，或选择“继承服务默认模型”，再保存。";
+      return;
+    }
     var currentSvc = findDirectService(draft.serviceId);
     if (!draft.serviceId || state.workflowProfileMutationBusy || state.busy) {
       setStatus("请先选择直连服务。");
@@ -5179,32 +5193,6 @@
         statusNode.textContent = checked.message || checked.error || "请检查参数设置。";
       }
       return;
-    }
-    var persistedSelection = state.taskModelSelections[taskType] || {};
-    if (persistedSelection.customModel && persistedSelection.serviceId === draft.serviceId &&
-        !draft.customModel && !String(draft.modelName || "").trim()) {
-      if (statusNode) {
-        statusNode.textContent = "高级手填入口已关闭，不能用空模型覆盖已保存的手填模型。";
-      }
-      return;
-    }
-    if (draft.customModel) {
-      var validatedCustom = state.lastValidatedCustomModel;
-      var customValidated = typeof validatedCustom === "string"
-        ? validatedCustom === draft.modelName
-        : Boolean(validatedCustom && validatedCustom.serviceId === draft.serviceId && validatedCustom.modelName === draft.modelName);
-      customValidated = customValidated || Boolean(
-        persistedSelection.customModelValidated &&
-        persistedSelection.serviceId === draft.serviceId &&
-        persistedSelection.modelName === draft.modelName
-      );
-      if (!customValidated) {
-        if (statusNode) {
-          statusNode.textContent = "请先验证调用；验证会真实请求模型并可能产生费用。";
-        }
-        return;
-      }
-      draft.customModelValidated = true;
     }
     state.directServiceOperationId = Number(state.directServiceOperationId || 0) + 1;
     var operationId = state.directServiceOperationId;

@@ -4,7 +4,7 @@
 
 **Goal:** 在 Word、PPT、Excel 三宿主中实现共享直连服务默认模型及各功能任务模型的手填输入与历史管理，支持即时增删手填模型与平滑重置，彻底解除目录限制与强制测试调用门禁。
 
-**Architecture:** 
+**Architecture:**
 后端在 `DirectServiceStore` 中引入 `customModels` 持久化列表，提供即时增删轻量 API，并在删除在用模型时执行跨任务平滑重置；解除 `DIRECT_SERVICE_CUSTOM_MODEL_NOT_ALLOWED` 与测试调用阻断，允许未验证模型执行任务；前端在三宿主任务窗格的模型选择下拉框中常驻手填入口，展开基于 Apple Design（Inset Grouped / Capsule 胶囊卡片）风格的手填模型管理面板，实现即时添加、单项删除与联动选用。
 
 **Tech Stack:** Python 3.8、FastAPI、Starlette、Pydantic v2、Standalone HTTP Adapter；WPS JS/HTML/CSS、Node.js 契约测试。
@@ -38,7 +38,7 @@
 
 **Interfaces:**
 - Consumes: `load_config_payload`, `save_config_payload`, `DirectServiceError`
-- Produces: 
+- Produces:
   - `DirectServiceStore.add_custom_model(service_id: str, model_name: str) -> dict`
   - `DirectServiceStore.delete_custom_model(service_id: str, model_name: str) -> dict`
   - `DirectServiceStore._model_availability(...) -> Tuple[str, bool, str]`（解除 `custom_model` 必须已验证及目录可用的阻断）
@@ -83,7 +83,7 @@
 
 **Interfaces:**
 - Consumes: `DirectServiceStore.add_custom_model`, `DirectServiceStore.delete_custom_model`
-- Produces: 
+- Produces:
   - `POST /provider/direct-services/{service_id}/custom-models` (FastAPI & Standalone)
   - `DELETE /provider/direct-services/{service_id}/custom-models/{model_name}` (FastAPI & Standalone)
   - `ProviderClient.post_task` 支持未验证的手填模型正常发起真实调用
@@ -127,7 +127,7 @@
 
 **Interfaces:**
 - Consumes: 后端 `GET /provider/direct-services`, `POST/DELETE /provider/direct-services/{id}/custom-models`
-- Produces: 
+- Produces:
   - `renderModelOptionsWithCustom(selectElement, catalogModels, customModels, currentModel, isDefaultModelSelect)`
   - `.custom-models-panel` 组件与交互（展开/折叠、添加、删除、平滑重置）
 

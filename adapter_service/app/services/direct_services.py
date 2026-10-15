@@ -2300,12 +2300,16 @@ class DirectServiceStore:
             return self.get_service(service["id"])
 
     @_serialized_store_transaction
-    def delete_custom_model(self, service_id: str, model_name: str) -> dict:
+    def delete_custom_model(
+        self, service_id: str, model_name: str, expected_revision: Optional[int] = None
+    ) -> dict:
         clean_model = str(model_name or "").strip()
         with _STORE_LOCK:
             payload, _ = self._load_with_legacy_direct_migration()
             services = self._service_map(payload)
             service = self._require_service(services, service_id)
+            if expected_revision is not None:
+                self._check_revision(service, expected_revision)
             existing = list(service.get("customModels") or [])
             if clean_model in existing:
                 existing.remove(clean_model)
@@ -2313,6 +2317,7 @@ class DirectServiceStore:
                 service["updatedAt"] = _utc_now()
                 if service.get("defaultModel") == clean_model:
                     service["defaultModel"] = ""
+                    service["revision"] = int(service.get("revision", 1)) + 1
                 payload["directServices"][service["id"]] = service
 
                 selections = self._selection_map(payload)
