@@ -228,3 +228,35 @@ assert.ok(functionSource("bindEvents").includes(
 ));
 
 console.log("word full document review contract tests passed");
+
+const test = require('node:test');
+const vm = require('node:vm');
+for (const [cancelName, idField] of [
+  ['cancelFullDocumentReviewJob', 'fullDocumentReviewJobId'],
+  ['cancelDeterministicFormatReviewJob', 'deterministicFormatReviewJobId']
+]) {
+  for (const outcome of ['cancelled', 'network-error']) {
+    test(cancelName + ' ignores an old cancellation ' + outcome + ' after a new task starts', async () => {
+      let resolve, reject;
+      const state = {[idField]:'old-job',documentSessionId:'doc-a',modelTaskBusy:true,status:'old task'};
+      const ctx = {state, helpers:{getDocumentSessionId:()=>'doc-a'}, getActiveDocument:()=>({}),
+        DOCUMENT_REVIEW_POLL_REQUEST_TIMEOUT_MS:1000,DETERMINISTIC_FORMAT_REVIEW_REQUEST_TIMEOUT_MS:1000,
+        request:()=>new Promise((yes,no)=>{resolve=yes;reject=no;}),
+        cleanupFullDocumentReviewTerminal(){},clearDeterministicFormatReviewActiveJob(){},
+        renderFullDocumentReviewEntry(){},clearDeterministicFormatReviewPresentation(){},setDocumentReviewCancelVisible(){},
+        setModelTaskBusy:busy=>{state.modelTaskBusy=busy;},
+        setStatus:text=>{state.status=text;},setPlainResult:text=>{state.result=text;},
+        describeFetchError:error=>error.message
+      };
+      vm.runInNewContext(`(${functionSource(cancelName)})`,ctx)();
+      state[idField]='new-job';state.status='本轮状态';state.result='本轮进度';
+      if (outcome==='cancelled') resolve({data:{status:'cancelled'}});
+      else reject(Error('旧取消错误'));
+      await new Promise(done=>setImmediate(done));
+      assert.strictEqual(state[idField],'new-job');
+      assert.strictEqual(state.status,'本轮状态');
+      assert.strictEqual(state.result,'本轮进度');
+      assert.strictEqual(state.modelTaskBusy,true);
+    });
+  }
+}

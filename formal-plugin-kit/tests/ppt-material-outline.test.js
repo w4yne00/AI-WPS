@@ -711,11 +711,14 @@ window.fetch=async function(url,options){
     run("click", "#btn-confirm-outline");
     run("wait", "--text", "大纲状态：已确认");
     run("set", "viewport", "320", "700");
+    // Resizing can move the source action below the viewport; click uses its current coordinates.
+    run("scrollintoview", '[data-drawer-page="1"]');
     run("click", '[data-drawer-page="1"]');
     assert.equal(run("eval", "document.querySelector('#outline-slide-list').hidden").trim(), "true");
     run("click", "#btn-close-outline-drawer");
     assert.equal(run("eval", "document.activeElement.getAttribute('data-drawer-page')").trim(), '"1"');
     run("set", "viewport", "420", "700");
+    run("scrollintoview", '[data-drawer-page="1"]');
     run("click", '[data-drawer-page="1"]');
     assert.equal(run("eval", "document.querySelectorAll('#outline-source-drawer img').length").trim(), "0");
     assert.match(run("get", "text", "#outline-drawer-content"), /<img/);

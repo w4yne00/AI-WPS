@@ -14,6 +14,12 @@ function functionSource(name) {
 }
 
 function loadFunctions(names, context) {
+  names = ["getWritingDocTaskKey", "getActiveReviewJobRecord", "setActiveReviewJobRecord"].concat(names);
+  if (!context.getActiveResultRecord) {
+    const results = new Map();
+    context.getActiveResultRecord = (taskType, documentSessionId) => results.get(taskType + ":" + documentSessionId) || null;
+    context.setActiveResultRecord = (taskType, documentSessionId, value) => results.set(taskType + ":" + documentSessionId, value);
+  }
   const declarations = names.map(functionSource).join("\n");
   const exports = names.map((name) => `${name}: ${name}`).join(",");
   return vm.runInNewContext(

@@ -477,6 +477,7 @@ test("taskpane: full document review aborts and cleans up snapshot when cancelle
   let jobSubmitted = false;
 
   const state = {
+    currentMode: "documentReview",
     fullDocumentReviewEnabled: true,
     fullDocumentReviewJobId: "",
     documentReviewJobId: "",
@@ -574,6 +575,10 @@ test("taskpane: full document review aborts and cleans up snapshot when cancelle
   }
 
   const fns = loadFunctions([
+    "getWritingDocTaskKey",
+    "getActiveResultRecord",
+    "getActiveReviewJobRecord",
+    "setActiveReviewJobRecord",
     "ensureFullDocumentReviewPreparation",
     "extractFullDocumentReviewBodyYielding",
     "uploadFullDocumentReviewBatches",
@@ -612,6 +617,7 @@ test("taskpane: full document review rejects an active document session switch d
   activeDocument = firstDocument;
 
   const state = {
+    currentMode: "documentReview",
     fullDocumentReviewEnabled: true,
     fullDocumentReviewJobId: "",
     documentReviewJobId: "",
@@ -632,6 +638,7 @@ test("taskpane: full document review rejects an active document session switch d
     collectFullDocumentReviewParagraphsYielding: async (document) => {
       const result = helpers.collectFullDocumentReviewParagraphs(document);
       activeDocument = secondDocument;
+      statusText = "新文档已就绪";
       return result;
     },
     collectFullDocumentReviewTablesYielding: async () => []
@@ -676,6 +683,10 @@ test("taskpane: full document review rejects an active document session switch d
   }
 
   const names = [
+    "getWritingDocTaskKey",
+    "getActiveResultRecord",
+    "getActiveReviewJobRecord",
+    "setActiveReviewJobRecord",
     "ensureFullDocumentReviewPreparation",
     "extractFullDocumentReviewBodyYielding",
     "uploadFullDocumentReviewBatches",
@@ -694,7 +705,7 @@ test("taskpane: full document review rejects an active document session switch d
   await fns.runFullDocumentReview();
 
   assert.strictEqual(snapshotCreated, false, "document switch must abort before snapshot creation");
-  assert.ok(statusText.includes("文档"), `status must explain document identity change: ${statusText}`);
+  assert.strictEqual(statusText, "新文档已就绪", "old extraction failure must not overwrite the new document status");
 });
 
 test("taskpane: format review preparation can be cancelled, cleans up snapshot session and never calls model", async () => {

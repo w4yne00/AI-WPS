@@ -1678,6 +1678,16 @@ class FullDocumentReviewService:
                     status_code=404,
                 )
             self._verify_snapshot_token(session, {"snapshotToken": snapshot_token})
+            for field, default, limit in (("host", "wps", 64), ("documentSessionId", "", 256)):
+                if field in payload:
+                    requested_identity = self._optional_string(payload, field, default, limit).strip()
+                    bound_identity = str(session.get(field) or default).strip()
+                    if requested_identity != bound_identity:
+                        raise AdapterError(
+                            "FULL_DOCUMENT_REVIEW_JOB_ID_CONFLICT",
+                            "任务请求文档会话或宿主与快照绑定不一致。",
+                            status_code=409,
+                        )
             if session.get("status") == "submitted":
                 existing_job_id = str(session.get("submittedJobId", ""))
                 existing = self.coordinator.get(existing_job_id, task_type=TASK_TYPE)
@@ -1753,7 +1763,7 @@ class FullDocumentReviewService:
             snapshot["taskIdentity"] = self._build_task_identity(snapshot)
             session["authIdentity"] = deepcopy(snapshot["authIdentity"])
             session["taskIdentity"] = deepcopy(snapshot["taskIdentity"])
-            existing = self._reuse_active_task(snapshot)
+            existing = None if requested_job_id else self._reuse_active_task(snapshot)
             if existing is not None:
                 session["status"] = "submitted"
                 session["submittedJobId"] = existing["jobId"]

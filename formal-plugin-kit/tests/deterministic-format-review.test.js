@@ -628,7 +628,7 @@ for (const status of ["completed", "failed", "cancelled"]) {
     });
     vm.runInContext([
       "getWritingDocTaskKey", "getReviewActiveJobStorageKey", "loadDeterministicFormatReviewActiveJob",
-      "clearDeterministicFormatReviewActiveJob", "releaseTaskSlotsForJob", "setActiveReviewJobRecord",
+      "clearDeterministicFormatReviewActiveJob", "releaseTaskSlotsForJob", "setActiveReviewJobRecord", "getActiveReviewJobRecord",
       "cleanupDeterministicFormatReviewTerminal", "resumeDeterministicFormatReviewActiveJob"
     ].map(functionSource).join("\n"), sandbox);
     assert.strictEqual(vm.runInContext("resumeDeterministicFormatReviewActiveJob()", sandbox), true);

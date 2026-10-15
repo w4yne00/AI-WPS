@@ -189,6 +189,7 @@ function createBaseContext(initialOverrides = {}) {
 
   const fns = [
     "getWritingDocTaskKey",
+    "isCurrentWritingJob",
     "getActiveWritingJobRecord",
     "setActiveWritingJobRecord",
     "getActiveResultRecord",
@@ -1041,3 +1042,217 @@ runAll().catch((err) => {
   console.error(err);
   process.exit(1);
 });
+
+const test = require('node:test');
+function writingSubmissionHarness(taskType = 'word.smart_write') {
+  const pending = [];
+  const timers = [];
+  const mode = taskType === 'word.smart_imitation' ? 'smartImitation' : 'smartWrite';
+  const h = createBaseContext({ state: { currentMode: mode }, ctx: {
+    Date, Math, setTimeout: fn => timers.push(fn), clearTimeout() {},
+    WRITING_POLL_REQUEST_TIMEOUT_MS: 1000,
+    WRITING_POLL_INTERVAL_MS: 1000, WRITING_POLL_RETRY_DELAY_MS: 1000,
+    DOCUMENT_REVIEW_PHASE_TEXT: {}, SMART_WRITE_EXTRACTION_OPTIONS: {},
+    request: (url, payload) => new Promise((resolve, reject) => pending.push({url, payload: payload && JSON.parse(JSON.stringify(payload)), resolve, reject})),
+    beginTaskPerformance: () => ({}), bindTaskPerformanceTrace() {},
+    setDocumentReviewCancelVisible() {}, scheduleWritingPoll() {},
+    isFatalWritingPollError: error => error.status === 400,
+    resolveSelectionScope: () => ({ok: true}), getWritingPolicyScene: () => 'auto',
+    extractDocument: () => ({content: {plainText: '同一段原文'}, selectionMode: 'selection'}),
+  }});
+  h.ctx.setModelTaskBusy = busy => { h.state.modelTaskBusy = busy; };
+  for (const name of ['buildWritingClientJobId', 'writingJobPath', 'writingJobUsesEvents', 'renderWritingJobProgress', 'pollWritingJob', 'pollWritingJobEvents', 'runSmartWriteAction', 'runSmartImitationAction']) {
+    h.ctx[name] = vm.runInNewContext(`(${functionSource(name)}\n)`, h.ctx);
+  }
+  h.byId('imitation-template-text').value = '仿写模板';
+  h.byId('imitation-requirement').value = '同一要求';
+  h.pending = pending; h.timers = timers; h.taskType = taskType; h.mode = mode;
+  h.start = () => h.ctx[mode === 'smartWrite' ? 'runSmartWriteAction' : 'runSmartImitationAction']();
+  return h;
+}
+const flushWritingPromises = () => new Promise(resolve => setImmediate(resolve));
+
+for (const taskType of ['word.smart_write', 'word.smart_imitation']) {
+  test(taskType + ' identical inputs execute new submissions, hide old results, and reject rapid clicks', async () => {
+    const h = writingSubmissionHarness(taskType);
+    h.start();
+    h.start();
+    assert.ok(h.timers.length <= 1, 'preparation must not be queued twice');
+    if (h.timers.length) h.timers.shift()();
+    assert.equal(h.pending.length, 1);
+    const first = h.pending[0];
+    first.resolve({data: {jobId: first.payload.clientJobId, status: 'completed', result: {rewrittenText: '上一轮成功'}}});
+    await flushWritingPromises();
+    assert.equal(h.byId('result-output').textContent, '上一轮成功');
+    h.start();
+    if (h.timers.length) h.timers.shift()();
+    assert.equal(h.pending.length, 2);
+    const second = h.pending[1];
+    assert.notEqual(second.payload.clientJobId, first.payload.clientJobId);
+    assert.equal(second.payload.content.plainText, first.payload.content.plainText);
+    assert.equal(h.ctx.getActiveResultRecord(taskType, 'doc_1'), null);
+    assert.notEqual(h.byId('result-output').textContent, '上一轮成功');
+    second.resolve({data: {jobId: second.payload.clientJobId, status: 'failed', error: {message: '本轮失败'}}});
+    await flushWritingPromises();
+    assert.equal(h.byId('result-output').textContent, '本轮失败');
+    assert.equal(h.ctx.getActiveResultRecord(taskType, 'doc_1'), null);
+  });
+
+  for (const outcome of ['completed', 'failed', 'cancelled', 'running', 'network-error']) {
+    test(taskType + ' late ' + outcome + ' poll cannot overwrite a newer task', async () => {
+      const h = writingSubmissionHarness(taskType);
+      h.ctx.setActiveWritingJobRecord(taskType, 'doc_1', {jobId: 'old-job'});
+      h.ctx.pollWritingJob('old-job', taskType, h.mode, false, 'doc_1');
+      h.ctx.setActiveWritingJobRecord(taskType, 'doc_1', {jobId: 'new-job'});
+      h.ctx.setWritingJob('new-job', taskType, h.mode);
+      h.byId('result-output').textContent = '本轮进度';
+      h.byId('status-line').textContent = '本轮状态';
+      if (outcome === 'network-error') h.pending[0].reject(Error('旧网络错误'));
+      else h.pending[0].resolve({data: {status: outcome, result: {rewrittenText: '旧结果'}, error: {message: '旧错误'}}});
+      await flushWritingPromises();
+      assert.equal(h.byId('result-output').textContent, '本轮进度');
+      assert.equal(h.byId('status-line').textContent, '本轮状态');
+      assert.equal(h.state.writingJobId, 'new-job');
+      assert.equal(h.ctx.getActiveWritingJobRecord(taskType, 'doc_1').jobId, 'new-job');
+    });
+  }
+
+  test(taskType + ' uncertain submit resumes the same ID without another POST', async () => {
+    const h = writingSubmissionHarness(taskType);
+    h.start(); if (h.timers.length) h.timers.shift()();
+    const first = h.pending[0];
+    first.reject(Error('response lost'));
+    await flushWritingPromises();
+    assert.equal(h.pending.length, 2);
+    assert.equal(h.pending[1].payload, null);
+    assert.ok(h.pending[1].url.includes(first.payload.clientJobId));
+    h.start();
+    assert.equal(h.pending.filter(call => call.payload).length, 1);
+    h.pending[1].resolve({data: {status: 'completed', result: {rewrittenText: '恢复的本轮结果'}}});
+    await flushWritingPromises();
+    assert.equal(h.byId('result-output').textContent, '恢复的本轮结果');
+  });
+}
+
+for (const taskType of ['word.smart_write', 'word.smart_imitation']) {
+  test(taskType + ' late event failure cannot clear a newer task', async () => {
+    const h = writingSubmissionHarness(taskType);
+    h.ctx.setActiveWritingJobRecord(taskType, 'doc_1', {jobId:'old-job'});
+    h.ctx.pollWritingJobEvents('old-job', taskType, h.mode, false, 'doc_1', 0, 0);
+    h.ctx.setActiveWritingJobRecord(taskType, 'doc_1', {jobId:'new-job'});
+    h.ctx.setWritingJob('new-job', taskType, h.mode);
+    h.byId('result-output').textContent = '本轮正文';
+    h.pending[0].resolve({data:{terminal:true,status:'failed',error:{message:'旧错误'},events:[]}});
+    await flushWritingPromises();
+    assert.equal(h.byId('result-output').textContent, '本轮正文');
+    assert.equal(h.state.writingJobId, 'new-job');
+    assert.equal(h.ctx.getActiveWritingJobRecord(taskType, 'doc_1').jobId, 'new-job');
+  });
+}
+
+test('an old submit response cannot replace a newer writing task', async () => {
+  const h = writingSubmissionHarness();
+  h.start(); h.timers.shift()();
+  h.ctx.setActiveWritingJobRecord(h.taskType, 'doc_1', {jobId:'new-job'});
+  h.ctx.setWritingJob('new-job', h.taskType, h.mode);
+  h.byId('result-output').textContent = '本轮进度';
+  h.pending[0].resolve({data:{jobId:h.pending[0].payload.clientJobId,status:'completed',result:{rewrittenText:'旧结果'}}});
+  await flushWritingPromises();
+  assert.equal(h.byId('result-output').textContent, '本轮进度');
+  assert.equal(h.state.writingJobId, 'new-job');
+});
+
+for (const taskType of ['word.smart_write', 'word.smart_imitation']) {
+  test(taskType + ' obsolete completion and failure cannot replace a finished newer result', () => {
+    const h = writingSubmissionHarness(taskType);
+    h.ctx.setActiveWritingJobRecord(taskType, 'doc_1', {jobId:'new-job'});
+    h.ctx.setWritingJob('new-job', taskType, h.mode);
+    h.ctx.completeWritingJob({rewrittenText:'新结果'}, 'new-trace', taskType, false, h.mode, 'new-job', 'doc_1');
+    h.ctx.completeWritingJob({rewrittenText:'旧结果'}, 'old-trace', taskType, false, h.mode, 'old-job', 'doc_1');
+    h.ctx.failWritingJob('old-job', taskType, h.mode, Error('旧错误'), 'doc_1');
+    assert.equal(h.byId('result-output').textContent, '新结果');
+    assert.equal(h.ctx.getActiveResultRecord(taskType, 'doc_1').result.rewrittenText, '新结果');
+  });
+}
+
+test('background submit acceptance does not replace another document foreground job or status', async () => {
+  const h = writingSubmissionHarness();
+  h.start(); h.timers.shift()();
+  const oldId = h.pending[0].payload.clientJobId;
+  h.state.documentSessionId = 'doc_2';
+  h.ctx.setActiveWritingJobRecord(h.taskType, 'doc_2', {jobId:'foreground-job'});
+  h.ctx.setWritingJob('foreground-job', h.taskType, h.mode);
+  h.byId('status-line').textContent = '前台进度';
+  h.pending[0].resolve({data:{jobId:oldId,status:'completed',result:{rewrittenText:'后台结果'}}});
+  await flushWritingPromises();
+  assert.equal(h.state.writingJobId, 'foreground-job');
+  assert.equal(h.byId('status-line').textContent, '前台进度');
+  assert.equal(h.ctx.getActiveResultRecord(h.taskType, 'doc_1').result.rewrittenText, '后台结果');
+});
+
+test('streaming preview does not replace the history view', () => {
+  const h = writingSubmissionHarness();
+  h.state.historyOpen = true;
+  h.state.writingJobId = 'active-job';
+  h.state.writingJobPreviews = {preview:{jobId:'active-job',taskType:h.taskType,documentSessionId:'doc_1',mode:h.mode,text:'本轮增量正文'}};
+  h.byId('result-output').textContent = '正在查看的历史';
+  const render = vm.runInNewContext(`(${functionSource('renderWritingJobPreview')}\n)`, h.ctx);
+  render('preview');
+  assert.equal(h.byId('result-output').textContent, '正在查看的历史');
+  assert.equal(h.pending.length, 0);
+});
+
+test('a background event completion cannot stop the foreground waiting feedback', async () => {
+  const h = writingSubmissionHarness();
+  let stopped = 0;
+  h.ctx.stopWritingWaitFeedback = () => {stopped += 1;};
+  h.ctx.setActiveWritingJobRecord(h.taskType, 'doc_1', {jobId:'background-job'});
+  h.ctx.pollWritingJobEvents('background-job', h.taskType, h.mode, false, 'doc_1', 0, 0);
+  h.state.documentSessionId = 'doc_2';
+  h.ctx.setActiveWritingJobRecord(h.taskType, 'doc_2', {jobId:'foreground-job'});
+  h.ctx.setWritingJob('foreground-job', h.taskType, h.mode);
+  h.pending[0].resolve({data:{terminal:true,status:'completed',events:[]}});
+  await flushWritingPromises();
+  assert.equal(stopped, 0);
+  assert.equal(h.state.writingJobId, 'foreground-job');
+});
+
+for (const action of ['rewrite', 'continue', 'summarize', 'custom']) {
+  test('smart write ' + action + ' submits identical input again with a fresh task ID', async () => {
+    const h = writingSubmissionHarness();
+    h.state.writeAction = action;
+    h.ctx.extractDocument = (selection, requestedAction) => ({selectionMode:selection,content:{plainText:'同一段原文'},options:{rewriteAction:requestedAction}});
+    for (let round = 0; round < 2; round += 1) {
+      h.start(); h.timers.shift()();
+      const call = h.pending[round];
+      assert.equal(call.payload.options.rewriteAction, action);
+      call.resolve({data:{jobId:call.payload.clientJobId,status:'completed',result:{rewrittenText:'正文'}}});
+      await flushWritingPromises();
+    }
+    assert.equal(h.pending.length, 2);
+    assert.notEqual(h.pending[0].payload.clientJobId, h.pending[1].payload.clientJobId);
+    assert.deepEqual(h.pending[0].payload.content, h.pending[1].payload.content);
+  });
+}
+
+for (const outcome of ['cancelled', 'completed', 'network-error']) {
+  test('late writing cancellation ' + outcome + ' cannot overwrite a newer task', async () => {
+    const h = writingSubmissionHarness();
+    h.ctx.setActiveWritingJobRecord(h.taskType, 'doc_1', {jobId:'old-job'});
+    h.ctx.setWritingJob('old-job', h.taskType, h.mode);
+    const cancel = vm.runInNewContext(`(${functionSource('cancelQueuedWritingJob')}\n)`, h.ctx);
+    cancel();
+    h.ctx.setActiveWritingJobRecord(h.taskType, 'doc_1', {jobId:'new-job'});
+    h.ctx.setWritingJob('new-job', h.taskType, h.mode);
+    h.state.modelTaskBusy = true;
+    h.byId('result-output').textContent = '本轮进度';
+    h.byId('status-line').textContent = '本轮状态';
+    if (outcome === 'network-error') h.pending[0].reject(Error('旧取消错误'));
+    else h.pending[0].resolve({data:{status:outcome,result:{rewrittenText:'旧结果'}}});
+    await flushWritingPromises();
+    assert.equal(h.byId('result-output').textContent, '本轮进度');
+    assert.equal(h.byId('status-line').textContent, '本轮状态');
+    assert.equal(h.state.writingJobId, 'new-job');
+    assert.equal(h.state.modelTaskBusy, true);
+  });
+}
