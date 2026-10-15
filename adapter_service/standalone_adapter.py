@@ -3126,6 +3126,20 @@ class Handler(BaseHTTPRequestHandler):
                         ),
                     )
                     return
+                elif action == "custom-models":
+                    service = store.add_custom_model(
+                        service_id, payload.get("modelName", "")
+                    )
+                    self._write(
+                        200,
+                        envelope(
+                            "standalone-direct-service",
+                            "provider.direct_service",
+                            {"directService": service},
+                            message="added",
+                        ),
+                    )
+                    return
                 elif action == "refresh-models":
                     service = store.refresh_models(
                         service_id,
@@ -5294,6 +5308,7 @@ class Handler(BaseHTTPRequestHandler):
                     return
             store = DirectServiceStore()
             try:
+                action_type, _, action_target = action.partition("/")
                 if action == "api-key":
                     service = store.clear_api_key(
                         service_id, expected_revision=expected_revision
@@ -5305,6 +5320,19 @@ class Handler(BaseHTTPRequestHandler):
                             "provider.direct_service",
                             {"directService": service},
                             message="cleared",
+                        ),
+                    )
+                    return
+                elif action_type == "custom-models" and action_target:
+                    model_name = unquote(action_target)
+                    service = store.delete_custom_model(service_id, model_name)
+                    self._write(
+                        200,
+                        envelope(
+                            "standalone-direct-service",
+                            "provider.direct_service",
+                            {"directService": service},
+                            message="deleted",
                         ),
                     )
                     return

@@ -139,6 +139,10 @@ class DirectServiceModelListUpdateRequest(BaseModel):
     fetched_at: Optional[str] = Field(default=None, alias="fetchedAt")
 
 
+class DirectServiceCustomModelRequest(BaseModel):
+    model_name: str = Field(alias="modelName")
+
+
 class TaskModelSelectionUpdateRequest(BaseModel):
     service_id: str = Field(default="", alias="serviceId")
     model_name: str = Field(default="", alias="modelName")
@@ -910,6 +914,40 @@ def update_direct_service_models(
     return {
         "success": True,
         "message": "saved",
+        "data": {"directService": service},
+    }
+
+
+@router.post("/provider/direct-services/{service_id}/custom-models")
+def add_direct_service_custom_model(
+    service_id: str, request: DirectServiceCustomModelRequest
+) -> dict:
+    try:
+        service = get_direct_service_store().add_custom_model(
+            service_id, request.model_name
+        )
+    except DirectServiceError as exc:
+        _raise_direct_service_error(exc)
+    return {
+        "success": True,
+        "message": "added",
+        "data": {"directService": service},
+    }
+
+
+@router.delete("/provider/direct-services/{service_id}/custom-models/{model_name}")
+def delete_direct_service_custom_model(
+    service_id: str, model_name: str
+) -> dict:
+    try:
+        service = get_direct_service_store().delete_custom_model(
+            service_id, model_name
+        )
+    except DirectServiceError as exc:
+        _raise_direct_service_error(exc)
+    return {
+        "success": True,
+        "message": "deleted",
         "data": {"directService": service},
     }
 

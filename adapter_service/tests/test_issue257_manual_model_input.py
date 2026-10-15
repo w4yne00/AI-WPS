@@ -2,7 +2,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from app.services.direct_services import DirectServiceStore, DirectServiceError
 
@@ -141,3 +141,166 @@ class ManualModelInputStoreTests(unittest.TestCase):
         self.assertEqual(word_sel.get("modelAvailability"), "available")
         self.assertFalse(word_sel.get("customModelValidated"))
 
+
+class ManualModelInputApiAndClientTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp_dir.name)
+        self.config_path = self.root / "adapter.json"
+        self.config_path.write_text("{}\n", encoding="utf-8")
+        self.key_dir = self.root / "provider_api_keys"
+        self.key_dir.mkdir(parents=True, exist_ok=True)
+        self.store = DirectServiceStore(config_path=self.config_path, key_dir=self.key_dir)
+
+        created = self.store.create_service(
+            name="API Test Service",
+            service_base_url="https://api.example.com/v1",
+            api_key="sk-test-api-key-12345",
+            default_model="",
+        )
+        self.service_id = created["id"]
+
+        import standalone_adapter
+        self.standalone = standalone_adapter
+        self._orig_store = standalone_adapter.DirectServiceStore
+        self._orig_model_store = standalone_adapter.ModelConfigurationStore
+
+        def store_factory():
+            return DirectServiceStore(config_path=self.config_path, key_dir=self.key_dir)
+
+        from app.services.model_configurations import ModelConfigurationStore
+        def model_store_factory():
+            return ModelConfigurationStore(config_path=self.config_path, key_dir=self.key_dir)
+
+        standalone_adapter.DirectServiceStore = store_factory
+        standalone_adapter.ModelConfigurationStore = model_store_factory
+
+    def tearDown(self) -> None:
+        self.standalone.DirectServiceStore = self._orig_store
+        self.standalone.ModelConfigurationStore = self._orig_model_store
+        self.temp_dir.cleanup()
+
+    def _invoke_standalone(self, method: str, path: str, body: dict = None):
+        from io import BytesIO
+        writes = []
+        handler = object.__new__(self.standalone.Handler)
+        handler.path = path
+        handler.command = method
+        handler.requestline = f"{method} {path} HTTP/1.1"
+        handler.request_version = "HTTP/1.1"
+        raw = json.dumps(body or {}).encode("utf-8") if body is not None else b""
+        handler.headers = {"Content-Length": str(len(raw))}
+        handler.rfile = BytesIO(raw)
+        handler.close_connection = False
+        handler._reject_operation_block = lambda m, p: False
+        handler._reject_writing_policy_route_or_method = lambda m, p: False
+        handler.send_error = lambda code, message=None: writes.append((code, {"message": message}))
+        handler._write = lambda code, payload: writes.append((code, payload))
+        handler._write_bytes = lambda code, data, content_type: writes.append((code, data))
+
+        if method == "POST":
+            handler.do_POST()
+        elif method == "DELETE":
+            handler.do_DELETE()
+        elif method == "GET":
+            handler.do_GET()
+        return writes[0] if writes else (500, None)
+
+    def test_fastapi_and_standalone_custom_models_endpoints(self) -> None:
+        from fastapi.testclient import TestClient
+        from app.main import app
+
+        with patch("app.api.provider.get_direct_service_store", return_value=self.store):
+            client = TestClient(app)
+
+            # 1. FastAPI POST custom-models
+            post_res = client.post(
+                f"/provider/direct-services/{self.service_id}/custom-models",
+                json={"modelName": "fastapi-custom-1"},
+            )
+            self.assertEqual(post_res.status_code, 200, post_res.text)
+            self.assertIn("fastapi-custom-1", post_res.json()["data"]["directService"]["customModels"])
+
+            # 2. FastAPI DELETE custom-models/{model_name}
+            del_res = client.delete(
+                f"/provider/direct-services/{self.service_id}/custom-models/fastapi-custom-1"
+            )
+            self.assertEqual(del_res.status_code, 200, del_res.text)
+            self.assertNotIn("fastapi-custom-1", del_res.json()["data"]["directService"]["customModels"])
+
+        # 3. Standalone POST custom-models
+        status, body = self._invoke_standalone(
+            "POST",
+            f"/provider/direct-services/{self.service_id}/custom-models",
+            {"modelName": "standalone-custom-1"},
+        )
+        self.assertEqual(status, 200, body)
+        self.assertIn("standalone-custom-1", body["data"]["directService"]["customModels"])
+
+        # 4. Standalone DELETE custom-models/{model_name}
+        status, body = self._invoke_standalone(
+            "DELETE",
+            f"/provider/direct-services/{self.service_id}/custom-models/standalone-custom-1",
+        )
+        self.assertEqual(status, 200, body)
+        self.assertNotIn("standalone-custom-1", body["data"]["directService"]["customModels"])
+
+    def test_provider_client_executes_unverified_custom_model(self) -> None:
+        from app.core.config import AppSettings
+        from app.services.model_configurations import ModelConfigurationStore
+        from app.services.provider_client import ProviderClient
+
+        # Setup unverified custom model selection
+        self.store.update_task_model_selection(
+            task_type="word.smart_write",
+            service_id=self.service_id,
+            model_name="my-unverified-llm",
+            custom_model=True,
+            custom_model_validated=False,
+        )
+        self.store.activate_direct_service(self.service_id, "word.smart_write")
+
+        provider_client = ProviderClient(
+            settings=AppSettings(),
+            model_configuration_store=ModelConfigurationStore(
+                config_path=self.config_path, key_dir=self.key_dir
+            ),
+            direct_service_store=self.store,
+        )
+
+        # resolve_task_auth should NOT raise DIRECT_SERVICE_CUSTOM_MODEL_UNVERIFIED
+        task_auth = provider_client.resolve_task_auth("word.smart_write")
+        self.assertEqual(task_auth["modelName"], "my-unverified-llm")
+        self.assertEqual(task_auth["modelConfigurationId"], self.service_id)
+
+        # validate_direct_service_task should also NOT raise DIRECT_SERVICE_CUSTOM_MODEL_NOT_ALLOWED even if catalog present
+        payload, _ = self.store._load_with_legacy_direct_migration()
+        raw_svc = payload["directServices"][self.service_id]
+        raw_svc["modelList"] = ["catalog-1", "catalog-2"]
+        raw_svc["modelListFetchedAt"] = "2026-10-15T12:00:00Z"
+        from app.services.direct_services import save_config_payload
+        save_config_payload(payload, self.config_path)
+
+        # Mock urllib request for test execution
+        with patch("app.services.provider_client.urllib_request.urlopen") as mock_url:
+            mock_resp = MagicMock()
+            mock_resp.headers = {"Content-Type": "application/json"}
+            mock_resp.read.return_value = json.dumps({
+                "choices": [{"message": {"content": "Generated text"}}],
+                "usage": {"completion_tokens": 10, "prompt_tokens": 10, "total_tokens": 20},
+            }).encode("utf-8")
+            mock_url.return_value = mock_resp
+            mock_url.return_value.__enter__.return_value = mock_resp
+
+
+            result = provider_client.validate_task_model_selection(
+                "word.smart_write",
+                {
+                    "serviceId": self.service_id,
+                    "customModel": True,
+                    "modelName": "my-unverified-llm",
+                },
+                trace_id="trace-test-validate",
+            )
+            self.assertEqual(result["modelName"], "my-unverified-llm")
+            self.assertTrue(result["customModelValidated"])
