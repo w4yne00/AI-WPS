@@ -710,7 +710,7 @@ test("Delete protection and URL change impact disclose formula assistant and sma
   assert.ok(impactMsg.includes("表格智能填写"));
 });
 
-test("Readiness gate blocks formula assistant and smart fill when direct service model is unavailable", () => {
+test("Readiness gate keeps formula assistant and smart fill usable when the catalog is stale", () => {
   assert.strictEqual(typeof helpers.validateDirectTaskSelectionReadiness, "function");
 
   const service = {
@@ -727,15 +727,13 @@ test("Readiness gate blocks formula assistant and smart fill when direct service
     }
   };
 
-  // Model catalog unavailable without custom model
   const formulaReadiness = helpers.validateDirectTaskSelectionReadiness(
     { serviceId: "direct_svc_1", modelName: "gpt-4o", customModel: false },
-    { service }
+    service,
+    { accessMethod: "direct_model" }
   );
-  assert.strictEqual(formulaReadiness.ok, false);
-  assert.ok(formulaReadiness.error.includes("不可用"));
+  assert.strictEqual(formulaReadiness.ok, true, formulaReadiness.error);
 
-  // Model catalog expired
   const expiredService = {
     ...service,
     modelCatalog: {
@@ -746,10 +744,10 @@ test("Readiness gate blocks formula assistant and smart fill when direct service
   };
   const fillReadiness = helpers.validateDirectTaskSelectionReadiness(
     { serviceId: "direct_svc_1", modelName: "gpt-4o", customModel: false },
-    { service: expiredService }
+    expiredService,
+    { accessMethod: "direct_model" }
   );
-  assert.strictEqual(fillReadiness.ok, false);
-  assert.ok(fillReadiness.error.includes("过期"));
+  assert.strictEqual(fillReadiness.ok, true, fillReadiness.error);
 });
 
 // Exercise production save + both reload functions; only the HTTP and DOM boundaries are fake.

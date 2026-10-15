@@ -6297,26 +6297,11 @@
         return { valid: false, ok: false, error: "自定义模型名称不能为空。" };
       }
       var customService = context && context.service;
-      if (customService) {
+      if (customService && !context.customModelValidated) {
         var customCatalog = getDirectServiceCatalogState(customService);
         if (!customCatalog.manualModelAllowed || customCatalog.usableForSelection) {
           return { valid: false, ok: false, error: "模型目录可用时不能使用高级手填模型。" };
         }
-      }
-    } else if (context && context.service) {
-      var selectedCatalog = getDirectServiceCatalogState(context.service);
-      var selectedName = String(input.modelName || "").trim();
-      if (selectedCatalog.status === "expired") {
-        return { valid: false, ok: false, error: "模型目录已过期，请先刷新目录。" };
-      }
-      if (selectedCatalog.cacheStatus === "invalidated") {
-        return { valid: false, ok: false, error: "模型目录已因服务地址或 API Key 变更失效，请先刷新目录。" };
-      }
-      if (selectedCatalog.status === "empty" || selectedCatalog.status === "unavailable") {
-        return { valid: false, ok: false, error: "模型目录当前不可用，请先刷新目录。" };
-      }
-      if (selectedCatalog.usableForSelection && selectedName && selectedCatalog.models.indexOf(selectedName) < 0) {
-        return { valid: false, ok: false, error: "所选模型已从最新目录移除，请重新选择。" };
       }
     }
     return { valid: true, ok: true, error: "" };
@@ -6347,7 +6332,7 @@
         modelName: modelName,
         customModel: customModel
       },
-      { service: service }
+      { service: service, customModelValidated: Boolean(current.customModelValidated) }
     );
     if (!draftResult.ok) {
       return {
@@ -6360,22 +6345,12 @@
 
     if (current.modelAvailable === false || current.modelAvailability === "unverified") {
       reason = String(current.modelUnavailableReason || current.modelAvailability || "");
-      if (reason === "cache_expired" || reason === "expired") {
-        return { valid: false, ok: false, applicable: true, error: "模型目录已过期，请先刷新目录。" };
-      }
-      if (reason === "catalog_usable") {
+      if (reason === "catalog_usable" && !current.customModelValidated) {
         return { valid: false, ok: false, applicable: true, error: "模型目录当前可用，不能使用高级手填模型；请从目录选择。" };
       }
       if (reason === "validation_required" || reason === "unverified") {
         return { valid: false, ok: false, applicable: true, error: "高级手填模型尚未通过真实任务调用验证，请先验证模型。" };
       }
-      if (reason === "catalog_unavailable" || reason === "catalog_empty") {
-        return { valid: false, ok: false, applicable: true, error: "模型目录当前不可用，请刷新目录，或先验证高级手填模型。" };
-      }
-      if (reason === "disappeared") {
-        return { valid: false, ok: false, applicable: true, error: "所选模型已从最新目录移除，请重新选择。" };
-      }
-      return { valid: false, ok: false, applicable: true, error: "当前模型不可用，请先刷新目录或重新验证模型。" };
     }
 
     return { valid: true, ok: true, applicable: true, error: "" };

@@ -2367,38 +2367,6 @@ class ProviderClient:
                             status_code=400,
                         )
 
-                    model_availability = str(
-                        selection.get("modelAvailability", "")
-                    )
-                    if model_availability == "expired":
-                        raise AdapterError(
-                            "DIRECT_SERVICE_MODEL_CATALOG_EXPIRED",
-                            "模型目录缓存已过期，请先刷新目录后再提交任务。",
-                            status_code=400,
-                        )
-                    if model_availability == "unavailable":
-                        reason = str(
-                            selection.get("modelUnavailableReason", "")
-                        )
-                        if reason == "catalog_usable":
-                            raise AdapterError(
-                                "DIRECT_SERVICE_CUSTOM_MODEL_NOT_ALLOWED",
-                                "模型目录当前可用时不能使用高级手填模型。",
-                                status_code=400,
-                            )
-                        if reason == "disappeared":
-                            raise AdapterError(
-                                "DIRECT_SERVICE_MODEL_DISAPPEARED",
-                                f"所选模型 {effective_model} 已从服务目录中移除，请重新选择模型。",
-                                status_code=400,
-                            )
-                        if reason in {"catalog_unavailable", "catalog_empty"}:
-                            raise AdapterError(
-                                "DIRECT_SERVICE_MODEL_CATALOG_UNAVAILABLE",
-                                "模型目录当前不可用，请刷新目录或先验证高级手填模型。",
-                                status_code=400,
-                            )
-
                     base_url = str(service.get("serviceBaseUrl", "")).rstrip("/")
                     call_path = "/chat/completions"
                     api_key = str(service.get("apiKey", "")).strip()
@@ -4526,32 +4494,16 @@ class ProviderClient:
             )
 
         catalog = service.get("modelCatalog") or {}
-        if is_custom and not catalog.get("manualModelAllowed"):
+        if (
+            is_custom
+            and not catalog.get("manualModelAllowed")
+            and not self.direct_service_store.is_custom_model_validated(
+                task_type, service_id, model_name
+            )
+        ):
             raise AdapterError(
                 "DIRECT_SERVICE_CUSTOM_MODEL_NOT_ALLOWED",
                 "模型目录当前可用时不能使用高级手填模型。",
-                status_code=400,
-            )
-        if not is_custom and catalog.get("status") == "expired":
-            raise AdapterError(
-                "DIRECT_SERVICE_MODEL_CATALOG_EXPIRED",
-                "模型目录缓存已过期，请先刷新目录后再验证任务。",
-                status_code=400,
-            )
-        if not is_custom and not catalog.get("usableForSelection"):
-            raise AdapterError(
-                "DIRECT_SERVICE_MODEL_CATALOG_UNAVAILABLE",
-                "模型目录当前不可用，请使用高级手填模型并先验证真实任务调用。",
-                status_code=400,
-            )
-        if (
-            not is_custom
-            and catalog.get("usableForSelection")
-            and model_name not in (catalog.get("models") or [])
-        ):
-            raise AdapterError(
-                "DIRECT_SERVICE_MODEL_DISAPPEARED",
-                f"所选模型 {model_name} 已从服务目录中移除，请重新选择模型。",
                 status_code=400,
             )
 

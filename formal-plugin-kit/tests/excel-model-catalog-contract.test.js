@@ -69,18 +69,17 @@ test("Task selection draft rejects manual model while catalog is usable", () => 
   );
   assert.strictEqual(allowed.valid, true);
 
-  const invalidated = helpers.validateTaskModelSelectionDraft(
+  const kept = helpers.validateTaskModelSelectionDraft(
     { serviceId: "direct_svc_1", modelName: "gpt-4o", customModel: false },
     { service: { modelCatalog: { status: "unavailable", cacheStatus: "invalidated", fetchStatus: "not_attempted" } } }
   );
-  assert.strictEqual(invalidated.valid, false);
-  assert.ok(invalidated.error.includes("失效"));
+  assert.strictEqual(kept.valid, true);
 });
 
-test("Direct task readiness blocks unavailable catalog before task submission", () => {
+test("Direct task readiness does not block an expired catalog", () => {
   assert.strictEqual(typeof helpers.validateDirectTaskSelectionReadiness, "function");
 
-  const blocked = helpers.validateDirectTaskSelectionReadiness(
+  const ready = helpers.validateDirectTaskSelectionReadiness(
     {
       serviceId: "direct_svc_1",
       modelName: "gpt-4o",
@@ -89,6 +88,8 @@ test("Direct task readiness blocks unavailable catalog before task submission", 
       modelUnavailableReason: "cache_expired"
     },
     {
+      id: "direct_svc_1",
+      keyConfigured: true,
       modelCatalog: {
         status: "expired",
         cacheStatus: "expired",
@@ -97,8 +98,7 @@ test("Direct task readiness blocks unavailable catalog before task submission", 
     },
     { accessMethod: "direct_model" }
   );
-  assert.strictEqual(blocked.ok, false);
-  assert.ok(blocked.error.includes("过期"));
+  assert.strictEqual(ready.ok, true, ready.error);
 
   const workflow = helpers.validateDirectTaskSelectionReadiness(
     {},

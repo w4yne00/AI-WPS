@@ -2232,7 +2232,9 @@ class DirectServiceStore:
                     "DIRECT_SERVICE_MODEL_REQUIRED", "自定义模型名称不能为空。"
                 )
             catalog = self._model_catalog_state(service) if service else {}
-            if catalog.get("usableForSelection"):
+            if catalog.get("usableForSelection") and not self._is_custom_model_validated(
+                payload, task_type, service, clean_model
+            ):
                 raise DirectServiceError(
                     "DIRECT_SERVICE_CUSTOM_MODEL_NOT_ALLOWED",
                     "模型目录当前可用时不能使用高级手填模型。",
@@ -2319,7 +2321,9 @@ class DirectServiceStore:
                     "API Key 在验证期间发生变化，请重新验证模型。",
                 )
             catalog = self._model_catalog_state(service)
-            if catalog.get("usableForSelection"):
+            if catalog.get("usableForSelection") and not self._is_custom_model_validated(
+                payload, clean_task, service, clean_model
+            ):
                 raise DirectServiceError(
                     "DIRECT_SERVICE_CUSTOM_MODEL_NOT_ALLOWED",
                     "模型目录当前可用时不能使用高级手填模型。",
@@ -2799,31 +2803,15 @@ class DirectServiceStore:
         if not service_id or not service or not model_name:
             return "unconfigured", False, "missing_model"
         if custom_model:
+            if custom_model_validated:
+                return "available", True, ""
             catalog = self._model_catalog_state(service)
             if catalog.get("usableForSelection"):
                 return "unavailable", False, "catalog_usable"
-            if custom_model_validated:
-                return "available", True, ""
             return "unverified", False, "validation_required"
 
-        catalog = self._model_catalog_state(service)
-        models = catalog.get("models", [])
-        if catalog.get("usableForSelection"):
-            if model_name in models:
-                return "available", True, ""
-            return "unavailable", False, "disappeared"
-        if self._legacy_model_compatible(service, model_name):
-            return "available", True, "legacy_compatible"
-        if catalog.get("status") == "expired":
-            return "expired", False, "cache_expired"
-        if catalog.get("status") == "unavailable" or service.get("modelListInvalidated") or (
-            catalog.get("fetchStatus") == "error"
-            and catalog.get("cacheStatus") != "valid"
-        ):
-            return "unavailable", False, "catalog_unavailable"
-        if catalog.get("status") == "empty":
-            return "unavailable", False, "catalog_empty"
-        return "unavailable", False, "catalog_unavailable"
+        # Saved model id is called as stored; catalog state only assists selection.
+        return "available", True, ""
 
     def _ensure_task_model_ready(
         self,
@@ -2859,24 +2847,6 @@ class DirectServiceStore:
             raise DirectServiceError(
                 "DIRECT_SERVICE_CUSTOM_MODEL_NOT_ALLOWED",
                 "模型目录当前可用时不能使用高级手填模型。",
-            )
-        if availability == "unavailable" and reason == "disappeared":
-            raise DirectServiceError(
-                "DIRECT_SERVICE_MODEL_DISAPPEARED",
-                f"所选模型 {effective_model} 已从服务目录中移除，请重新选择模型。",
-            )
-        if availability == "expired":
-            raise DirectServiceError(
-                "DIRECT_SERVICE_MODEL_CATALOG_EXPIRED",
-                "模型目录缓存已过期，请先刷新目录后再提交任务。",
-            )
-        if availability == "unavailable" and reason in {
-            "catalog_unavailable",
-            "catalog_empty",
-        }:
-            raise DirectServiceError(
-                "DIRECT_SERVICE_MODEL_CATALOG_UNAVAILABLE",
-                "模型目录当前不可用，请刷新目录或先验证高级手填模型。",
             )
 
     @staticmethod

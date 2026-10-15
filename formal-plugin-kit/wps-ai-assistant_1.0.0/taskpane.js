@@ -4902,7 +4902,7 @@
       return "目录有效：" + count + " 个模型" + (catalog.fetchedAt ? "，获取于 " + catalog.fetchedAt : "");
     }
     if (catalog.status === "expired") {
-      return "目录已过期，请刷新" + (errorText ? "；最近错误：" + errorText : "");
+      return "目录已过期，列表仅供参考" + (catalog.fetchedAt ? "，获取于 " + catalog.fetchedAt : "") + (errorText ? "；最近错误：" + errorText : "");
     }
     if (catalog.status === "empty") {
       return "目录为空，请检查服务能力" + (errorText ? "；最近错误：" + errorText : "");
@@ -5692,12 +5692,6 @@
       var unavailableReason = currentSelection && currentSelection.modelUnavailableReason;
       if (currentSelection && currentSelection.modelAvailable === false && unavailableReason === "catalog_usable") {
         statusNode.textContent = "模型目录当前可用，不能使用高级手填模型；请从目录选择。";
-      } else if (currentSelection && currentSelection.modelAvailable === false && unavailableReason === "cache_expired") {
-        statusNode.textContent = "模型目录已过期，不能发起新任务；请先刷新目录。";
-      } else if (currentSelection && currentSelection.modelAvailable === false && (unavailableReason === "catalog_unavailable" || unavailableReason === "catalog_empty")) {
-        statusNode.textContent = "模型目录当前不可用；请先刷新目录。";
-      } else if (currentSelection && currentSelection.modelAvailable === false) {
-        statusNode.textContent = "当前模型已从最新目录移除，不能发起新任务；请重新选择模型。";
       } else if (catalog.fetchStatus === "error" && catalog.cacheStatus === "valid") {
         statusNode.textContent = "目录刷新失败，当前继续使用有效缓存；请留意最近一次错误。";
       } else {
@@ -5895,6 +5889,14 @@
     if (!checked.ok) {
       if (statusNode) {
         statusNode.textContent = checked.message || checked.error || "请检查参数设置。";
+      }
+      return;
+    }
+    var persistedSelection = state.taskModelSelections[taskType] || {};
+    if (persistedSelection.customModel && persistedSelection.serviceId === draft.serviceId &&
+        !draft.customModel && !String(draft.modelName || "").trim()) {
+      if (statusNode) {
+        statusNode.textContent = "高级手填入口已关闭，不能用空模型覆盖已保存的手填模型。";
       }
       return;
     }

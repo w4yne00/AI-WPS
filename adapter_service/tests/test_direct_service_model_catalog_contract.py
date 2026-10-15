@@ -109,23 +109,33 @@ class DirectServiceModelCatalogContractTests(unittest.TestCase):
             model_configuration_store=None,
             direct_service_store=self.store,
         )
-        with patch(
-            "urllib.request.urlopen",
-            side_effect=AssertionError("invalidated catalog must block before task call"),
-        ):
-            with self.assertRaises(AdapterError) as context:
-                client.validate_task_model_selection(
-                    "excel.analysis",
+        chat = self._response(
+            {
+                "choices": [
                     {
-                        "serviceId": service["id"],
-                        "modelName": "gpt-4o",
-                        "customModel": False,
-                    },
-                    "trace-invalidated-catalog",
-                )
-        self.assertEqual(
-            context.exception.code, "DIRECT_SERVICE_MODEL_CATALOG_UNAVAILABLE"
+                        "message": {
+                            "content": '{"overview":"ok","findings":[],"risks":[],"actions":[]}'
+                        }
+                    }
+                ]
+            }
         )
+        with patch("urllib.request.urlopen", return_value=chat) as urlopen:
+            validated = client.validate_task_model_selection(
+                "excel.analysis",
+                {
+                    "serviceId": service["id"],
+                    "modelName": "gpt-4o",
+                    "customModel": False,
+                },
+                "trace-invalidated-catalog",
+            )
+        self.assertTrue(validated["taskCallPerformed"])
+        self.assertEqual(
+            json.loads(urlopen.call_args[0][0].data.decode("utf-8"))["model"],
+            "gpt-4o",
+        )
+        self.assertEqual(self.store.get_service(service["id"])["defaultModel"], "gpt-4o")
 
     def test_malformed_catalog_response_is_rejected(self) -> None:
         service = self._service()
@@ -174,22 +184,26 @@ class DirectServiceModelCatalogContractTests(unittest.TestCase):
             service_id=service["id"],
             model_name="attacker-supplied-model",
         )
-        with self.assertRaises(DirectServiceError) as context:
-            self.store.activate_direct_service(service["id"], "excel.analysis")
+        activated = self.store.activate_direct_service(service["id"], "excel.analysis")
+        self.assertEqual(activated["activeConfigurationId"], service["id"])
         self.assertEqual(
-            context.exception.code,
-            "DIRECT_SERVICE_MODEL_CATALOG_UNAVAILABLE",
+            self.store.get_task_model_selection("excel.analysis")["modelName"],
+            "attacker-supplied-model",
+        )
+        self.assertEqual(
+            self.store.get_service(service["id"])["modelCatalog"]["cacheStatus"],
+            "untrusted",
         )
 
-    def test_catalog_not_attempted_blocks_default_model_activation(self) -> None:
+    def test_catalog_not_attempted_still_activates_saved_default_model(self) -> None:
         service = self._service("未获取目录服务")
 
-        with self.assertRaises(DirectServiceError) as context:
-            self.store.activate_direct_service(service["id"], "excel.analysis")
+        activated = self.store.activate_direct_service(service["id"], "excel.analysis")
 
+        self.assertEqual(activated["activeConfigurationId"], service["id"])
         self.assertEqual(
-            context.exception.code,
-            "DIRECT_SERVICE_MODEL_CATALOG_UNAVAILABLE",
+            self.store.get_task_model_selection("excel.analysis")["effectiveModel"],
+            "gpt-4o",
         )
 
     def test_refresh_without_revision_is_rejected_before_network_call(self) -> None:
@@ -415,7 +429,7 @@ class DirectServiceModelCatalogContractTests(unittest.TestCase):
 
         self.assertEqual(urlopen.call_count, 3)
 
-    def test_disappeared_model_is_marked_unavailable_in_selection(self) -> None:
+    def test_disappeared_model_keeps_saved_selection(self) -> None:
         service = self._service()
         first = self.store.update_model_list(
             service["id"], ["gpt-4o"], expected_revision=1
@@ -430,10 +444,11 @@ class DirectServiceModelCatalogContractTests(unittest.TestCase):
         )
 
         selection = self.store.get_task_model_selection("excel.analysis")
-        self.assertEqual(selection["modelAvailability"], "unavailable")
-        self.assertFalse(selection["modelAvailable"])
-        self.assertEqual(selection["modelUnavailableReason"], "disappeared")
-        self.assertEqual(missing["modelCatalog"]["status"], "available")
+        self.assertEqual(selection["modelName"], "gpt-4o")
+        self.assertEqual(selection["modelAvailability"], "available")
+        self.assertTrue(selection["modelAvailable"])
+        self.assertEqual(missing["modelList"], ["gpt-4o-mini"])
+        self.assertEqual(self.store.get_service(service["id"])["defaultModel"], "gpt-4o")
 
     def test_manual_model_requires_unavailable_catalog_and_successful_task_validation(self) -> None:
         listed = self._service("目录可用服务")
@@ -527,9 +542,19 @@ class DirectServiceModelCatalogContractTests(unittest.TestCase):
             manual["id"], ["manual-model"], expected_revision=empty_catalog["revision"]
         )
         self.assertEqual(catalog_after_validation["modelCatalog"]["status"], "available")
-        unavailable_manual = self.store.get_task_model_selection("excel.analysis")
-        self.assertFalse(unavailable_manual["modelAvailable"])
-        self.assertEqual(unavailable_manual["modelUnavailableReason"], "catalog_usable")
+        preserved_manual = self.store.get_task_model_selection("excel.analysis")
+        self.assertTrue(preserved_manual["modelAvailable"])
+        self.assertTrue(preserved_manual["customModelValidated"])
+        self.assertEqual(client.resolve_task_auth("excel.analysis")["modelName"], "manual-model")
+        self.store.activate_direct_service(
+            manual["id"], "excel.analysis", task_model_selection=preserved_manual
+        )
+        with patch("urllib.request.urlopen", return_value=probe_response):
+            revalidated = client.validate_task_model_selection(
+                "excel.analysis", preserved_manual, "trace-manual-revalidation"
+            )
+        self.assertTrue(revalidated["taskCallPerformed"])
+        self.assertTrue(revalidated["customModelValidated"])
 
     def test_task_contract_failure_does_not_mark_manual_model_validated(self) -> None:
         service = self._service("任务合同失败服务")
