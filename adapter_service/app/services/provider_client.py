@@ -2367,16 +2367,6 @@ class ProviderClient:
                             status_code=400,
                         )
 
-                    if (
-                        str(selection.get("modelAvailability", "")) == "unavailable"
-                        and str(selection.get("modelUnavailableReason", "")) == "catalog_usable"
-                    ):
-                        raise AdapterError(
-                            "DIRECT_SERVICE_CUSTOM_MODEL_NOT_ALLOWED",
-                            "模型目录当前可用时不能使用高级手填模型。",
-                            status_code=400,
-                        )
-
                     base_url = str(service.get("serviceBaseUrl", "")).rstrip("/")
                     call_path = "/chat/completions"
                     api_key = str(service.get("apiKey", "")).strip()
@@ -4504,7 +4494,13 @@ class ProviderClient:
             )
 
         catalog = service.get("modelCatalog") or {}
-        if is_custom and not catalog.get("manualModelAllowed"):
+        if (
+            is_custom
+            and not catalog.get("manualModelAllowed")
+            and not self.direct_service_store.is_custom_model_validated(
+                task_type, service_id, model_name
+            )
+        ):
             raise AdapterError(
                 "DIRECT_SERVICE_CUSTOM_MODEL_NOT_ALLOWED",
                 "模型目录当前可用时不能使用高级手填模型。",

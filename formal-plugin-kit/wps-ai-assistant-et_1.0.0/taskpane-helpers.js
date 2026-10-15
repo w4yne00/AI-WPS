@@ -5011,7 +5011,7 @@
         return { valid: false, ok: false, error: "自定义模型名称不能为空。" };
       }
       var customService = context && context.service;
-      if (customService) {
+      if (customService && !context.customModelValidated) {
         var customCatalog = getDirectServiceCatalogState(customService);
         if (!customCatalog.manualModelAllowed || customCatalog.usableForSelection) {
           return { valid: false, ok: false, error: "模型目录可用时不能使用高级手填模型。" };
@@ -5044,7 +5044,7 @@
         modelName: modelName,
         customModel: customModel
       },
-      { service: svc }
+      { service: svc, customModelValidated: Boolean(current.customModelValidated) }
     );
     if (!draftResult.ok) {
       return {
@@ -5057,7 +5057,7 @@
 
     if (current.modelAvailable === false || current.modelAvailability === "unverified") {
       reason = String(current.modelUnavailableReason || current.modelAvailability || "");
-      if (reason === "catalog_usable") {
+      if (reason === "catalog_usable" && !current.customModelValidated) {
         return { valid: false, ok: false, applicable: true, error: "模型目录当前可用，不能使用高级手填模型；请从目录选择。" };
       }
       if (reason === "validation_required" || reason === "unverified") {

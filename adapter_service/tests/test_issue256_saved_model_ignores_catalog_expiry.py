@@ -184,3 +184,25 @@ class SavedModelIgnoresCatalogExpiryTests(unittest.TestCase):
             json.loads(standalone_open.call_args[0][0].data.decode("utf-8"))["model"],
             "glm-kept",
         )
+
+    def test_validated_custom_model_survives_catalog_refresh_and_restart(self) -> None:
+        service = self._saved_override()
+        self.store.mark_custom_model_validated("excel.analysis", service["id"], "glm-kept")
+        self.store.update_task_model_selection(
+            "excel.analysis", service_id=service["id"], model_name="glm-kept", custom_model=True
+        )
+        self.store.activate_direct_service(service["id"], "excel.analysis")
+        for models in (["glm-kept"], ["other-model"], []):
+            with self.subTest(models=models):
+                current = self.store.get_service(service["id"])
+                self.store.update_model_list(service["id"], models, expected_revision=current["revision"])
+                reloaded = DirectServiceStore(config_path=self.config_path, key_dir=self.store.key_dir)
+                client = ProviderClient(model_configuration_store=self.model_store, direct_service_store=reloaded)
+                with patch("urllib.request.urlopen", return_value=_chat_response("旧模型已调用")) as urlopen:
+                    result = client.excel_analysis(
+                        ExcelAnalysisRequest(table={"headers": ["部门"], "rows": [["研发"]], "rowCount": 1, "columnCount": 1}),
+                        trace_id="trace-legacy-custom",
+                    )
+                self.assertEqual(result["structuredReport"]["overview"], "旧模型已调用")
+                self.assertEqual(json.loads(urlopen.call_args[0][0].data.decode("utf-8"))["model"], "glm-kept")
+                self.assertTrue(reloaded.get_task_model_selection("excel.analysis")["customModelValidated"])

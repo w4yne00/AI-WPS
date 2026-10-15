@@ -2232,7 +2232,9 @@ class DirectServiceStore:
                     "DIRECT_SERVICE_MODEL_REQUIRED", "自定义模型名称不能为空。"
                 )
             catalog = self._model_catalog_state(service) if service else {}
-            if catalog.get("usableForSelection"):
+            if catalog.get("usableForSelection") and not self._is_custom_model_validated(
+                payload, task_type, service, clean_model
+            ):
                 raise DirectServiceError(
                     "DIRECT_SERVICE_CUSTOM_MODEL_NOT_ALLOWED",
                     "模型目录当前可用时不能使用高级手填模型。",
@@ -2319,7 +2321,9 @@ class DirectServiceStore:
                     "API Key 在验证期间发生变化，请重新验证模型。",
                 )
             catalog = self._model_catalog_state(service)
-            if catalog.get("usableForSelection"):
+            if catalog.get("usableForSelection") and not self._is_custom_model_validated(
+                payload, clean_task, service, clean_model
+            ):
                 raise DirectServiceError(
                     "DIRECT_SERVICE_CUSTOM_MODEL_NOT_ALLOWED",
                     "模型目录当前可用时不能使用高级手填模型。",
@@ -2799,11 +2803,11 @@ class DirectServiceStore:
         if not service_id or not service or not model_name:
             return "unconfigured", False, "missing_model"
         if custom_model:
+            if custom_model_validated:
+                return "available", True, ""
             catalog = self._model_catalog_state(service)
             if catalog.get("usableForSelection"):
                 return "unavailable", False, "catalog_usable"
-            if custom_model_validated:
-                return "available", True, ""
             return "unverified", False, "validation_required"
 
         # Saved model id is called as stored; catalog state only assists selection.

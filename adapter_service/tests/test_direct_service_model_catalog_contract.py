@@ -542,9 +542,19 @@ class DirectServiceModelCatalogContractTests(unittest.TestCase):
             manual["id"], ["manual-model"], expected_revision=empty_catalog["revision"]
         )
         self.assertEqual(catalog_after_validation["modelCatalog"]["status"], "available")
-        unavailable_manual = self.store.get_task_model_selection("excel.analysis")
-        self.assertFalse(unavailable_manual["modelAvailable"])
-        self.assertEqual(unavailable_manual["modelUnavailableReason"], "catalog_usable")
+        preserved_manual = self.store.get_task_model_selection("excel.analysis")
+        self.assertTrue(preserved_manual["modelAvailable"])
+        self.assertTrue(preserved_manual["customModelValidated"])
+        self.assertEqual(client.resolve_task_auth("excel.analysis")["modelName"], "manual-model")
+        self.store.activate_direct_service(
+            manual["id"], "excel.analysis", task_model_selection=preserved_manual
+        )
+        with patch("urllib.request.urlopen", return_value=probe_response):
+            revalidated = client.validate_task_model_selection(
+                "excel.analysis", preserved_manual, "trace-manual-revalidation"
+            )
+        self.assertTrue(revalidated["taskCallPerformed"])
+        self.assertTrue(revalidated["customModelValidated"])
 
     def test_task_contract_failure_does_not_mark_manual_model_validated(self) -> None:
         service = self._service("任务合同失败服务")

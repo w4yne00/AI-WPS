@@ -7819,7 +7819,8 @@
       return Promise.reject(new Error(checked.message || checked.error || "请检查参数设置。"));
     }
     var persistedSelection = (state.taskModelSelections && state.taskModelSelections[taskType]) || {};
-    if (persistedSelection.customModel && !draft.customModel && !String(draft.modelName || "").trim()) {
+    if (persistedSelection.customModel && persistedSelection.serviceId === draft.serviceId &&
+        !draft.customModel && !String(draft.modelName || "").trim()) {
       var customCoverError = "高级手填入口已关闭，不能用空模型覆盖已保存的手填模型。";
       if (statusNode) {
         statusNode.textContent = customCoverError;

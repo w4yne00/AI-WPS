@@ -4983,7 +4983,8 @@
       return;
     }
     var persistedSelection = state.taskModelSelections[taskType] || {};
-    if (persistedSelection.customModel && !draft.customModel && !String(draft.modelName || "").trim()) {
+    if (persistedSelection.customModel && persistedSelection.serviceId === draft.serviceId &&
+        !draft.customModel && !String(draft.modelName || "").trim()) {
       if (statusNode) {
         statusNode.textContent = "高级手填入口已关闭，不能用空模型覆盖已保存的手填模型。";
       }
