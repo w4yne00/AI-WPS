@@ -3605,7 +3605,14 @@
       }
     } else {
       if (ledgerResultBox) ledgerResultBox.hidden = true;
-      if (markdownOutput) markdownOutput.hidden = false;
+      if (markdownOutput) {
+        markdownOutput.hidden = false;
+        if (view.error) {
+          markdownOutput.textContent = view.error;
+        } else if (isRunning || view.busy || view.phaseLabel) {
+          markdownOutput.textContent = view.phaseLabel || "正在提取任务台账，请稍候。";
+        }
+      }
       var writeSectionEl = byId("ledger-write-section");
       if (writeSectionEl) writeSectionEl.hidden = true;
     }
@@ -3887,6 +3894,7 @@
           if (isVisibleForTask()) {
             setExcelAnalysisCancelVisible(false);
             setInterruptedRetryVisible(true);
+            taskSession.pendingRetryClientJobId = jobId;
             setStatus("adapter 已重启，原智能分析任务已中断，请重新提交。");
             setPlainResult("adapter 已重启，原智能分析任务无法恢复，请使用“重新提交分析”。\n任务编号：" + jobId);
           }
@@ -4062,10 +4070,12 @@
   }
 
   function runExcelAnalysisAction() {
+    var options = arguments[0];
     var clickTimestamp = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
     var taskSession = getExcelTaskSession("excel.analysis");
     var stopWaiting;
-    var clientJobId = buildExcelAnalysisClientJobId();
+    var reuseJobId = options && options.reuseClientJobId;
+    var clientJobId = reuseJobId || buildExcelAnalysisClientJobId();
     var startedAt;
     var app = typeof getEtApplication === "function" ? getEtApplication() : null;
     var workbook = typeof getActiveWorkbook === "function" ? getActiveWorkbook(app) : null;
@@ -4098,6 +4108,10 @@
       return;
     }
 
+    if (helpers.claimTaskSlot) {
+      helpers.claimTaskSlot(state.activeTaskSlots, "et", "excel.analysis", docSessionId, clientJobId);
+    }
+    setExcelTaskBusy(true, docSessionId, "excel.analysis");
     setStatus("正在校验智能分析选区...");
     setPlainResult("正在读取 Excel 表格范围，请稍候。");
     var feedbackTimestamp = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
@@ -4107,8 +4121,13 @@
       : null;
 
     setTimeout(function () {
-      if (!isCurrentVisible()) { return; }
-      setExcelTaskBusy(true, docSessionId, "excel.analysis");
+      if (!isCurrentVisible()) {
+        if (helpers.releaseTaskSlot) {
+          helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.analysis", docSessionId, clientJobId);
+        }
+        setExcelTaskBusy(false, docSessionId, "excel.analysis");
+        return;
+      }
       var extractionStart = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
       try {
         state.latestExcelPayload = extractExcelRange();
@@ -4119,6 +4138,9 @@
         byId("excel-range-summary").textContent = summarizeExcelPayload(state.latestExcelPayload);
         setScopeLine(summarizeExcelPayload(state.latestExcelPayload));
       } catch (error) {
+        if (helpers.releaseTaskSlot) {
+          helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.analysis", docSessionId, clientJobId);
+        }
         setExcelTaskBusy(false, docSessionId, "excel.analysis");
         setStatus("读取 Excel 表格失败：" + error.message);
         if (state.analysisResult && typeof renderExcelAnalysisResult === "function") {
@@ -4131,6 +4153,7 @@
 
       setInterruptedRetryVisible(false);
       setExcelAnalysisCancelVisible(false);
+      taskSession.pendingRetryClientJobId = null;
       state.analysisRequirement = safeText(byId("excel-analysis-requirement").value);
       state.analysisResult = null;
       if (state.activeAnalysisResultsBySession) {
@@ -4143,10 +4166,6 @@
       taskSession.pollErrorCount = 0;
       taskSession.resumeExpected = false;
       byId("result-view-switch").hidden = true;
-
-      if (helpers.claimTaskSlot) {
-        helpers.claimTaskSlot(state.activeTaskSlots, "et", "excel.analysis", docSessionId, clientJobId);
-      }
 
       setStatus("正在提交智能分析请求...");
       setPlainResult("正在等待模型后台生成分析报告。");
@@ -4475,6 +4494,7 @@
         if (isVisibleForTask()) {
           setExcelFormulaCancelVisible(false);
           setFormulaInterruptedRetryVisible(true);
+          taskSession.pendingRetryClientJobId = jobId;
           setStatus("adapter 已重启，原公式助手任务已中断，请重新提交。");
           setPlainResult("adapter 已重启，原公式助手任务无法恢复，请重新提交计算需求。\n任务编号：" + jobId);
         }
@@ -4613,10 +4633,12 @@
   }
 
   function runExcelFormulaAction() {
+    var options = arguments[0];
     var clickTimestamp = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
     var taskSession = getExcelTaskSession("excel.formula_assistant");
     var stopWaiting;
-    var clientJobId = buildExcelFormulaClientJobId();
+    var reuseJobId = options && options.reuseClientJobId;
+    var clientJobId = reuseJobId || buildExcelFormulaClientJobId();
     var startedAt;
     var app = typeof getEtApplication === "function" ? getEtApplication() : null;
     var workbook = typeof getActiveWorkbook === "function" ? getActiveWorkbook(app) : null;
@@ -4651,10 +4673,13 @@
     state.formulaRequirement = safeText(byId("excel-formula-requirement").value);
     if (state.formulaMode === "generate" && !state.formulaRequirement) {
       setStatus("请填写计算需求。");
-      setPlainResult("请说明需要计算的内容，再生成推荐公式。");
       return;
     }
 
+    if (helpers.claimTaskSlot) {
+      helpers.claimTaskSlot(state.activeTaskSlots, "et", "excel.formula_assistant", docSessionId, clientJobId);
+    }
+    setExcelTaskBusy(true, docSessionId, "excel.formula_assistant");
     setStatus("正在校验公式上下文...");
     setPlainResult("公式助手正在读取明确选区，不会读取工作表已用范围。");
     var feedbackTimestamp = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
@@ -4664,9 +4689,14 @@
       : null;
 
     setTimeout(function () {
-      if (!isCurrentVisible()) { return; }
+      if (!isCurrentVisible()) {
+        if (helpers.releaseTaskSlot) {
+          helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.formula_assistant", docSessionId, clientJobId);
+        }
+        setExcelTaskBusy(false, docSessionId, "excel.formula_assistant");
+        return;
+      }
       var payload;
-      setExcelTaskBusy(true, docSessionId, "excel.formula_assistant");
       var extractionStart = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
       try {
         payload = extractExcelFormulaRange();
@@ -4677,6 +4707,9 @@
         byId("excel-formula-range-summary").textContent = summarizeExcelFormulaPayload(payload);
         setScopeLine(summarizeExcelFormulaPayload(payload));
       } catch (error) {
+        if (helpers.releaseTaskSlot) {
+          helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.formula_assistant", docSessionId, clientJobId);
+        }
         setExcelTaskBusy(false, docSessionId, "excel.formula_assistant");
         setStatus("读取公式上下文失败：" + error.message);
         if (state.formulaResult && typeof renderExcelFormulaResult === "function") {
@@ -4689,6 +4722,7 @@
 
       setFormulaInterruptedRetryVisible(false);
       setExcelFormulaCancelVisible(false);
+      taskSession.pendingRetryClientJobId = null;
       state.formulaResult = null;
       if (state.activeFormulaResultsBySession) {
         delete state.activeFormulaResultsBySession[docSessionId];
@@ -4702,10 +4736,6 @@
       taskSession.pollErrorCount = 0;
       taskSession.resumeExpected = false;
       byId("result-view-switch").hidden = true;
-
-      if (helpers.claimTaskSlot) {
-        helpers.claimTaskSlot(state.activeTaskSlots, "et", "excel.formula_assistant", docSessionId, clientJobId);
-      }
 
       setStatus(getFormulaModeUi(state.formulaMode).submitStatus);
       setPlainResult(getFormulaModeUi(state.formulaMode).submitResult);
@@ -5103,6 +5133,7 @@
         if (isCurrentDoc()) {
           setExcelSmartFillCancelVisible(false);
           setSmartFillInterruptedRetryVisible(true);
+          taskSession.pendingRetryClientJobId = jobId;
           if (state.smartFillRetryItemId) {
             restoreSmartFillRetryResult();
           }
@@ -5206,10 +5237,12 @@
   }
 
   function runExcelSmartFillAction() {
+    var options = arguments[0];
     var clickTimestamp = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
     var taskSession = getExcelTaskSession("excel.smart_fill");
     var stopWaiting;
-    var clientJobId = buildExcelSmartFillClientJobId();
+    var reuseJobId = options && options.reuseClientJobId;
+    var clientJobId = reuseJobId || buildExcelSmartFillClientJobId();
     var payload;
     var startedAt;
     var app = typeof getEtApplication === "function" ? getEtApplication() : null;
@@ -8735,9 +8768,21 @@
         ctrl.writeToSheet(app).catch(function () {});
       });
     }
-    byId("btn-resubmit-interrupted-job").addEventListener("click", runExcelAnalysisAction);
-    byId("btn-resubmit-interrupted-formula-job").addEventListener("click", runExcelFormulaAction);
-    byId("btn-resubmit-interrupted-smart-fill-job").addEventListener("click", runExcelSmartFillAction);
+    byId("btn-resubmit-interrupted-job").addEventListener("click", function () {
+      var ts = getExcelTaskSession("excel.analysis");
+      var retryId = ts && ts.pendingRetryClientJobId;
+      runExcelAnalysisAction({ reuseClientJobId: retryId });
+    });
+    byId("btn-resubmit-interrupted-formula-job").addEventListener("click", function () {
+      var ts = getExcelTaskSession("excel.formula_assistant");
+      var retryId = ts && ts.pendingRetryClientJobId;
+      runExcelFormulaAction({ reuseClientJobId: retryId });
+    });
+    byId("btn-resubmit-interrupted-smart-fill-job").addEventListener("click", function () {
+      var ts = getExcelTaskSession("excel.smart_fill");
+      var retryId = ts && ts.pendingRetryClientJobId;
+      runExcelSmartFillAction({ reuseClientJobId: retryId });
+    });
     byId("diagnostics-disclosure").addEventListener("toggle", handleDiagnosticsDisclosureToggle);
     byId("workflow-task-tabs").addEventListener("click", handleWorkflowTaskTabClick);
     byId("workflow-task-tabs").addEventListener("keydown", handleWorkflowTaskTabKeydown);
