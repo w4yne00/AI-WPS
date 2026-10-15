@@ -464,6 +464,11 @@
       var s = current();
       if (s.busy) return;
       s.error = "";
+      s.result = null;
+      s.confirmationStatus = "unconfirmed";
+      s.confirmedOutline = null;
+      s.confirmedAt = null;
+      s.basisWarning = false;
       s.busy = true;
       s.activeDrawerPageIndex = null;
       s.status = "running";

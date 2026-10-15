@@ -122,7 +122,7 @@ POST /ppt/document-files
 - 单条删除：`DELETE /history/{historyId}`
 - 清空功能历史：`DELETE /history?taskType=ppt.slide_assistant`
 
-请求合同支持 `documentDisplayName`（展示用文件名，不含全路径）、`documentSessionId`（文档会话标识）与 `host`（宿主应用，默认 `wpp`）。同一功能和文档会话存在未结束任务时拒绝重复提交（HTTP 409 `PPT_SLIDE_ASSISTANT_DOCUMENT_TASK_BUSY`）。归档结果严格剥离 `prompt`、`userInstruction`、`rawAnswer` 及密钥/请求头等敏感信息。超 5 MiB 结果跳过归档并在活动区提示用户。
+请求合同支持 `documentDisplayName`（展示用文件名，不含全路径）、`documentSessionId`（文档会话标识）与 `host`（宿主应用，默认 `wpp`）。同一功能和文档会话存在未结束任务时拒绝重复提交（HTTP 409 `PPT_SLIDE_ASSISTANT_DOCUMENT_TASK_BUSY`）。再次生成使用新的 `clientJobId`，即使输入相同也重新执行；同一次提交的网络重试与上传恢复沿用原 ID。同 ID 若绑定其他宿主或文档会话，返回 HTTP 409 `PPT_SLIDE_ASSISTANT_TASK_CONFLICT`，不返回旧任务结果。归档结果严格剥离 `prompt`、`userInstruction`、`rawAnswer` 及密钥/请求头等敏感信息。超 5 MiB 结果跳过归档并在活动区提示用户。
 
 ## 故障排查
 

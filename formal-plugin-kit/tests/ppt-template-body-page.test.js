@@ -877,3 +877,21 @@ test('recovery block belongs to the affected presentation and does not poison an
   h.session = 'sess-ppt-template-1';
   assert.equal(controller.getState().recoveryRequired, true);
 });
+
+test('template page repeated generation uses fresh jobs and removes the previous result before a failed submission', async () => {
+  const { h, controller } = generationHarness();
+  await controller.startGenerate({ pageIndex: 2 });
+  const firstId = controller.getState().jobId;
+  let rejectRequest;
+  h.requestHandler = () => new Promise((resolve, reject) => { rejectRequest = reject; });
+  const second = controller.startGenerate({ pageIndex: 2 });
+  assert.notEqual(controller.getState().jobId, firstId);
+  assert.equal(controller.getState().result, null);
+  assert.equal(controller.getState().canAppend, false);
+  await assert.rejects(controller.startGenerate({ pageIndex: 2 }), /正在运行/);
+  assert.equal(h.calls.filter(call => call.url === '/ppt/template-page/jobs').length, 2);
+  rejectRequest(new Error('新任务失败'));
+  await assert.rejects(second, /新任务失败/);
+  assert.equal(controller.getState().status, 'failed');
+  assert.equal(controller.getState().result, null);
+});

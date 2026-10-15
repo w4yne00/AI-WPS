@@ -1313,6 +1313,7 @@
       return;
     }
     var clientJobId = payload.clientJobId;
+    var docSession = payload.documentSessionId || state.documentSessionId;
     state.jobSourceMode = payload.sourceMode || "slide";
     state.jobId = clientJobId;
     state.startedAt = Date.now();
@@ -1325,7 +1326,7 @@
       startedAt: state.startedAt,
       sourceMode: state.jobSourceMode,
       stage: "job",
-      documentSessionId: state.documentSessionId
+      documentSessionId: docSession
     });
     setStatus(payload.sourceMode === "document" ? "正在提交文档总结任务..." : "正在提交当前页总结任务...");
     request(
@@ -1351,25 +1352,26 @@
         startedAt: state.startedAt,
         sourceMode: state.jobSourceMode,
         stage: "job",
-        documentSessionId: state.documentSessionId
+        documentSessionId: docSession
       });
       if (job.status === "completed") {
         var completionTimestamp = getTerminalCompletionTimestamp(job);
-        finishJob(jobId, job.result || {}, state.documentSessionId, traceId, completionTimestamp);
+        finishJob(jobId, job.result || {}, docSession, traceId, completionTimestamp);
         return;
       }
       var progress = helpers.describePptJobProgress(job, state.jobSourceMode, jobId);
       setStatus(progress.status);
       setPptJobActionVisibility(job);
       showProgressText(progress.detail);
-      pollPptSlideJob(jobId, state.documentSessionId);
+      pollPptSlideJob(jobId, docSession);
     }).catch(function (error) {
+      if (state.jobId !== clientJobId) return;
       if (isFatalPollError(error)) {
-        failJob(clientJobId, error.message, "提交失败", state.documentSessionId);
+        failJob(clientJobId, error.message, "提交失败", docSession);
         return;
       }
       setStatus("提交响应未确认，正在按任务编号恢复查询...");
-      pollPptSlideJob(clientJobId, state.documentSessionId);
+      pollPptSlideJob(clientJobId, docSession);
     });
   }
 
@@ -1416,6 +1418,7 @@
         state.result = null;
         showProgressText("正在准备提交当前页总结...");
         payload.sourceMode = "slide";
+        payload.documentSessionId = docSession;
         payload.userInstruction = instruction.slice(0, 1000);
         payload.clientJobId = clientJobId;
         payload.documentDisplayName = docName;
@@ -1517,6 +1520,7 @@
         requestedSlideCount: count,
         userInstruction: instruction,
         clientJobId: clientJobId,
+        documentSessionId: docSession,
         documentDisplayName: docName
       }, perf);
     }).catch(function (error) {
@@ -1536,7 +1540,7 @@
       setStatus("Adapter 当前处于恢复模式，模型任务已被安全阻止。");
       return;
     }
-    if (state.workflowProfileMutationBusy) {
+    if (state.workflowProfileMutationBusy || state.busy) {
       setStatus("模型配置正在更新，请稍后再运行智能总结。");
       return;
     }
@@ -1903,6 +1907,7 @@
       byId("structure-result-output").textContent = progress.detail;
       pollStructureReviewJob(jobId, docSession);
     }).catch(function (error) {
+      if (state.jobId !== clientJobId) return;
       if (isFatalStructurePollError(error)) {
         failStructureJob(clientJobId, error.message, "提交失败", docSession);
         return;
@@ -5478,7 +5483,8 @@
         fileToken: active.fileToken,
         requestedSlideCount: active.requestedSlideCount,
         userInstruction: active.userInstruction || "",
-        clientJobId: active.jobId
+        clientJobId: active.jobId,
+        documentSessionId: active.documentSessionId || currentDocSession
       });
       return;
     }
@@ -6222,9 +6228,12 @@
       byId("btn-ppt-generate-template-deck").addEventListener("click", function () {
         var ctrl = ensureTemplateDeck();
         if (!ctrl) return;
+        var docSession = helpers.getDocumentSessionId(getActivePresentation());
         ctrl.startGenerate().then(function () {
+          if (helpers.getDocumentSessionId(getActivePresentation()) !== docSession) return;
           setStatus("整套内容已生成，请核对后再确认。");
         }).catch(function (err) {
+          if (helpers.getDocumentSessionId(getActivePresentation()) !== docSession) return;
           setStatus(err.message || String(err));
         });
       });

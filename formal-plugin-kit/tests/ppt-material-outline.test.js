@@ -786,3 +786,29 @@ test('source pictures load on demand without entering persisted outline', async 
   const reopened = createTestHarness(storage);
   assert.equal(reopened.api.hasConfirmedOutline(), true);
 });
+
+test("outline regeneration clears active result and confirmation before request and keeps a fresh job", async () => {
+  const h = createTestHarness();
+  const s = h.api.stateFor(h.session);
+  h.requestHandler = async (url, body) => ({ success: true, data: body
+    ? { jobId: body.clientJobId, status: "running" }
+    : { status: "completed", result: { slides: [{ pageIndex: 1, title: "旧结果" }] } } });
+  await h.api.submit();
+  await h.api.poll();
+  h.api.confirmOutline();
+  const firstId = s.jobId;
+  let rejectRequest;
+  h.requestHandler = () => new Promise((resolve, reject) => { rejectRequest = reject; });
+  const second = h.api.submit();
+  assert.notEqual(s.jobId, firstId);
+  assert.equal(s.result, null);
+  assert.equal(h.api.hasConfirmedOutline(), false);
+  assert.equal(h.api.getConfirmedOutline(), null);
+  assert.equal(h.api.confirmOutline(), null);
+  await h.api.submit();
+  assert.equal(h.calls.filter(call => call.url === "/ppt/material-outline/jobs").length, 2);
+  rejectRequest(new Error("本次失败"));
+  await second;
+  assert.equal(s.result, null);
+  assert.equal(s.error, "本次失败");
+});

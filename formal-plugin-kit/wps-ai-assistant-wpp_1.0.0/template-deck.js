@@ -248,36 +248,41 @@
     var render = opts.render || function () {};
     var schedule = opts.schedule || function (fn) { return setTimeout(fn, 0); };
     var confirmWrite = opts.confirm || function () { return true; };
-    var state = {
-      status: "idle",
-      pages: [],
-      contentConfirmed: false,
-      confirmedFingerprint: "",
-      confirmedSessionId: "",
-      confirmedOutlineSnapshot: "",
-      generatedSessionId: "",
-      generatedOutlineSnapshot: "",
-      baselineSlideCount: 0,
-      appendedRange: [],
-      recoveryChoices: [],
-      recoveryRequired: false,
-      recoveryExpectedSlideCount: 0,
-      residualSlideIndex: null,
-      elapsedMs: 0,
-      excludedNotice: "",
-      unverified: ["真实模型质量", "真实 WPS 固定模板排版与可编辑性"],
-      pageCountMessage: "",
-      error: null
-    };
+    var states = Object.create(null);
 
-    function notify() {
-      try { render(getState()); } catch (err) {}
+    function getState() {
+      var sessionId = getSessionId();
+      if (!states[sessionId]) states[sessionId] = {
+        status: "idle",
+        pages: [],
+        contentConfirmed: false,
+        confirmedFingerprint: "",
+        confirmedSessionId: "",
+        confirmedOutlineSnapshot: "",
+        generatedSessionId: "",
+        generatedOutlineSnapshot: "",
+        baselineSlideCount: 0,
+        appendedRange: [],
+        recoveryChoices: [],
+        recoveryRequired: false,
+        recoveryExpectedSlideCount: 0,
+        residualSlideIndex: null,
+        elapsedMs: 0,
+        excludedNotice: "",
+        unverified: ["真实模型质量", "真实 WPS 固定模板排版与可编辑性"],
+        pageCountMessage: "",
+        error: null
+      };
+      return states[sessionId];
     }
 
-    function getState() { return state; }
+    function notify(state) {
+      if (state !== getState()) return;
+      try { render(state); } catch (err) {}
+    }
 
-    function assertGenerationCurrent() {
-      if (getSessionId() !== state.generatedSessionId) throw new Error("目标演示文稿已变化，请重新生成整套内容。");
+    function assertGenerationCurrent(state) {
+      if (getSessionId() !== state.generatedSessionId) return;
       if (!hasConfirmedOutline() || JSON.stringify(getConfirmedOutline() || {}) !== state.generatedOutlineSnapshot) {
         throw new Error("已确认大纲已变化，请重新生成整套内容。");
       }
@@ -301,8 +306,7 @@
       });
     }
 
-    function submitPage(slide, instruction) {
-      var sessionId = getSessionId();
+    function submitPage(slide, instruction, sessionId, userFacts) {
       var clientJobId = "cjob_deck_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8);
       var payload = {
         documentSessionId: sessionId,
@@ -313,7 +317,7 @@
         outlineKeyPoints: slide.sourceKeyPoints || slide.keyPoints || [],
         outlineFragmentIds: slide.fragmentIds || [],
         instruction: instruction || "",
-        userFacts: (getConfirmedOutline() || {}).userFacts || ""
+        userFacts: userFacts || ""
       };
       return request("/ppt/template-page/jobs", payload, { method: "POST" }).then(function (start) {
         if (!start || !start.success) throw new Error((start && start.message) || "发起任务失败");
@@ -322,6 +326,8 @@
     }
 
     function startGenerate() {
+      var state = getState();
+      if (state.status === "running") return Promise.reject(new Error("整套生成任务正在运行。"));
       if (state.recoveryRequired || state.pages.some(function (page) { return !!page.writtenSlideIndex; })) {
         return Promise.reject(new Error("已有追加进度，请先核查恢复并完成剩余页面。"));
       }
@@ -343,12 +349,12 @@
       state.generatedOutlineSnapshot = JSON.stringify(outline);
       state.status = "running";
       state.error = null;
-      notify();
+      notify(state);
       return selected.reduce(function (chain, slide) {
         return chain.then(function () {
-          assertGenerationCurrent();
-          return submitPage(slide, outline.instruction || "").then(function (data) {
-            assertGenerationCurrent();
+          assertGenerationCurrent(state);
+          return submitPage(slide, outline.instruction || "", state.generatedSessionId, outline.userFacts).then(function (data) {
+            assertGenerationCurrent(state);
             var result = data.result || {};
             var role = result.pageRole || slide.pageRole;
             var points = result.keyPoints || [];
@@ -369,7 +375,7 @@
           });
         });
       }, Promise.resolve()).then(function () {
-        assertGenerationCurrent();
+        assertGenerationCurrent(state);
         state.status = "preview";
         state.excludedNotice = excluded.length
           ? "以下大纲页不属于本模板四类页面，本次不写入：" + excluded.map(function (slide) {
@@ -377,14 +383,22 @@
           }).join("、")
           : "";
         state.unverified = ["真实模型质量", "真实 WPS 固定模板排版与可编辑性"];
-        notify();
+        notify(state);
         return { status: "PREVIEW", pages: state.pages };
+      }).catch(function (err) {
+        state.status = "failed";
+        state.pages = [];
+        state.contentConfirmed = false;
+        state.error = { message: err.message || String(err) };
+        notify(state);
+        throw err;
       });
     }
 
     function confirmContent() {
+      var state = getState();
       if (!state.pages.length) throw new Error("请先生成整套内容。");
-      assertGenerationCurrent();
+      assertGenerationCurrent(state);
       if (state.pages.some(function (page) { return page.isOverflow || isOverflow(page.pageRole, page.keyPoints); })) {
         throw new Error("仍有超出容量的页面，请先精简或拆页。");
       }
@@ -392,11 +406,12 @@
       state.confirmedFingerprint = fingerprint(state.pages);
       state.confirmedSessionId = getSessionId();
       state.confirmedOutlineSnapshot = state.generatedOutlineSnapshot;
-      notify();
+      notify(state);
       return state;
     }
 
     function splitPage(pageId) {
+      var state = getState();
       var index = -1;
       for (var i = 0; i < state.pages.length; i++) if (state.pages[i].pageId === pageId) index = i;
       if (index < 0) throw new Error("未找到要拆分的页面。");
@@ -421,11 +436,12 @@
       state.pages.splice(index, 1, left, right);
       state.contentConfirmed = false;
       state.pageCountMessage = "页数由 " + before + " 变为 " + state.pages.length;
-      notify();
+      notify(state);
       return { pageCountBefore: before, pageCountAfter: state.pages.length, message: state.pageCountMessage };
     }
 
     function simplifyPage(pageId) {
+      var state = getState();
       var page = null;
       for (var i = 0; i < state.pages.length; i++) if (state.pages[i].pageId === pageId) page = state.pages[i];
       if (!page) return Promise.reject(new Error("未找到要精简的页面。"));
@@ -435,7 +451,7 @@
         title: page.title,
         sourceKeyPoints: page.sourceKeyPoints || page.keyPoints,
         keyPoints: page.keyPoints
-      }, "请精简到模板容量内，不要截断或丢弃已确认事实。").then(function (data) {
+      }, "请精简到模板容量内，不要截断或丢弃已确认事实。", getSessionId(), (getConfirmedOutline() || {}).userFacts).then(function (data) {
         var result = data.result || {};
         page.title = result.title || page.title;
         page.keyPoints = result.keyPoints || page.keyPoints;
@@ -445,12 +461,13 @@
         page.isOverflow = !!(result.isOverflow || isOverflow(page.pageRole, page.keyPoints));
         state.contentConfirmed = false;
         state.elapsedMs += Number(data.elapsedMs) || 0;
-        notify();
+        notify(state);
         return page;
       });
     }
 
     function append(app) {
+      var state = getState();
       if (!state.contentConfirmed) throw new Error("请先确认整套内容。");
       if (state.recoveryRequired) throw new Error("请先核查恢复并清理残页，再继续追加。");
       if (getSessionId() !== state.confirmedSessionId) throw new Error("目标演示文稿已变化，已阻止写入旧预览。");
@@ -465,11 +482,12 @@
       state.appendedRange = written.appendedRange;
       state.recoveryChoices = written.recoveryChoices;
       state.residualSlideIndex = written.residualSlideIndex || null;
-      notify();
+      notify(state);
       return written;
     }
 
     function verifyRecovery(app) {
+      var state = getState();
       if (!state.recoveryRequired) throw new Error("当前没有需要核查的残页。");
       if (getSessionId() !== state.confirmedSessionId) throw new Error("目标演示文稿已变化，无法核查恢复。");
       var slides = app && app.ActivePresentation && app.ActivePresentation.Slides;
@@ -481,7 +499,7 @@
       state.residualSlideIndex = null;
       state.recoveryChoices = ["继续追加剩余页"];
       state.error = null;
-      notify();
+      notify(state);
       return state;
     }
 

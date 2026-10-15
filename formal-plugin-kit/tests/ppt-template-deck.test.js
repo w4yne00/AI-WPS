@@ -193,6 +193,7 @@ function loadController(h) {
     request(url, body, opts) {
       const method = (opts && opts.method) || "GET";
       h.calls.push({ url, body, method });
+      if (h.requestHandler) return h.requestHandler(url, body, opts);
       if (url === "/ppt/template-page/jobs" && method === "POST") {
         h.jobs.set(body.clientJobId, body);
         return Promise.resolve({ success: true, data: { jobId: body.clientJobId, status: "running" } });
@@ -400,7 +401,7 @@ test("目标文稿或已确认内容变化时拒绝写入旧预览", async () =>
   await h.ctrl.startGenerate();
   h.ctrl.confirmContent();
   h.session = "other-deck";
-  assert.throws(() => h.ctrl.append(h.host.app), /演示文稿已变化/);
+  assert.throws(() => h.ctrl.append(h.host.app), /请先确认整套内容/);
   h.session = "sess-deck";
   h.ctrl.getState().pages[0].title = "被改过的封面";
   assert.throws(() => h.ctrl.append(h.host.app), /已确认内容已变化/);
@@ -412,7 +413,7 @@ test("生成后切换文稿不能把旧内容重新确认为新文稿", async ()
   await h.ctrl.startGenerate();
   h.session = "other-deck";
   h.outline = { ...outline(), instruction: "另一文稿" };
-  assert.throws(() => h.ctrl.confirmContent(), /目标演示文稿|大纲已变化/);
+  assert.throws(() => h.ctrl.confirmContent(), /请先生成整套内容/);
   assert.equal(h.ctrl.getState().contentConfirmed, false);
   assert.equal(h.host.app.ActivePresentation.Slides.Count, 5);
 });
@@ -516,4 +517,92 @@ test("任务窗格提供整套填充入口", () => {
   assert.match(html, /id="btn-ppt-confirm-template-deck"/);
   assert.match(html, /id="btn-ppt-append-template-deck"/);
   assert.match(js, /createTemplateDeck/);
+});
+
+test("整套生成执行中连点只产生一套任务，结束后相同输入使用新任务", async () => {
+  const h = harness();
+  const first = h.ctrl.startGenerate();
+  await assert.rejects(h.ctrl.startGenerate(), /正在运行/);
+  await first;
+  const firstIds = h.calls.filter(call => call.method === "POST").map(call => call.body.clientJobId);
+  assert.equal(firstIds.length, 4);
+  await h.ctrl.startGenerate();
+  const allIds = h.calls.filter(call => call.method === "POST").map(call => call.body.clientJobId);
+  assert.equal(allIds.length, 8);
+  assert.equal(new Set(allIds).size, 8);
+});
+
+test("整套重新生成失败清除旧预览及授权，并允许再次生成", async () => {
+  const h = harness();
+  await h.ctrl.startGenerate();
+  h.ctrl.confirmContent();
+  h.pollStatuses = ["failed"];
+  const failed = h.ctrl.startGenerate();
+  assert.equal(h.ctrl.getState().pages.length, 0);
+  assert.equal(h.ctrl.getState().contentConfirmed, false);
+  await assert.rejects(failed, /生成失败/);
+  assert.equal(h.ctrl.getState().status, "failed");
+  assert.equal(h.ctrl.getState().pages.length, 0);
+  assert.match(h.ctrl.getState().error.message, /生成失败/);
+  await h.ctrl.startGenerate();
+  assert.equal(h.ctrl.getState().status, "preview");
+});
+
+test("其他文档不能显示已生成整套预览和写回授权", async () => {
+  const h = harness();
+  await h.ctrl.startGenerate();
+  h.ctrl.confirmContent();
+  h.session = "另一个文档";
+  const view = h.ctrl.getState();
+  assert.equal(view.status, "idle");
+  assert.equal(view.pages.length, 0);
+  assert.equal(view.contentConfirmed, false);
+  h.session = "sess-deck";
+  assert.equal(h.ctrl.getState().status, "preview");
+  assert.equal(h.ctrl.getState().pages.length, 4);
+});
+
+for (const outcome of ["completed", "failed"]) {
+  test("文档 A 延迟" + outcome + "不阻止或覆盖文档 B 整套生成", async () => {
+    const h = harness();
+    const held = {};
+    h.requestHandler = (url, body) => {
+      if (body) return Promise.resolve({ success: true, data: { jobId: body.documentSessionId } });
+      const session = new URL("http://local" + url).searchParams.get("documentSessionId");
+      if (session === "sess-deck" && !held.released) return new Promise(resolve => { held.resolve = resolve; });
+      if (session === "sess-deck") return Promise.resolve({ success: true, data: { status: "completed", result: { title: "文档 A 后页", keyPoints: ["A"] } } });
+      return Promise.resolve({ success: true, data: { status: "completed", result: { title: "文档 B", keyPoints: ["B"] } } });
+    };
+    h.outline.slides = h.outline.slides.slice(0, 2);
+    h.outline.userFacts = "A事实";
+    const first = h.ctrl.startGenerate().catch(error => error);
+    await new Promise(resolve => setImmediate(resolve));
+    h.session = "doc-B";
+    h.outline = { ...h.outline, userFacts: "B事实" };
+    await h.ctrl.startGenerate();
+    assert.equal(h.ctrl.getState().pages[0].title, "文档 B");
+    const renderCount = h.views.length;
+    held.released = true;
+    held.resolve({ success: true, data: { status: outcome, result: { title: "文档 A", keyPoints: ["A"] }, error: { message: "A失败" } } });
+    await first;
+    assert.equal(h.ctrl.getState().status, "preview");
+    assert.equal(h.ctrl.getState().pages[0].title, "文档 B");
+    assert.equal(h.ctrl.getState().error, null);
+    assert.equal(h.views.length, renderCount);
+    const submissions = h.calls.filter(call => call.method === "POST");
+    assert.equal(submissions.filter(call => call.body.documentSessionId === "doc-B").length, 2);
+    const aSubmissions = submissions.filter(call => call.body.documentSessionId === "sess-deck");
+    assert.equal(aSubmissions.length, outcome === "completed" ? 2 : 1);
+    assert.ok(aSubmissions.every(call => call.body.userFacts === "A事实"));
+    h.session = "sess-deck";
+    assert.equal(h.ctrl.getState().status, outcome === "completed" ? "preview" : "failed");
+  });
+}
+
+test("整套第二页失败不能保留或确认不完整结果", async () => {
+  const h = harness({ pollStatuses: ["completed", "failed"] });
+  await assert.rejects(h.ctrl.startGenerate(), /生成失败/);
+  assert.equal(h.ctrl.getState().pages.length, 0);
+  assert.equal(h.ctrl.getState().contentConfirmed, false);
+  assert.throws(() => h.ctrl.confirmContent(), /先生成/);
 });
