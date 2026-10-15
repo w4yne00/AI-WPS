@@ -43,29 +43,29 @@
   - `DirectServiceStore.delete_custom_model(service_id: str, model_name: str) -> dict`
   - `DirectServiceStore._model_availability(...) -> Tuple[str, bool, str]`（解除 `custom_model` 必须已验证及目录可用的阻断）
 
-- [ ] **Step 1: 编写失败的单元测试**
+- [x] **Step 1: 编写失败的单元测试**
   在 `adapter_service/tests/test_issue257_manual_model_input.py` 中编写针对 `add_custom_model`、`delete_custom_model`（含平滑重置级联）以及解除目录可用限制与未验证限制的测试用例：
   - `test_add_and_list_custom_models`: 验证可成功向服务追加手填模型并自动去重；
   - `test_delete_custom_model_cascades_smooth_reset`: 验证删除手填模型后，若其为 `defaultModel` 则置空；若有 `taskModelSelections` 正在使用该模型，平滑重置为继承状态；
   - `test_custom_model_allowed_when_catalog_is_usable`: 验证目录完全可用时，保存和查询手填模型不会触发 `DIRECT_SERVICE_CUSTOM_MODEL_NOT_ALLOWED`；
   - `test_unverified_custom_model_is_available_for_selection`: 验证未测试调用的手填模型状态为 `modelAvailable: True`，可正常保存并设为当前。
 
-- [ ] **Step 2: 在 Kylin V10 上运行测试验证失败**
+- [x] **Step 2: 在 Kylin V10 上运行测试验证失败**
   运行：`ssh cloud@192.168.64.3 'cd /data/home/cloud/AI-WPS-kylin-test && PATH=/data/home/cloud/.venvs/ai-wps-test-py38/bin:$PATH PYTHONPATH=adapter_service /data/home/cloud/.venvs/ai-wps-test-py38/bin/python -m pytest -q adapter_service/tests/test_issue257_manual_model_input.py'`
   预期：FAIL（`add_custom_model` 不存在，目录可用时仍报错）。
 
-- [ ] **Step 3: 实现 `direct_services.py` 中的手填模型方法与解耦逻辑**
+- [x] **Step 3: 实现 `direct_services.py` 中的手填模型方法与解耦逻辑**
   - 在服务定义解析与序列化中确保 `customModels: List[str]` 字段存在（默认 `[]`）；
   - 实现 `add_custom_model(service_id: str, model_name: str) -> dict`：校验非空合法性，去重追加至 `service["customModels"]`，原子写入；
   - 实现 `delete_custom_model(service_id: str, model_name: str) -> dict`：从 `service["customModels"]` 移除；若 `service.get("defaultModel") == model_name`，置为 `""`；遍历所有 `taskModelSelections`，若 `sel.get("serviceId") == service_id and sel.get("modelName") == model_name`，重置为 `modelName = "", customModel = False, customModelValidated = False`；
   - 移除 `_model_availability` 和 `_ensure_task_model_ready` 中对 `custom_model and not custom_validated` 和 `catalog_usable` 的阻断异常；
   - 在 `save_task_model_selection` 中，若 `is_custom` 且 `clean_model` 有效，自动追加至该服务的 `customModels` 清单。
 
-- [ ] **Step 4: 同步代码并运行测试验证通过**
+- [x] **Step 4: 同步代码并运行测试验证通过**
   同步至 Kylin 并运行：`test_issue257_manual_model_input.py`。
   预期：PASS。
 
-- [ ] **Step 5: 提交本任务修改**
+- [x] **Step 5: 提交本任务修改**
   ```bash
   git add adapter_service/app/services/direct_services.py adapter_service/tests/test_issue257_manual_model_input.py
   git commit -m "feat: support customModels management and unblock manual models in DirectServiceStore"
@@ -88,27 +88,27 @@
   - `DELETE /provider/direct-services/{service_id}/custom-models/{model_name}` (FastAPI & Standalone)
   - `ProviderClient.post_task` 支持未验证的手填模型正常发起真实调用
 
-- [ ] **Step 1: 编写失败的端点与执行测试**
+- [x] **Step 1: 编写失败的端点与执行测试**
   在 `test_issue257_manual_model_input.py` 中新增端点测试与 ProviderClient 任务执行测试：
   - `test_fastapi_and_standalone_custom_models_endpoints`: 分别通过 `TestClient` 和 Standalone HTTP 请求调用 `POST` 和 `DELETE` 端点，断言状态码与响应体对等；
   - `test_provider_client_executes_unverified_custom_model`: 验证 `ProviderClient.post_task` 在使用未验证手填模型时，不抛出 `DIRECT_SERVICE_CUSTOM_MODEL_UNVERIFIED`，真实请求体中的 `model` 字段为保存的手填模型 ID。
 
-- [ ] **Step 2: 运行测试验证失败**
+- [x] **Step 2: 运行测试验证失败**
   运行：`test_issue257_manual_model_input.py`
   预期：FAIL（404 Not Found 或 `DIRECT_SERVICE_CUSTOM_MODEL_UNVERIFIED` 报错）。
 
-- [ ] **Step 3: 实现双运行时端点与 ProviderClient 解绑**
+- [x] **Step 3: 实现双运行时端点与 ProviderClient 解绑**
   - 在 `adapter_service/app/api/direct_services.py` 中增加路由：
     - `@router.post("/direct-services/{service_id}/custom-models")`
     - `@router.delete("/direct-services/{service_id}/custom-models/{model_name}")`
   - 在 `adapter_service/standalone_adapter.py` 的请求分发中增加上述两条路由的处理；
   - 在 `adapter_service/app/services/provider_client.py` 中移除 `DIRECT_SERVICE_CUSTOM_MODEL_UNVERIFIED` 和 `DIRECT_SERVICE_CUSTOM_MODEL_NOT_ALLOWED` 的拦截代码，保留有效模型名称检查和凭据指纹检查。
 
-- [ ] **Step 4: 运行测试验证通过**
+- [x] **Step 4: 运行测试验证通过**
   同步至 Kylin 并运行：`test_issue257_manual_model_input.py`。
   预期：PASS。
 
-- [ ] **Step 5: 提交本任务修改**
+- [x] **Step 5: 提交本任务修改**
   ```bash
   git add adapter_service/app/api/direct_services.py adapter_service/standalone_adapter.py adapter_service/app/services/provider_client.py adapter_service/tests/test_issue257_manual_model_input.py
   git commit -m "feat: expose custom-models endpoints and support unverified task execution"
@@ -131,28 +131,28 @@
   - `renderModelOptionsWithCustom(selectElement, catalogModels, customModels, currentModel, isDefaultModelSelect)`
   - `.custom-models-panel` 组件与交互（展开/折叠、添加、删除、平滑重置）
 
-- [ ] **Step 1: 编写失败的前端契约测试**
+- [x] **Step 1: 编写失败的前端契约测试**
   创建 `formal-plugin-kit/tests/issue257-manual-model-input.test.js`：
   - 测试下拉框渲染包含目录模型、已存手填模型与「输入 / 管理手填模型」（`value="__manual__"`）；
   - 测试选择「输入 / 管理手填模型」时管理面板展开；选择目录模型时管理面板收起；
   - 测试在管理面板中添加新模型触发即时 POST 请求并刷新清单；
   - 测试在管理面板中点击删除触发即时 DELETE 请求，并在被删除模型为当前选中模型时平滑回退为继承服务默认。
 
-- [ ] **Step 2: 运行前端契约测试验证失败**
+- [x] **Step 2: 运行前端契约测试验证失败**
   运行：`node --test formal-plugin-kit/tests/issue257-manual-model-input.test.js`
   预期：FAIL。
 
-- [ ] **Step 3: 实现 Word 插件 UI 与交互**
+- [x] **Step 3: 实现 Word 插件 UI 与交互**
   - 在 `taskpane.html` 中：为直连服务编辑卡片和任务模型选择区域分别加入 `.custom-models-panel` 容器模板；
   - 在 `taskpane.css` 中：按照 Apple Design 规范添加 Inset Grouped 样式、Capsule 药丸标签样式、删除按钮悬浮微红及 `:active { transform: scale(0.96); }` 物理动效；
   - 在 `taskpane-helpers.js` 中：更新 `validateActiveDirectTaskSelection`，允许未测试的手填模型通过就绪校验；
   - 在 `taskpane.js` 中：实现下拉框手填模型分组与 `__manual__` 选项渲染，绑定展开/收起事件，实现即时添加与删除网络请求，并在删除当前模型时自动重置。
 
-- [ ] **Step 4: 运行前端契约测试验证通过**
+- [x] **Step 4: 运行前端契约测试验证通过**
   运行：`node --test formal-plugin-kit/tests/issue257-manual-model-input.test.js`
   预期：PASS。
 
-- [ ] **Step 5: 提交本任务修改**
+- [x] **Step 5: 提交本任务修改**
   ```bash
   git add formal-plugin-kit/wps-ai-assistant_1.0.0/ formal-plugin-kit/tests/issue257-manual-model-input.test.js
   git commit -m "feat(word): implement Apple-designed custom models management panel"
