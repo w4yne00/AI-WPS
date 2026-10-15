@@ -450,20 +450,19 @@ class DirectServiceModelCatalogContractTests(unittest.TestCase):
         self.assertEqual(missing["modelList"], ["gpt-4o-mini"])
         self.assertEqual(self.store.get_service(service["id"])["defaultModel"], "gpt-4o")
 
-    def test_manual_model_requires_unavailable_catalog_and_successful_task_validation(self) -> None:
+    def test_manual_model_allowed_even_when_catalog_usable_and_unverified_activation_allowed(self) -> None:
         listed = self._service("目录可用服务")
         self.store.update_model_list(listed["id"], ["gpt-4o"], expected_revision=1)
-        with self.assertRaises(DirectServiceError) as context:
-            self.store.update_task_model_selection(
-                "excel.analysis",
-                service_id=listed["id"],
-                model_name="manual-model",
-                custom_model=True,
-            )
-        self.assertEqual(
-            context.exception.code,
-            "DIRECT_SERVICE_CUSTOM_MODEL_NOT_ALLOWED",
+        # Issue 257: Manual model input is allowed even when catalog is usable
+        allowed_selection = self.store.update_task_model_selection(
+            "excel.analysis",
+            service_id=listed["id"],
+            model_name="manual-model",
+            custom_model=True,
         )
+        self.assertEqual(allowed_selection["modelName"], "manual-model")
+        self.assertTrue(allowed_selection["customModel"])
+        self.assertIn("manual-model", self.store.get_service(listed["id"]).get("customModels", []))
 
         manual = self._service("无目录手填服务")
         draft = self.store.update_task_model_selection(
@@ -473,13 +472,10 @@ class DirectServiceModelCatalogContractTests(unittest.TestCase):
             custom_model=True,
             custom_model_validated=True,
         )
-        self.assertFalse(draft["customModelValidated"])
-        with self.assertRaises(DirectServiceError) as context:
-            self.store.activate_direct_service(manual["id"], "excel.analysis")
-        self.assertEqual(
-            context.exception.code,
-            "DIRECT_SERVICE_CUSTOM_MODEL_UNVERIFIED",
-        )
+        self.assertTrue(draft["modelAvailable"])
+        # Issue 257: Unverified manual model can be activated directly
+        activated_draft = self.store.activate_direct_service(manual["id"], "excel.analysis")
+        self.assertEqual(activated_draft["activeConfigurationId"], manual["id"])
 
         client = ProviderClient(
             model_configuration_store=None,

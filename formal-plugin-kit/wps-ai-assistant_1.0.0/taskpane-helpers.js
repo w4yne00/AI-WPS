@@ -6002,6 +6002,9 @@
     bind("btn-cancel-direct-service-delete", "click", "cancelDelete");
     bind("btn-confirm-direct-service-delete", "click", "confirmDelete");
     bind("btn-clear-direct-service-key", "click", "clearKey");
+    bind("direct-service-default-model", "change", "defaultModelChange");
+    bind("btn-close-direct-service-custom-models", "click", "closeDirectServiceCustomModels");
+    bind("btn-add-direct-service-custom-model", "click", "addDirectServiceCustomModel");
     ["direct-service-name", "direct-service-url", "direct-service-key", "direct-service-default-model"].forEach(function (id) {
       var node = typeof getById === "function" ? getById(id) : null;
       if (node && typeof node.addEventListener === "function" && typeof handlers.editorInput === "function") {
@@ -6011,6 +6014,9 @@
       }
     });
     bind("word-task-direct-service-select", "change", "taskServiceChange");
+    bind("word-task-model-select", "change", "taskModelChange");
+    bind("btn-close-word-task-custom-models", "click", "closeWordTaskCustomModels");
+    bind("btn-add-word-task-manual-model", "click", "addWordTaskCustomModel");
     bind("btn-validate-task-model-selection", "click", "validateTaskSelection");
     bind("btn-authorize-task-images", "click", "authorizeTaskImages");
     bind("btn-revoke-task-images", "click", "revokeTaskImages");
@@ -6296,15 +6302,51 @@
       if (!customName) {
         return { valid: false, ok: false, error: "自定义模型名称不能为空。" };
       }
-      var customService = context && context.service;
-      if (customService && !context.customModelValidated) {
-        var customCatalog = getDirectServiceCatalogState(customService);
-        if (!customCatalog.manualModelAllowed || customCatalog.usableForSelection) {
-          return { valid: false, ok: false, error: "模型目录可用时不能使用高级手填模型。" };
-        }
-      }
     }
     return { valid: true, ok: true, error: "" };
+  }
+
+  function renderModelOptionsWithCustom(selectElement, catalogModels, customModels, currentModel, isDefaultModelSelect, defaultModelLabel) {
+    var cModels = Array.isArray(catalogModels) ? catalogModels : [];
+    var uModels = Array.isArray(customModels) ? customModels : [];
+    var cur = String(currentModel || "");
+    var isDefault = Boolean(isDefaultModelSelect);
+    var options = [];
+
+    if (isDefault) {
+      options.push('<option value="">不设置默认模型</option>');
+    } else {
+      var inheritLabel = defaultModelLabel ? (' (' + defaultModelLabel + ')') : '';
+      options.push('<option value="">继承服务默认模型' + inheritLabel + '</option>');
+    }
+
+    if (cModels.length > 0) {
+      options.push('<optgroup label="目录模型">');
+      cModels.forEach(function (m) {
+        options.push('<option value="' + escapeHtml(m) + '">' + escapeHtml(m) + '</option>');
+      });
+      options.push('</optgroup>');
+    }
+
+    if (uModels.length > 0) {
+      options.push('<optgroup label="手填模型">');
+      uModels.forEach(function (m) {
+        options.push('<option value="' + escapeHtml(m) + '">' + escapeHtml(m) + '</option>');
+      });
+      options.push('</optgroup>');
+    }
+
+    if (cur && cModels.indexOf(cur) < 0 && uModels.indexOf(cur) < 0) {
+      options.push('<option value="' + escapeHtml(cur) + '">当前模型：' + escapeHtml(cur) + '</option>');
+    }
+
+    options.push('<option value="__manual__">输入 / 管理手填模型...</option>');
+
+    if (selectElement) {
+      selectElement.innerHTML = options.join("");
+      selectElement.value = cur;
+    }
+    return options.join("");
   }
 
   function validateDirectTaskSelectionReadiness(selection, service, taskStatus) {
@@ -7174,6 +7216,7 @@
     isDirectServiceManualModelAllowed: isDirectServiceManualModelAllowed,
     validateTaskModelSelectionDraft: validateTaskModelSelectionDraft,
     validateDirectTaskSelectionReadiness: validateDirectTaskSelectionReadiness,
+    renderModelOptionsWithCustom: renderModelOptionsWithCustom,
     formatReferencedTasks: formatReferencedTasks,
     evaluateDirectServiceDelete: evaluateDirectServiceDelete,
     evaluateDirectServiceUrlImpact: evaluateDirectServiceUrlImpact,

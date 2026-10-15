@@ -371,6 +371,7 @@ test("Code review fixes: loadDirectServices array-to-map, draft customModel, and
 
   const draftCtx = {
     state: {workflowTaskType:"excel.analysis"},
+    findDirectService(id) { return { id, modelList: ["deepseek-v3"] }; },
     byId(id) { return mockNodes[id] || null; }
   };
   const getDraft = loadFn("getTaskModelSelectionDraft", draftCtx);
@@ -830,10 +831,12 @@ for (const taskType of ["excel.analysis", "excel.formula_assistant", "excel.smar
     { serviceId: "direct_svc_new", modelName: "other-model", customModelValidated: true },
     { serviceId: "direct_svc_new", modelName: "custom-model", customModelValidated: false }
   ]) {
-    test(`${taskType}: rejects unmatched persisted custom validation ${JSON.stringify(saved)}`, async () => {
+    test(`${taskType}: saves without reusing unmatched persisted custom validation ${JSON.stringify(saved)}`, async () => {
       const h = selectionSaveHarness(taskType, { draft: { customModel: true, modelName: "custom-model" }, saved });
-      await assert.rejects(h.ctx.saveTaskModelSelection(), /请先验证调用/);
-      assert.equal(h.persisted.active, "direct_svc_old");
+      await h.ctx.saveTaskModelSelection();
+      assert.equal(h.persisted.active, "direct_svc_new");
+      assert.equal(h.persisted.selection.modelName, "custom-model");
+      assert.notEqual(h.persisted.selection.customModelValidated, true);
     });
   }
 }

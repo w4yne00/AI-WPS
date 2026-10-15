@@ -284,6 +284,17 @@
                         <option value="">继承服务默认模型</option>
                       </select>
                     </label>
+                    <div id="excel-task-custom-models-panel" class="custom-models-panel" hidden>
+                      <div class="custom-models-header">
+                        <span class="custom-models-title">手填模型管理</span>
+                        <button id="btn-close-excel-task-custom-models" class="ghost-action btn-close-custom-models" type="button" aria-label="关闭面板">收起</button>
+                      </div>
+                      <div class="custom-models-add-row">
+                        <input id="excel-task-manual-model-input" type="text" class="custom-model-input" placeholder="输入模型 ID，例如 deepseek-chat" />
+                        <button id="btn-add-excel-task-manual-model" class="btn-add-custom-model" type="button">添加</button>
+                      </div>
+                      <div id="excel-task-custom-models-list" class="custom-models-list"></div>
+                    </div>
                     <label id="excel-task-image-field" class="field" hidden><span>资料图片</span>
                       <select id="excel-task-image-mode"><option value="disabled">仅处理文本（默认）</option><option value="openai_image_url">当前模型支持图片，一并处理</option></select>
                       <small>仅在确认模型支持图片时开启；请求失败不会自动删图重试。</small>
@@ -348,6 +359,17 @@
                   <span>默认模型</span>
                   <select id="direct-service-default-model"><option value="">请先刷新模型目录</option></select>
                 </label>
+                <div id="direct-service-custom-models-panel" class="custom-models-panel" hidden>
+                  <div class="custom-models-header">
+                    <span class="custom-models-title">手填模型管理</span>
+                    <button id="btn-close-direct-service-custom-models" class="ghost-action btn-close-custom-models" type="button" aria-label="关闭面板">收起</button>
+                  </div>
+                  <div class="custom-models-add-row">
+                    <input id="direct-service-custom-model-input" type="text" class="custom-model-input" placeholder="输入模型 ID，例如 deepseek-chat" />
+                    <button id="btn-add-direct-service-custom-model" class="btn-add-custom-model" type="button">添加</button>
+                  </div>
+                  <div id="direct-service-custom-models-list" class="custom-models-list"></div>
+                </div>
                 <div class="direct-service-model-fetch-row">
                   <button id="btn-refresh-direct-service-models" class="ghost-action" type="button">刷新</button>
                   <button id="btn-validate-direct-service" class="ghost-action" type="button">验证服务</button>

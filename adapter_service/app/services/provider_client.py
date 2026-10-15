@@ -2360,13 +2360,6 @@ class ProviderClient:
                         )
                     is_custom = bool(selection.get("customModel", False))
 
-                    if is_custom and not selection.get("customModelValidated"):
-                        raise AdapterError(
-                            "DIRECT_SERVICE_CUSTOM_MODEL_UNVERIFIED",
-                            "高级手填模型尚未通过真实任务调用验证，不能执行新任务。",
-                            status_code=400,
-                        )
-
                     base_url = str(service.get("serviceBaseUrl", "")).rstrip("/")
                     call_path = "/chat/completions"
                     api_key = str(service.get("apiKey", "")).strip()
@@ -4491,20 +4484,6 @@ class ProviderClient:
         if not model_name:
             raise AdapterError(
                 "DIRECT_SERVICE_MODEL_REQUIRED", "请选择或填写模型名称。", status_code=400
-            )
-
-        catalog = service.get("modelCatalog") or {}
-        if (
-            is_custom
-            and not catalog.get("manualModelAllowed")
-            and not self.direct_service_store.is_custom_model_validated(
-                task_type, service_id, model_name
-            )
-        ):
-            raise AdapterError(
-                "DIRECT_SERVICE_CUSTOM_MODEL_NOT_ALLOWED",
-                "模型目录当前可用时不能使用高级手填模型。",
-                status_code=400,
             )
 
         model_configuration = {

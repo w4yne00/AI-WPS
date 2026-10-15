@@ -1151,6 +1151,7 @@ class DirectServiceStore:
                 "name": clean_name,
                 "serviceBaseUrl": clean_url,
                 "defaultModel": clean_model,
+                "customModels": [clean_model] if clean_model else [],
                 "modelList": [],
                 "modelListFetchedAt": None,
                 "modelListLastAttemptAt": None,
@@ -2231,14 +2232,13 @@ class DirectServiceStore:
                 raise DirectServiceError(
                     "DIRECT_SERVICE_MODEL_REQUIRED", "自定义模型名称不能为空。"
                 )
-            catalog = self._model_catalog_state(service) if service else {}
-            if catalog.get("usableForSelection") and not self._is_custom_model_validated(
-                payload, task_type, service, clean_model
-            ):
-                raise DirectServiceError(
-                    "DIRECT_SERVICE_CUSTOM_MODEL_NOT_ALLOWED",
-                    "模型目录当前可用时不能使用高级手填模型。",
-                )
+            if clean_service_id and clean_service_id in services:
+                existing_custom = list(service.get("customModels") or [])
+                if clean_model not in existing_custom:
+                    existing_custom.append(clean_model)
+                    service["customModels"] = existing_custom
+                    service["updatedAt"] = _utc_now()
+                    payload["directServices"][clean_service_id] = service
 
         effective_validated = bool(
             is_custom
@@ -2278,6 +2278,66 @@ class DirectServiceStore:
                 record["formatSemanticValidation"] = draft_validation
 
         return record
+
+    @_serialized_store_transaction
+    def add_custom_model(self, service_id: str, model_name: str) -> dict:
+        clean_model = self._validate_model_name(model_name)
+        if not clean_model:
+            raise DirectServiceError(
+                "DIRECT_SERVICE_MODEL_REQUIRED", "自定义模型名称不能为空。"
+            )
+        with _STORE_LOCK:
+            payload, _ = self._load_with_legacy_direct_migration()
+            services = self._service_map(payload)
+            service = self._require_service(services, service_id)
+            existing = list(service.get("customModels") or [])
+            if clean_model not in existing:
+                existing.append(clean_model)
+                service["customModels"] = existing
+                service["updatedAt"] = _utc_now()
+                payload["directServices"][service["id"]] = service
+                save_config_payload(payload, self.config_path)
+            return self.get_service(service["id"])
+
+    @_serialized_store_transaction
+    def delete_custom_model(
+        self, service_id: str, model_name: str, expected_revision: Optional[int] = None
+    ) -> dict:
+        clean_model = str(model_name or "").strip()
+        with _STORE_LOCK:
+            payload, _ = self._load_with_legacy_direct_migration()
+            services = self._service_map(payload)
+            service = self._require_service(services, service_id)
+            if expected_revision is not None:
+                self._check_revision(service, expected_revision)
+            existing = list(service.get("customModels") or [])
+            if clean_model in existing:
+                existing.remove(clean_model)
+                service["customModels"] = existing
+                service["updatedAt"] = _utc_now()
+                if service.get("defaultModel") == clean_model:
+                    service["defaultModel"] = ""
+                    service["revision"] = int(service.get("revision", 1)) + 1
+                payload["directServices"][service["id"]] = service
+
+                selections = self._selection_map(payload)
+                changed = False
+                for task_type, sel in selections.items():
+                    if (
+                        isinstance(sel, dict)
+                        and sel.get("serviceId") == service["id"]
+                        and sel.get("modelName") == clean_model
+                    ):
+                        sel["modelName"] = ""
+                        sel["customModel"] = False
+                        sel["customModelValidated"] = False
+                        sel["updatedAt"] = _utc_now()
+                        changed = True
+                if changed:
+                    payload["taskModelSelections"] = selections
+
+                save_config_payload(payload, self.config_path)
+            return self.get_service(service["id"])
 
     @_serialized_store_transaction
     def mark_custom_model_validated(
@@ -2320,15 +2380,6 @@ class DirectServiceStore:
                     "DIRECT_SERVICE_CONFIG_CHANGED",
                     "API Key 在验证期间发生变化，请重新验证模型。",
                 )
-            catalog = self._model_catalog_state(service)
-            if catalog.get("usableForSelection") and not self._is_custom_model_validated(
-                payload, clean_task, service, clean_model
-            ):
-                raise DirectServiceError(
-                    "DIRECT_SERVICE_CUSTOM_MODEL_NOT_ALLOWED",
-                    "模型目录当前可用时不能使用高级手填模型。",
-                )
-
             validations = self._validation_map(payload)
             validations[clean_task] = {
                 "serviceId": service["id"],
@@ -2803,12 +2854,7 @@ class DirectServiceStore:
         if not service_id or not service or not model_name:
             return "unconfigured", False, "missing_model"
         if custom_model:
-            if custom_model_validated:
-                return "available", True, ""
-            catalog = self._model_catalog_state(service)
-            if catalog.get("usableForSelection"):
-                return "unavailable", False, "catalog_usable"
-            return "unverified", False, "validation_required"
+            return "available", True, ""
 
         # Saved model id is called as stored; catalog state only assists selection.
         return "available", True, ""
@@ -2822,32 +2868,7 @@ class DirectServiceStore:
         effective_model: str,
         payload: Optional[dict] = None,
     ) -> None:
-        custom_model = bool(selection.get("customModel", False))
-        custom_validated = self._is_custom_model_validated(
-            payload
-            if isinstance(payload, dict)
-            else load_config_payload(self.config_path, self.key_dir),
-            task_type,
-            service,
-            effective_model,
-        )
-        availability, _, reason = self._model_availability(
-            service_id,
-            service,
-            effective_model,
-            custom_model,
-            custom_validated,
-        )
-        if custom_model and not custom_validated:
-            raise DirectServiceError(
-                "DIRECT_SERVICE_CUSTOM_MODEL_UNVERIFIED",
-                "高级手填模型尚未通过真实任务调用验证，不能设为当前。",
-            )
-        if custom_model and availability == "unavailable" and reason == "catalog_usable":
-            raise DirectServiceError(
-                "DIRECT_SERVICE_CUSTOM_MODEL_NOT_ALLOWED",
-                "模型目录当前可用时不能使用高级手填模型。",
-            )
+        pass
 
     @staticmethod
     def _invalidate_model_catalog(service: dict) -> None:
@@ -3026,6 +3047,9 @@ class DirectServiceStore:
             "serviceBaseUrl": str(service.get("serviceBaseUrl", "")),
             "keyConfigured": self._key_exists(service_id),
             "defaultModel": str(service.get("defaultModel", "")),
+            "customModels": list(service.get("customModels", []))
+            if isinstance(service.get("customModels"), list)
+            else [],
             "modelList": list(service.get("modelList", []))
             if isinstance(service.get("modelList"), list)
             else [],

@@ -100,7 +100,7 @@ for (const [host, root] of hosts) {
 
 for (const [host, root] of hosts) {
   for (const sameService of [false, true]) {
-    test(`${host} legacy custom model ${sameService ? "cannot be cleared accidentally" : "can switch service and inherit its default"}`, async () => {
+    test(`${host} legacy custom model ${sameService ? "is retained while model management is open" : "can switch service and inherit its default"}`, async () => {
       const js = fs.readFileSync(path.join(root, "taskpane.js"), "utf8");
       const start = js.indexOf("  function saveTaskModelSelection(");
       const end = js.indexOf("\n  function ", start + 1);
@@ -115,7 +115,7 @@ for (const [host, root] of hosts) {
         getTaskModelSelectionDraft: () => draft,
         getSettingsWorkflowTaskType: () => taskType,
         findDirectService: () => ({ id: draft.serviceId, defaultModel: "new-default", keyConfigured: true }),
-        byId: () => status,
+        byId: id => id.endsWith("-model-select") ? { value: sameService ? "__manual__" : "" } : status,
         setStatus() {}, setWorkflowMutationBusy() {}, setWorkflowProfileMutationBusy() {},
         loadWorkflowProfiles: async () => {}, loadWorkflowProfileForTask: async () => {},
         loadProfiles: async () => {}, loadDirectServices: async () => {},
@@ -132,7 +132,7 @@ for (const [host, root] of hosts) {
       if (sameService) {
         assert.strictEqual(requests.length, 0);
         assert.strictEqual(state.taskModelSelections[taskType], saved);
-        assert.match(status.textContent, /不能用空模型覆盖/);
+        assert.match(status.textContent, /请先选择任务模型/);
       } else {
         assert.ifError(error);
         assert.strictEqual(requests.length, 1, status.textContent);

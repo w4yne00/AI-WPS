@@ -55,13 +55,12 @@ test("Direct service catalog state is normalized and controls manual model entry
   assert.strictEqual(helpers.isDirectServiceManualModelAllowed({ modelCatalog: unavailable }), true);
 });
 
-test("Task selection draft rejects manual model while catalog is usable", () => {
-  const blocked = helpers.validateTaskModelSelectionDraft(
+test("Task selection draft allows manual model even while catalog is usable (Issue 257)", () => {
+  const allowedWhileUsable = helpers.validateTaskModelSelectionDraft(
     { serviceId: "direct_svc_1", modelName: "manual-model", customModel: true },
     { service: { modelCatalog: { status: "available", cacheStatus: "valid", usableForSelection: true } } }
   );
-  assert.strictEqual(blocked.valid, false);
-  assert.ok(blocked.error.includes("目录"));
+  assert.strictEqual(allowedWhileUsable.valid, true);
 
   const allowed = helpers.validateTaskModelSelectionDraft(
     { serviceId: "direct_svc_1", modelName: "manual-model", customModel: true },
