@@ -371,6 +371,7 @@ test("Code review fixes: loadDirectServices array-to-map, draft customModel, and
 
   const draftCtx = {
     state: {workflowTaskType:"excel.analysis"},
+    findDirectService(id) { return { id, modelList: ["deepseek-v3"] }; },
     byId(id) { return mockNodes[id] || null; }
   };
   const getDraft = loadFn("getTaskModelSelectionDraft", draftCtx);
