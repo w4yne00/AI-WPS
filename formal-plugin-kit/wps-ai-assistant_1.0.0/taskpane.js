@@ -5117,20 +5117,199 @@
   function renderDirectServiceDefaultModelOptions(service) {
     var select = byId("direct-service-default-model");
     var models = service && Array.isArray(service.modelList) ? service.modelList : [];
+    var customModels = service && Array.isArray(service.customModels) ? service.customModels : [];
     var current = service ? String(service.defaultModel || "") : "";
-    var options = ['<option value="">不设置默认模型</option>'];
-    if (current && models.indexOf(current) < 0) {
-      options.push('<option value="' + escapeWorkflowText(current) + '">' + escapeWorkflowText(current) + '（当前目录不可用）</option>');
+    if (typeof helpers.renderModelOptionsWithCustom === "function") {
+      helpers.renderModelOptionsWithCustom(select, models, customModels, current, true);
+    } else {
+      var options = ['<option value="">不设置默认模型</option>'];
+      if (current && models.indexOf(current) < 0 && customModels.indexOf(current) < 0) {
+        options.push('<option value="' + escapeWorkflowText(current) + '">' + escapeWorkflowText(current) + '（当前目录不可用）</option>');
+      }
+      models.forEach(function (model) {
+        options.push('<option value="' + escapeWorkflowText(model) + '">' + escapeWorkflowText(model) + '</option>');
+      });
+      options.push('<option value="__manual__">输入 / 管理手填模型...</option>');
+      if (select) {
+        select.innerHTML = options.join("");
+        select.value = current;
+      }
     }
-    models.forEach(function (model) {
-      options.push('<option value="' + escapeWorkflowText(model) + '">' + escapeWorkflowText(model) + '</option>');
-    });
     if (select) {
-      select.innerHTML = options.join("");
-      select.value = current;
       select.disabled = !service;
     }
+    if (typeof renderCustomModelsList === "function") {
+      renderCustomModelsList("direct-service", service, current, function (chosenModel) {
+        if (select) {
+          select.value = chosenModel;
+        }
+        if (service) {
+          service.defaultModel = chosenModel;
+        }
+        renderCustomModelsList("direct-service", service, chosenModel, null);
+      });
+    }
   }
+
+  function renderCustomModelsList(prefix, service, currentModel, onSelect) {
+    var list = byId(prefix + "-custom-models-list");
+    if (!list) return;
+    var customModels = service && Array.isArray(service.customModels) ? service.customModels : [];
+    if (customModels.length === 0) {
+      list.innerHTML = '<span class="custom-models-empty">暂无手填模型，可在上方输入添加</span>';
+      return;
+    }
+    var html = [];
+    customModels.forEach(function (m) {
+      var isSel = m === currentModel ? " selected" : "";
+      html.push(
+        '<span class="custom-model-chip' + isSel + '" data-model="' + escapeWorkflowText(m) + '">' +
+          '<span class="custom-model-name">' + escapeWorkflowText(m) + '</span>' +
+          '<button type="button" class="btn-delete-custom-model" data-model="' + escapeWorkflowText(m) + '" aria-label="删除手填模型 ' + escapeWorkflowText(m) + '">&times;</button>' +
+        '</span>'
+      );
+    });
+    list.innerHTML = html.join("");
+
+    var chips = list.querySelectorAll(".custom-model-name");
+    for (var i = 0; i < chips.length; i++) {
+      (function (chip) {
+        chip.addEventListener("click", function () {
+          var model = chip.parentElement ? chip.parentElement.getAttribute("data-model") : "";
+          if (model && typeof onSelect === "function") {
+            onSelect(model);
+          }
+        });
+      })(chips[i]);
+    }
+
+    var delBtns = list.querySelectorAll(".btn-delete-custom-model");
+    for (var j = 0; j < delBtns.length; j++) {
+      (function (btn) {
+        btn.addEventListener("click", function (e) {
+          e.stopPropagation();
+          var model = btn.getAttribute("data-model");
+          if (service && service.id && model) {
+            deleteCustomModel(service.id, model, prefix);
+          }
+        });
+      })(delBtns[j]);
+    }
+  }
+
+  function syncDirectServiceInMemory(updatedSvc) {
+    if (!updatedSvc || !updatedSvc.id) return;
+    state.directServices = state.directServices || [];
+    for (var i = 0; i < state.directServices.length; i++) {
+      if (state.directServices[i].id === updatedSvc.id) {
+        state.directServices[i] = Object.assign({}, state.directServices[i], updatedSvc);
+        return;
+      }
+    }
+    state.directServices.push(updatedSvc);
+  }
+
+  function addCustomModel(serviceId, modelName, prefix) {
+    var clean = String(modelName || "").trim();
+    if (!clean) {
+      setStatus("模型 ID 不能为空。");
+      return;
+    }
+    var svc = findDirectService(serviceId);
+    if (!svc) return;
+    setWorkflowMutationBusy(true);
+    request("/provider/direct-services/" + encodeURIComponent(serviceId) + "/custom-models", {
+      modelName: clean
+    }).then(function (body) {
+      setWorkflowMutationBusy(false);
+      var updatedSvc = (body && body.data && body.data.directService) || null;
+      if (updatedSvc) {
+        syncDirectServiceInMemory(updatedSvc);
+        svc = updatedSvc;
+      } else {
+        svc.customModels = svc.customModels || [];
+        if (svc.customModels.indexOf(clean) < 0) {
+          svc.customModels.push(clean);
+        }
+      }
+      var input = byId(prefix === "word-task" ? "word-task-manual-model-input" : prefix + "-custom-model-input");
+      if (input) {
+        input.value = "";
+        if (typeof input.focus === "function") input.focus();
+      }
+      if (prefix === "direct-service") {
+        var select = byId("direct-service-default-model");
+        renderDirectServiceDefaultModelOptions(svc);
+        if (select) select.value = clean;
+        svc.defaultModel = clean;
+        var panel = byId("direct-service-custom-models-panel");
+        if (panel) panel.hidden = false;
+      } else {
+        var taskSelect = byId("word-task-model-select");
+        var curTask = typeof getSettingsWorkflowTaskType === "function" ? getSettingsWorkflowTaskType() : "";
+        if (state.taskModelSelections && state.taskModelSelections[curTask]) {
+          state.taskModelSelections[curTask].modelName = clean;
+          state.taskModelSelections[curTask].customModel = true;
+        }
+        renderTaskModelSelectionSection();
+        if (taskSelect) taskSelect.value = clean;
+        var panel2 = byId("word-task-custom-models-panel");
+        if (panel2) panel2.hidden = false;
+      }
+    }).catch(function (err) {
+      setWorkflowMutationBusy(false);
+      setStatus("添加手填模型失败：" + (err && err.message ? err.message : String(err)));
+    });
+  }
+
+  function deleteCustomModel(serviceId, model, prefix) {
+    var svc = findDirectService(serviceId);
+    if (!svc) return;
+    setWorkflowMutationBusy(true);
+    request("/provider/direct-services/" + encodeURIComponent(serviceId) + "/custom-models/" + encodeURIComponent(model), null, {
+      method: "DELETE"
+    }).then(function (body) {
+      setWorkflowMutationBusy(false);
+      var updatedSvc = (body && body.data && body.data.directService) || null;
+      if (updatedSvc) {
+        syncDirectServiceInMemory(updatedSvc);
+        svc = updatedSvc;
+      } else if (svc.customModels) {
+        var idx = svc.customModels.indexOf(model);
+        if (idx >= 0) svc.customModels.splice(idx, 1);
+        if (svc.defaultModel === model) svc.defaultModel = "";
+      }
+      if (prefix === "direct-service") {
+        var select = byId("direct-service-default-model");
+        var cur = (select && select.value) || "";
+        if (cur === model) {
+          if (select) select.value = "";
+          if (svc) svc.defaultModel = "";
+        }
+        renderDirectServiceDefaultModelOptions(svc);
+        var panel = byId("direct-service-custom-models-panel");
+        if (panel) panel.hidden = false;
+      } else {
+        var taskSelect = byId("word-task-model-select");
+        var taskCur = (taskSelect && taskSelect.value) || "";
+        if (taskCur === model) {
+          if (taskSelect) taskSelect.value = "";
+          var curTask = typeof getSettingsWorkflowTaskType === "function" ? getSettingsWorkflowTaskType() : "";
+          if (state.taskModelSelections && state.taskModelSelections[curTask]) {
+            state.taskModelSelections[curTask].modelName = "";
+            state.taskModelSelections[curTask].customModel = false;
+          }
+        }
+        renderTaskModelSelectionSection();
+        var panel2 = byId("word-task-custom-models-panel");
+        if (panel2) panel2.hidden = false;
+      }
+    }).catch(function (err) {
+      setWorkflowMutationBusy(false);
+      setStatus("删除手填模型失败：" + (err && err.message ? err.message : String(err)));
+    });
+  }
+
 
   function closeDirectServiceEditor() {
     state.directServiceOperationId = Number(state.directServiceOperationId || 0) + 1;
@@ -5656,24 +5835,33 @@
     var modelList = catalog.usableForSelection ? catalog.models : [];
     var defaultModel = (currentSvc && currentSvc.defaultModel) || "";
     var currentModel = (currentSelection && currentSelection.modelName) || "";
+    var customModels = (currentSvc && currentSvc.customModels) || [];
 
-    var modelOptionsHtml = ['<option value="">继承服务默认模型 (' + (escapeWorkflowText(defaultModel) || "未设置") + ')</option>'];
-    var isModelInCatalog = false;
-    modelList.forEach(function (m) {
-      var sel = m === currentModel ? " selected" : "";
-      if (sel) {
-        isModelInCatalog = true;
+    if (typeof helpers.renderModelOptionsWithCustom === "function") {
+      helpers.renderModelOptionsWithCustom(modelSelect, modelList, customModels, currentModel, false, escapeWorkflowText(defaultModel) || "未设置");
+    } else {
+      var modelOptionsHtml = ['<option value="">继承服务默认模型 (' + (escapeWorkflowText(defaultModel) || "未设置") + ')</option>'];
+      modelList.forEach(function (m) {
+        var sel = m === currentModel ? " selected" : "";
+        modelOptionsHtml.push('<option value="' + escapeWorkflowText(m) + '"' + sel + '>' + escapeWorkflowText(m) + '</option>');
+      });
+      modelOptionsHtml.push('<option value="__manual__">输入 / 管理手填模型...</option>');
+      if (modelSelect) {
+        modelSelect.innerHTML = modelOptionsHtml.join("");
+        modelSelect.value = currentModel;
       }
-      modelOptionsHtml.push('<option value="' + escapeWorkflowText(m) + '"' + sel + '>' + escapeWorkflowText(m) + '</option>');
-    });
-    var isCustom = currentSelection && currentSelection.customModel !== undefined
-      ? Boolean(currentSelection.customModel)
-      : Boolean(currentModel && !isModelInCatalog);
-    if (currentModel && !isCustom && !isModelInCatalog) {
-      modelOptionsHtml.push('<option value="' + escapeWorkflowText(currentModel) + '" selected disabled>当前模型：' + escapeWorkflowText(currentModel) + '（目录不可用）</option>');
     }
-    if (modelSelect) {
-      modelSelect.innerHTML = modelOptionsHtml.join("");
+    if (typeof renderCustomModelsList === "function") {
+      renderCustomModelsList("word-task", currentSvc, currentModel, function (chosenModel) {
+        if (modelSelect) {
+          modelSelect.value = chosenModel;
+        }
+        if (currentSelection) {
+          currentSelection.modelName = chosenModel;
+          currentSelection.customModel = true;
+        }
+        renderCustomModelsList("word-task", currentSvc, chosenModel, null);
+      });
     }
     if (tempInput) {
       tempInput.value = currentSelection && currentSelection.temperature !== null && currentSelection.temperature !== undefined ? currentSelection.temperature : "";
@@ -5759,8 +5947,14 @@
 
   function getTaskModelSelectionDraft() {
     var serviceId = (byId("word-task-direct-service-select") && byId("word-task-direct-service-select").value) || "";
-    var isCustom = false;
     var modelName = byId("word-task-model-select") ? byId("word-task-model-select").value : "";
+    if (modelName === "__manual__") {
+      modelName = "";
+    }
+    var currentSvc = typeof findDirectService === "function" ? findDirectService(serviceId) : null;
+    var catalogModels = (currentSvc && currentSvc.modelList) || [];
+    var customModels = (currentSvc && currentSvc.customModels) || [];
+    var isCustom = Boolean(modelName && (customModels.indexOf(modelName) >= 0 || catalogModels.indexOf(modelName) < 0));
     var tempVal = byId("word-task-temperature") ? byId("word-task-temperature").value : "";
     var maxOutVal = byId("word-task-max-output") ? byId("word-task-max-output").value : "";
     var contextVal = byId("word-task-context") ? byId("word-task-context").value : "";
@@ -12942,12 +13136,85 @@
             updateDirectServiceUrlImpact();
           }
         },
+        defaultModelChange: function () {
+          var select = byId("direct-service-default-model");
+          var panel = byId("direct-service-custom-models-panel");
+          if (!select || !panel) return;
+          if (select.value === "__manual__") {
+            panel.hidden = false;
+            var inp = byId("direct-service-custom-model-input");
+            if (inp && typeof inp.focus === "function") inp.focus();
+          } else {
+            panel.hidden = true;
+          }
+        },
+        closeDirectServiceCustomModels: function () {
+          var panel = byId("direct-service-custom-models-panel");
+          if (panel) panel.hidden = true;
+          var select = byId("direct-service-default-model");
+          if (select && select.value === "__manual__") {
+            var svc = findDirectService(state.directServiceEditor.serviceId);
+            select.value = (svc && svc.defaultModel) || "";
+          }
+        },
+        addDirectServiceCustomModel: function () {
+          var inp = byId("direct-service-custom-model-input");
+          var val = inp ? inp.value : "";
+          addCustomModel(state.directServiceEditor.serviceId, val, "direct-service");
+        },
+        taskModelChange: function () {
+          var select = byId("word-task-model-select");
+          var panel = byId("word-task-custom-models-panel");
+          if (!select || !panel) return;
+          if (select.value === "__manual__") {
+            panel.hidden = false;
+            var inp = byId("word-task-manual-model-input");
+            if (inp && typeof inp.focus === "function") inp.focus();
+          } else {
+            panel.hidden = true;
+          }
+        },
+        closeWordTaskCustomModels: function () {
+          var panel = byId("word-task-custom-models-panel");
+          if (panel) panel.hidden = true;
+          var select = byId("word-task-model-select");
+          if (select && select.value === "__manual__") {
+            var curTask = typeof getSettingsWorkflowTaskType === "function" ? getSettingsWorkflowTaskType() : "";
+            var currentSelection = (state.taskModelSelections && state.taskModelSelections[curTask]) || null;
+            select.value = (currentSelection && currentSelection.modelName) || "";
+          }
+        },
+        addWordTaskCustomModel: function () {
+          var svcSelect = byId("word-task-direct-service-select");
+          var serviceId = svcSelect ? svcSelect.value : "";
+          var inp = byId("word-task-manual-model-input");
+          var val = inp ? inp.value : "";
+          addCustomModel(serviceId, val, "word-task");
+        },
         taskServiceChange: handleTaskDirectServiceSelectChange,
         validateTaskSelection: validateTaskModelSelection,
         authorizeTaskImages: function () { return performTaskImageAction("image-authorization", true); },
         revokeTaskImages: function () { return performTaskImageAction("image-authorization", false); },
         validateTaskImages: function () { return performTaskImageAction("validate-image"); },
         saveTaskSelection: saveTaskModelSelection
+      }
+    });
+
+    ["direct-service-custom-model-input", "word-task-manual-model-input"].forEach(function (id) {
+      var node = byId(id);
+      if (node && typeof node.addEventListener === "function") {
+        node.addEventListener("keydown", function (e) {
+          if (e.key === "Enter" || e.keyCode === 13) {
+            e.preventDefault();
+            if (id === "direct-service-custom-model-input") {
+              var btn1 = byId("btn-add-direct-service-custom-model");
+              if (btn1) btn1.click();
+            } else {
+              var btn2 = byId("btn-add-word-task-manual-model");
+              if (btn2) btn2.click();
+            }
+          }
+        });
       }
     });
   }
