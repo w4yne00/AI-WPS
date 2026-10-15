@@ -58,10 +58,19 @@ class PptSlideAssistantJobStore:
         doc_session = str(getattr(request, "document_session_id", "") or "").strip()
         host = str(getattr(request, "host", "") or "wpp").strip()
         task_type = "ppt.slide_assistant"
+        identity = "{}::{}::{}".format(
+            host, task_type, doc_session or request.presentation_id or "active-presentation"
+        )
 
         with self._submission_lock:
             existing = self.coordinator.get(job_id, task_type=task_type)
             if existing is not None:
+                if self.coordinator.get_request_fingerprint(job_id, task_type=task_type) != identity:
+                    raise AdapterError(
+                        "PPT_SLIDE_ASSISTANT_TASK_CONFLICT",
+                        "任务编号已绑定到其他文档会话。",
+                        status_code=409,
+                    )
                 return existing
 
             # Document session active slot guard: reject duplicate concurrent task in same document session
@@ -127,6 +136,9 @@ class PptSlideAssistantJobStore:
                         "sourceMode": request.source_mode,
                     },
                     safe_failure_codes=SAFE_ERROR_CODES,
+                    request_fingerprint=identity,
+                    request_conflict_code="PPT_SLIDE_ASSISTANT_TASK_CONFLICT",
+                    request_conflict_message="任务编号已绑定到其他文档会话。",
                 )
                 if doc_session:
                     self._active_doc_sessions[(host, task_type, doc_session)] = job_id
