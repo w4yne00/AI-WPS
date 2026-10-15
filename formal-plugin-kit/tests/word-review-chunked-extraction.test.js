@@ -477,6 +477,7 @@ test("taskpane: full document review aborts and cleans up snapshot when cancelle
   let jobSubmitted = false;
 
   const state = {
+    currentMode: "documentReview",
     fullDocumentReviewEnabled: true,
     fullDocumentReviewJobId: "",
     documentReviewJobId: "",
@@ -575,6 +576,7 @@ test("taskpane: full document review aborts and cleans up snapshot when cancelle
 
   const fns = loadFunctions([
     "getWritingDocTaskKey",
+    "getActiveResultRecord",
     "getActiveReviewJobRecord",
     "setActiveReviewJobRecord",
     "ensureFullDocumentReviewPreparation",
@@ -615,6 +617,7 @@ test("taskpane: full document review rejects an active document session switch d
   activeDocument = firstDocument;
 
   const state = {
+    currentMode: "documentReview",
     fullDocumentReviewEnabled: true,
     fullDocumentReviewJobId: "",
     documentReviewJobId: "",
@@ -681,6 +684,7 @@ test("taskpane: full document review rejects an active document session switch d
 
   const names = [
     "getWritingDocTaskKey",
+    "getActiveResultRecord",
     "getActiveReviewJobRecord",
     "setActiveReviewJobRecord",
     "ensureFullDocumentReviewPreparation",

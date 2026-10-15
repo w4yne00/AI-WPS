@@ -248,6 +248,7 @@
     documentReviewIssueStatus: {},
     documentReviewRecordPreviewVisible: false,
     documentReviewJobId: "",
+    documentReviewPreparing: false,
     documentReviewPollStartedAt: 0,
     documentReviewPollErrorCount: 0,
     documentReviewStopWaiting: null,
@@ -11202,10 +11203,17 @@
       var activeDoc = (helpers.getDocumentSessionId && getActiveDocument) ? helpers.getDocumentSessionId(getActiveDocument()) : state.documentSessionId;
       var activeJob = getActiveReviewJobRecord("word.document_review.full", currentDoc);
       var ownsJob = activeJob && activeJob.jobId === clientJobId;
-      var ownsView = ownsJob && activeDoc === currentDoc && (!state.fullDocumentReviewJobId || state.fullDocumentReviewJobId === clientJobId);
-      if (ownsView) {
+      var ownsPreparation = ownsJob && (!state.fullDocumentReviewJobId || state.fullDocumentReviewJobId === clientJobId);
+      var ownsBusyState = ownsPreparation && !state.documentReviewPreparing && !state.documentReviewJobId &&
+        (state.currentMode === "documentReview" || state.currentMode === "settings" && state.lastTaskMode === "documentReview");
+      var ownsView = ownsBusyState && activeDoc === currentDoc && state.currentMode === "documentReview";
+      if (ownsPreparation) {
         state.fullDocumentReviewPreparing = false;
         state.fullDocumentReviewCancelRequested = false;
+        if (!submissionStarted && ownsBusyState) {
+          setModelTaskBusy(false);
+          setDocumentReviewCancelVisible(false, false);
+        }
       }
       if (ownsJob && submissionStarted && !(Number(error.httpStatus) >= 400 && Number(error.httpStatus) < 500)) {
         if (!ownsView) {
@@ -11224,7 +11232,10 @@
           cleanupFullDocumentReviewTerminal(currentDoc, clientJobId);
         }
         var latestDoc = (helpers.getDocumentSessionId && getActiveDocument) ? helpers.getDocumentSessionId(getActiveDocument()) : state.documentSessionId;
-        if (!ownsView || latestDoc !== currentDoc || (state.fullDocumentReviewJobId && state.fullDocumentReviewJobId !== clientJobId)) {
+        if (!ownsView || latestDoc !== currentDoc || state.currentMode !== "documentReview" ||
+            state.documentReviewPreparing || state.documentReviewJobId ||
+            getActiveResultRecord("word.document_review", currentDoc) ||
+            (state.fullDocumentReviewJobId && state.fullDocumentReviewJobId !== clientJobId)) {
           return;
         }
         setModelTaskBusy(false);
@@ -11361,6 +11372,7 @@
     clearDocumentReviewActiveJob(null, currentDoc);
     setActiveResultRecord("word.document_review", currentDoc, null);
 
+    state.documentReviewPreparing = true;
     setModelTaskBusy(true);
     setStatus("正在读取文档审查范围...");
     setPlainResult("正在读取文档审查范围，请稍候。");
@@ -11383,7 +11395,9 @@
         state.latestDocumentPayload.host = "wps";
         state.latestDocumentPayload.documentSessionId = currentDoc;
         state.latestDocumentPayload.documentDisplayName = docDisplayName;
+        state.documentReviewPreparing = false;
       } catch (error) {
+        state.documentReviewPreparing = false;
         setModelTaskBusy(false);
         setStatus(error.message);
         setResult(error.message);

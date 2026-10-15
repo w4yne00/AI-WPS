@@ -929,3 +929,120 @@ test("full snapshot cleanup cannot clear a newer task started while discard is p
   assert.strictEqual(ctx.state.status, "new task running");
   assert.strictEqual(ctx.state.modelTaskBusy, true);
 });
+
+for (const change of ["switch", "close"]) {
+  test(`full review preparation releases its busy state after document ${change}`, async () => {
+    const ctx = createBaseTestContext();
+    let finishExtraction;
+    let extractionCount = 0;
+    ctx.helpers.getDocumentSessionId = document => document ? document.__sessionId : "";
+    ctx.extractFullDocumentReviewBodyYielding = () => {
+      extractionCount += 1;
+      return extractionCount === 1
+        ? new Promise(resolve => { finishExtraction = resolve; })
+        : Promise.reject(new Error("next extraction failed"));
+    };
+    vm.runInNewContext([
+      "ensureFullDocumentReviewPreparation", "discardFullDocumentReviewSnapshot", "runFullDocumentReview"
+    ].map(functionSource).join("\n"), ctx);
+    const pending = ctx.runFullDocumentReview();
+    if (change === "switch") {
+      ctx.state.documentSessionId = "doc-B";
+    } else {
+      ctx.getActiveDocument = () => null;
+    }
+    ctx.state.status = "current document status";
+    finishExtraction({ editSignal: "1" });
+    await pending;
+    assert.strictEqual(ctx.state.fullDocumentReviewPreparing, false);
+    assert.strictEqual(ctx.state.modelTaskBusy, false);
+    assert.strictEqual(ctx.getActiveReviewJobRecord("word.document_review.full", "doc-session-1"), null);
+    assert.strictEqual(ctx.state.status, "current document status");
+
+    ctx.getActiveDocument = () => ({ __sessionId: "doc-B", Name: "B.docx" });
+    await ctx.runFullDocumentReview();
+    assert.strictEqual(extractionCount, 2, "a new document can start another review");
+  });
+}
+
+for (const mode of ["smartWrite", "smartImitation"]) {
+  for (const submitted of [false, true]) {
+    test(`old full preparation failure preserves a new ${mode} task (${submitted ? "submitted" : "preparing"})`, async () => {
+      const ctx = createBaseTestContext();
+      let rejectExtraction;
+      let cancelVisible = true;
+      ctx.extractFullDocumentReviewBodyYielding = () => new Promise((resolve, reject) => { rejectExtraction = reject; });
+      ctx.getActiveWritingJobRecord = () => null;
+      ctx.resumeWritingActiveJob = () => false;
+      ctx.fillSmartImitationTemplateFromSelection = () => {};
+      ctx.setDocumentReviewCancelVisible = visible => { cancelVisible = visible; };
+      vm.runInNewContext([
+        "discardFullDocumentReviewSnapshot", "runFullDocumentReview"
+      ].map(functionSource).join("\n"), ctx);
+      const pending = ctx.runFullDocumentReview();
+      ctx.state.documentSessionId = "doc-B";
+      ctx.switchMode(mode);
+      ctx.state.writingJobId = submitted ? "new-writing-job" : "";
+      ctx.setModelTaskBusy(true);
+      ctx.state.status = "new task running";
+      rejectExtraction(new Error("old extraction failed"));
+      await pending;
+      assert.strictEqual(ctx.state.fullDocumentReviewPreparing, false);
+      assert.strictEqual(ctx.state.modelTaskBusy, true);
+      assert.strictEqual(cancelVisible, true);
+      assert.strictEqual(ctx.state.status, "new task running");
+    });
+  }
+}
+
+test("old full preparation failure preserves a newer regular review before extraction", async () => {
+  const ctx = createBaseTestContext();
+  const timers = [];
+  let rejectExtraction;
+  ctx.extractFullDocumentReviewBodyYielding = () => new Promise((resolve, reject) => { rejectExtraction = reject; });
+  ctx.resolveSelectionScope = () => ({ ok: true, selectionMode: "selection" });
+  ctx.extractDocument = () => { throw new Error("new extraction failed"); };
+  ctx.setTimeout = callback => { timers.push(callback); };
+  vm.runInNewContext([
+    "discardFullDocumentReviewSnapshot", "runFullDocumentReview", "runDocumentReview"
+  ].map(functionSource).join("\n"), ctx);
+  const pending = ctx.runFullDocumentReview();
+  ctx.state.documentSessionId = "doc-B";
+  ctx.switchMode("documentReview");
+  ctx.runDocumentReview();
+  assert.strictEqual(timers.length, 1);
+  const status = ctx.state.status;
+  rejectExtraction(new Error("old extraction failed"));
+  await pending;
+  assert.strictEqual(ctx.state.fullDocumentReviewPreparing, false);
+  assert.strictEqual(ctx.state.modelTaskBusy, true);
+  assert.strictEqual(ctx.state.status, status);
+  ctx.runDocumentReview();
+  assert.strictEqual(timers.length, 1, "rapid clicks cannot schedule duplicate extractions");
+  timers[0]();
+  assert.strictEqual(ctx.state.documentReviewPreparing, false);
+  assert.strictEqual(ctx.state.modelTaskBusy, false);
+});
+
+test("snapshot discard cannot clear a regular review started while cleanup was pending", async () => {
+  const ctx = createBaseTestContext();
+  const timers = [];
+  let finishDiscard;
+  ctx.extractFullDocumentReviewBodyYielding = () => Promise.reject(new Error("old extraction failed"));
+  ctx.discardFullDocumentReviewSnapshot = () => new Promise(resolve => { finishDiscard = resolve; });
+  ctx.resolveSelectionScope = () => ({ ok: true, selectionMode: "selection" });
+  ctx.setTimeout = callback => { timers.push(callback); };
+  vm.runInNewContext([
+    "runFullDocumentReview", "runDocumentReview"
+  ].map(functionSource).join("\n"), ctx);
+  const pending = ctx.runFullDocumentReview();
+  await new Promise(resolve => setImmediate(resolve));
+  ctx.runDocumentReview();
+  const status = ctx.state.status;
+  finishDiscard();
+  await pending;
+  assert.strictEqual(ctx.state.modelTaskBusy, true);
+  assert.strictEqual(ctx.state.status, status);
+  ctx.runDocumentReview();
+  assert.strictEqual(timers.length, 1);
+});
