@@ -183,6 +183,8 @@ Envelope:
 
 `POST /word/format-review` is retired and always returns `410 WORD_FORMAT_REVIEW_SYNC_RETIRED`. Long tasks submit a job, poll with short requests, and allow cancel only while queued.
 
+Word generation sends a fresh `clientJobId` for each user action, including identical inputs; network recovery queries the original job. Reusing a writing job ID across document sessions or hosts returns `409 WORD_WRITING_TASK_CONFLICT`.
+
 ## Offline Delivery
 
 The current Preview kit installs with `installer/install_ai_wps.sh` into `$HOME/ai-wps`. The first install read-only detects `$HOME/ai-wps-phase1` and does not migrate, overwrite, or delete that tree. If port 18100 is still held by a leftover Adapter, the installer stops that listener and continues.

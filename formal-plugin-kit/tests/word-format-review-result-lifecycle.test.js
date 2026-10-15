@@ -558,3 +558,130 @@ test("Behavioral: Background format review completion for document A does not co
   assert.ok(ctx.state.deterministicFormatReviewReport, "Document A report restored after switching back");
   assert.strictEqual(ctx.state.deterministicFormatReviewReport.issueCount, 5);
 });
+
+test("late format review summary cannot replace a newly running job result", async () => {
+  const ctx = createBaseTestContext();
+  let deliver;
+  ctx.request = () => new Promise((resolve) => { deliver = resolve; });
+  let rendered = false;
+  ctx.loadDeterministicFormatReviewIssuePage = () => { rendered = true; return Promise.resolve(); };
+  ctx.state.deterministicFormatReviewJobId = "old-job";
+  const pending = ctx.loadDeterministicFormatReviewReport("old-job", "doc-session-1");
+  ctx.state.deterministicFormatReviewJobId = "new-job";
+  ctx.setActiveResultRecord("word.format_review", "doc-session-1", { jobId: "new-job" });
+  deliver({ data: { summary: { issueCount: 1 } } });
+  await pending;
+  assert.strictEqual(ctx.getActiveResultRecord("word.format_review", "doc-session-1").jobId, "new-job");
+  assert.strictEqual(rendered, false);
+});
+
+test("late format report completion cannot clear a newer task busy state or status", async () => {
+  const ctx = createBaseTestContext();
+  let deliver;
+  ctx.state.deterministicFormatReviewJobId = "old-job";
+  ctx.request = () => Promise.resolve({ data: { status: "completed" } });
+  ctx.loadDeterministicFormatReviewReport = () => new Promise((resolve) => { deliver = resolve; });
+  ctx.pollDeterministicFormatReviewJob("old-job", "doc-session-1");
+  await Promise.resolve();
+  ctx.state.deterministicFormatReviewJobId = "new-job";
+  ctx.state.modelTaskBusy = true;
+  ctx.state.status = "new task running";
+  deliver();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.strictEqual(ctx.state.modelTaskBusy, true);
+  assert.strictEqual(ctx.state.status, "new task running");
+});
+
+test("late format report error cannot replace a newer task preview", async () => {
+  const ctx = createBaseTestContext();
+  let rejectReport;
+  ctx.state.deterministicFormatReviewJobId = "old-job";
+  ctx.request = () => Promise.resolve({ data: { status: "completed" } });
+  ctx.loadDeterministicFormatReviewReport = () => new Promise((resolve, reject) => { rejectReport = reject; });
+  ctx.pollDeterministicFormatReviewJob("old-job", "doc-session-1");
+  await Promise.resolve();
+  ctx.state.deterministicFormatReviewJobId = "new-job";
+  ctx.state.modelTaskBusy = true;
+  ctx.state.status = "new task running";
+  rejectReport(new Error("old report failed"));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.strictEqual(ctx.state.modelTaskBusy, true);
+  assert.strictEqual(ctx.state.status, "new task running");
+});
+
+test("format review submits identical input again with a fresh client job ID after completion", async () => {
+  const ctx = createBaseTestContext();
+  const jobs = [];
+  ctx.resolveSelectionScope = () => ({ ok: true, selectionMode: "document" });
+  ctx.extractDeterministicFormatReviewSnapshot = () => ({ blocks: [], contentSha256: "same", structureSha256: "same", formatSha256: "same", documentIdentity: {}, coverage: {}, editSequence: "1" });
+  ctx.helpers.buildDeterministicFormatReviewBatches = () => [];
+  ctx.ensureDeterministicFormatReviewPreparation = () => {};
+  ctx.uploadDeterministicFormatReviewBatches = () => Promise.resolve();
+  ctx.exportDeterministicFormatReviewImageGroups = () => Promise.resolve();
+  ctx.pollDeterministicFormatReviewJob = () => {};
+  ctx.discardDeterministicFormatReviewSnapshot = () => {};
+  ctx.request = (url, body) => {
+    if (url === "/word/format-review/jobs") jobs.push({ ...body });
+    return Promise.resolve({ data: { snapshotId: "same-snapshot", snapshotToken: "token", jobId: "job-" + jobs.length } });
+  };
+  vm.runInNewContext(functionSource("runDeterministicFormatReview"), ctx);
+  await ctx.runDeterministicFormatReview();
+  ctx.cleanupDeterministicFormatReviewTerminal("doc-session-1", ctx.state.deterministicFormatReviewJobId);
+  await ctx.runDeterministicFormatReview();
+  assert.strictEqual(jobs.length, 2);
+  assert.ok(jobs[0].clientJobId);
+  assert.strictEqual(jobs[0].snapshotId, jobs[1].snapshotId);
+  assert.notStrictEqual(jobs[0].clientJobId, jobs[1].clientJobId);
+});
+
+test("late format issue page cannot render after a new result or history view is selected", async () => {
+  for (const change of ["new-result", "history", "document"]) {
+    const ctx = createBaseTestContext();
+    let deliver;
+    let rendered = false;
+    ctx.request = () => new Promise((resolve) => { deliver = resolve; });
+    ctx.renderDeterministicFormatReviewIssuePage = () => { rendered = true; };
+    const pending = ctx.loadDeterministicFormatReviewIssuePage("old-job", {}, "");
+    if (change === "new-result") ctx.setActiveResultRecord("word.format_review", "doc-session-1", { jobId: "new-job" });
+    if (change === "history") ctx.state.viewingHistoryReport = { jobId: "history-job" };
+    if (change === "document") ctx.state.documentSessionId = "doc-B";
+    deliver({ data: { issues: [] } });
+    await pending;
+    assert.strictEqual(rendered, false, change);
+  }
+});
+
+test("format summary completes its originating document after switching to another active job", async () => {
+  const ctx = createBaseTestContext();
+  let deliver;
+  ctx.state.deterministicFormatReviewJobId = "job-A";
+  ctx.setActiveReviewJobRecord("word.format_review", "doc-A", { jobId: "job-A" });
+  helpers.claimTaskSlot(ctx.state.activeTaskSlots, "wps", "word.format_review", "doc-A", "job-A");
+  ctx.request = (url) => url.includes("/report") ? new Promise(resolve => { deliver = resolve; }) : Promise.resolve({ data: { status: "completed" } });
+  ctx.pollDeterministicFormatReviewJob("job-A", "doc-A");
+  await Promise.resolve();
+  ctx.state.documentSessionId = "doc-B";
+  ctx.state.deterministicFormatReviewJobId = "job-B";
+  ctx.state.modelTaskBusy = true;
+  deliver({ data: { summary: { issueCount: 0 } } });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.strictEqual(ctx.getActiveReviewJobRecord("word.format_review", "doc-A"), null);
+  assert.strictEqual(helpers.isTaskSlotBusy(ctx.state.activeTaskSlots, "wps", "word.format_review", "doc-A"), false);
+  assert.strictEqual(ctx.getActiveResultRecord("word.format_review", "doc-A").jobId, "job-A");
+  assert.strictEqual(ctx.state.deterministicFormatReviewJobId, "job-B");
+  assert.strictEqual(ctx.state.modelTaskBusy, true);
+});
+
+test("format history page remains valid when a background active result arrives", async () => {
+  const ctx = createBaseTestContext();
+  let deliver;
+  let rendered = false;
+  ctx.state.viewingHistoryReport = { jobId: "history-job" };
+  ctx.request = () => new Promise(resolve => { deliver = resolve; });
+  ctx.renderDeterministicFormatReviewIssuePage = () => { rendered = true; };
+  const pending = ctx.loadDeterministicFormatReviewIssuePage("history-job", {}, "");
+  ctx.setActiveResultRecord("word.format_review", "doc-session-1", { jobId: "background-job" });
+  deliver({ data: { issues: [] } });
+  await pending;
+  assert.strictEqual(rendered, true);
+});

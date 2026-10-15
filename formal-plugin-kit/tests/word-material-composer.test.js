@@ -921,3 +921,32 @@ test('free writing needs only instructions and reuses the selected writing polic
   assert.equal(submitted.body.writingPolicyScene, 'cybersecurity');
   assert.equal(submitted.body.instruction, '写一篇运行报告');
 });
+
+test('identical composer generation creates fresh jobs while retries and copy stay on the original job', async () => {
+  const h = harness();
+  h.api.setMaterial({materialId:'m1'});
+  h.respond = () => {
+    const call = h.calls[h.calls.length - 1];
+    return {success:true,data:{jobId:call.body.clientJobId,status:'completed',documentSessionId:'doc-a',result:result()}};
+  };
+  await h.api.start({instruction:'相同要求'});
+  const first = h.calls.filter(call => call.method === 'POST')[0];
+  assert.equal(h.last().result.plainText, '正文');
+  await h.api.copy();
+  assert.equal(h.calls.filter(call => call.method === 'POST').length, 1);
+  let finish;
+  h.respond = () => new Promise(resolve => {finish = resolve;});
+  const next = h.api.start({instruction:'相同要求'});
+  const posts = h.calls.filter(call => call.method === 'POST');
+  assert.equal(posts.length, 2);
+  assert.notEqual(posts[1].body.clientJobId, first.body.clientJobId);
+  assert.equal(h.last().result, null);
+  await h.api.start({instruction:'相同要求'});
+  assert.equal(h.calls.filter(call => call.method === 'POST').length, 2);
+  finish({success:true,data:{jobId:posts[1].body.clientJobId,status:'failed',documentSessionId:'doc-a',error:{message:'本轮失败'}}});
+  await next;
+  assert.equal(h.last().result, null);
+  assert.equal(h.last().error, '本轮失败');
+  await h.api.copy();
+  assert.deepEqual(h.copied, ['正文']);
+});

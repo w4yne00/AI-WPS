@@ -352,7 +352,7 @@ test("Behavioral: runFullDocumentReview immediately clears previous report and a
       return Promise.resolve({ data: { snapshotId: "snap-new-1", snapshotToken: "stok1", capacity: {} } });
     }
     if (url.includes("/jobs")) {
-      return Promise.resolve({ data: { jobId: "job-full-123" } });
+      return Promise.resolve({ data: { jobId: "job-full-" + requests.filter((r) => r.url.endsWith("/jobs")).length } });
     }
     return Promise.resolve({ data: {} });
   };
@@ -384,6 +384,15 @@ test("Behavioral: runFullDocumentReview immediately clears previous report and a
     true,
     "Full review task slot must be claimed"
   );
+  const firstJobId = ctx.state.fullDocumentReviewJobId;
+  ctx.cleanupFullDocumentReviewTerminal("doc-session-1", firstJobId);
+  await ctx.runFullDocumentReview();
+  assert.strictEqual(requests.filter((r) => r.url === "/word/document-review/full/snapshots").length, 2);
+  assert.strictEqual(requests.filter((r) => r.url === "/word/document-review/full/jobs").length, 2);
+  assert.notStrictEqual(ctx.state.fullDocumentReviewJobId, firstJobId);
+  const jobs = requests.filter((r) => r.url === "/word/document-review/full/jobs");
+  assert.ok(jobs[0].body.clientJobId);
+  assert.notStrictEqual(jobs[0].body.clientJobId, jobs[1].body.clientJobId);
 });
 
 test("Behavioral: runDocumentReview and runFullDocumentReview guard document session slots", () => {
@@ -695,4 +704,228 @@ test("Behavioral: History deletion calls DELETE API and updates list", async () 
   assert.strictEqual(deletedId, "h1", "DELETE /history/h1 should be called");
   assert.strictEqual(ctx.state.historyItems.length, 1, "historyItems should have 1 item left");
   assert.strictEqual(ctx.state.historyItems[0].id, "h2");
+});
+
+// Missing preparation guards allow two clicks to submit two independent jobs.
+test("regular review blocks a second click before deferred extraction starts", () => {
+  const pending = [];
+  const ctx = createBaseTestContext({ ctx: { setTimeout: (fn) => { pending.push(fn); return pending.length; } } });
+  ctx.resolveSelectionScope = () => ({ ok: true, selectionMode: "document" });
+  vm.runInNewContext(functionSource("runDocumentReview"), ctx);
+  ctx.runDocumentReview();
+  ctx.runDocumentReview();
+  assert.strictEqual(pending.length, 1);
+});
+
+test("full review blocks a second click while the first extraction is pending", () => {
+  const ctx = createBaseTestContext();
+  let extractions = 0;
+  ctx.extractFullDocumentReviewBodyYielding = () => {
+    extractions += 1;
+    return new Promise(() => {});
+  };
+  vm.runInNewContext(functionSource("runFullDocumentReview"), ctx);
+  ctx.runFullDocumentReview();
+  ctx.runFullDocumentReview();
+  assert.strictEqual(extractions, 1);
+});
+
+test("late full review report cannot replace a newer job or its active result", async () => {
+  const ctx = createBaseTestContext();
+  let deliverReport;
+  ctx.state.fullDocumentReviewJobId = "old-job";
+  ctx.request = (url) => url.endsWith("/report")
+    ? new Promise((resolve) => { deliverReport = resolve; })
+    : Promise.resolve({ data: { status: "completed" } });
+  ctx.pollFullDocumentReviewJob("old-job", "doc-session-1");
+  await Promise.resolve();
+  ctx.state.fullDocumentReviewJobId = "new-job";
+  ctx.setActiveResultRecord("word.document_review", "doc-session-1", { jobId: "new-job", result: { summary: "new" } });
+  deliverReport({ data: { summary: "old" } });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.strictEqual(ctx.state.fullDocumentReviewJobId, "new-job");
+  assert.strictEqual(ctx.getActiveResultRecord("word.document_review", "doc-session-1").jobId, "new-job");
+});
+
+test("full review completion for another document does not render over the current document", async () => {
+  const ctx = createBaseTestContext();
+  let rendered = false;
+  ctx.state.fullDocumentReviewJobId = "job-A";
+  ctx.state.documentSessionId = "doc-B";
+  ctx.renderFullDocumentReviewReport = () => { rendered = true; return Promise.resolve(); };
+  ctx.request = (url) => Promise.resolve({ data: url.endsWith("/report") ? { summary: "A" } : { status: "completed" } });
+  ctx.pollFullDocumentReviewJob("job-A", "doc-A");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(ctx.getActiveResultRecord("word.document_review", "doc-A"));
+  assert.strictEqual(rendered, false);
+});
+
+test("regular review completion is saved to its document without replacing another document preview", () => {
+  const ctx = createBaseTestContext();
+  vm.runInNewContext(functionSource("completeDocumentReview"), ctx);
+  ctx.state.documentSessionId = "doc-B";
+  ctx.completeDocumentReview({ issues: [{ title: "A" }] }, "trace-A", "doc-A", "job-A");
+  assert.ok(ctx.getActiveResultRecord("word.document_review", "doc-A"));
+  assert.strictEqual(ctx.state.renderedReviewResult, undefined);
+});
+
+test("late full review page failure cannot replace a newer task status", async () => {
+  const ctx = createBaseTestContext();
+  let rejectPage;
+  ctx.state.fullDocumentReviewJobId = "old-job";
+  ctx.request = (url) => Promise.resolve({ data: url.endsWith("/report") ? { summary: "old" } : { status: "completed" } });
+  ctx.renderFullDocumentReviewReport = () => new Promise((resolve, reject) => { rejectPage = reject; });
+  ctx.pollFullDocumentReviewJob("old-job", "doc-session-1");
+  await new Promise((resolve) => setImmediate(resolve));
+  ctx.state.fullDocumentReviewJobId = "new-job";
+  ctx.state.status = "new task running";
+  rejectPage(new Error("old page failed"));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.strictEqual(ctx.state.status, "new task running");
+});
+
+test("regular review submits identical text again with a fresh client job ID after completion", async () => {
+  const ctx = createBaseTestContext();
+  const submitted = [];
+  ctx.resolveSelectionScope = () => ({ ok: true, selectionMode: "document" });
+  ctx.extractDocument = () => ({ text: "相同正文", selectionMode: "document" });
+  ctx.pollDocumentReviewJob = () => {};
+  ctx.request = (url, body) => {
+    submitted.push({ url, body: { ...body } });
+    return Promise.resolve({ data: { jobId: body.clientJobId } });
+  };
+  vm.runInNewContext(functionSource("buildDocumentReviewClientJobId") + functionSource("runDocumentReview"), ctx);
+  ctx.runDocumentReview();
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  ctx.cleanupDocumentReviewTerminal("doc-session-1", ctx.state.documentReviewJobId);
+  ctx.runDocumentReview();
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.strictEqual(submitted.length, 2);
+  assert.ok(submitted.every((entry) => entry.url === "/word/document-review/jobs" && entry.body.text === "相同正文"));
+  assert.notStrictEqual(submitted[0].body.clientJobId, submitted[1].body.clientJobId);
+});
+
+test("full review recovers a lost submission response by GET using the same client job ID", async () => {
+  const ctx = createBaseTestContext();
+  const requests = [];
+  let discarded = false;
+  ctx.extractFullDocumentReviewBodyYielding = () => Promise.resolve({ documentId: "doc", contentSha256: "same", structureSha256: "same", reviewCharacterCount: 10, blocks: [{}], batches: [], editSignal: "1" });
+  ctx.ensureFullDocumentReviewPreparation = () => {};
+  ctx.uploadFullDocumentReviewBatches = () => Promise.resolve();
+  ctx.discardFullDocumentReviewSnapshot = () => { discarded = true; return Promise.resolve(); };
+  ctx.request = (url, body) => {
+    requests.push({ url, body });
+    if (url === "/word/document-review/full/jobs") return Promise.reject(new Error("connection lost"));
+    if (url.includes("/jobs/")) return Promise.resolve({ data: { status: "cancelled" } });
+    if (url.endsWith("/commit")) return Promise.resolve({ data: { snapshotId: "snapshot", snapshotToken: "token" } });
+    return Promise.resolve({ data: { sessionId: "session", uploadToken: "upload-token" } });
+  };
+  vm.runInNewContext(functionSource("runFullDocumentReview"), ctx);
+  await ctx.runFullDocumentReview();
+  await new Promise((resolve) => setImmediate(resolve));
+  const posts = requests.filter((entry) => entry.url === "/word/document-review/full/jobs");
+  assert.strictEqual(posts.length, 1);
+  assert.ok(requests.some((entry) => entry.url === "/word/document-review/full/jobs/" + posts[0].body.clientJobId && entry.body === null));
+  assert.strictEqual(discarded, false);
+});
+
+test("late full review issue page cannot render after a new result or history view is selected", async () => {
+  for (const change of ["new-result", "history", "document"]) {
+    const ctx = createBaseTestContext();
+    let deliver;
+    let rendered = false;
+    ctx.request = () => new Promise((resolve) => { deliver = resolve; });
+    ctx.renderFullDocumentReviewIssuePage = () => { rendered = true; };
+    vm.runInNewContext(functionSource("loadFullDocumentReviewIssuePage"), ctx);
+    const pending = ctx.loadFullDocumentReviewIssuePage("old-job", {}, "");
+    if (change === "new-result") ctx.setActiveResultRecord("word.document_review", "doc-session-1", { jobId: "new-job" });
+    if (change === "history") ctx.state.viewingHistoryReport = { jobId: "history-job" };
+    if (change === "document") ctx.state.documentSessionId = "doc-B";
+    deliver({ data: { issues: [] } });
+    await pending;
+    assert.strictEqual(rendered, false, change);
+  }
+});
+
+test("full review report completes its originating document after switching to another active job", async () => {
+  const ctx = createBaseTestContext();
+  let deliver;
+  ctx.state.fullDocumentReviewJobId = "job-A";
+  ctx.setActiveReviewJobRecord("word.document_review.full", "doc-A", { jobId: "job-A" });
+  helpers.claimTaskSlot(ctx.state.activeTaskSlots, "wps", "word.document_review.full", "doc-A", "job-A");
+  ctx.request = (url) => url.endsWith("/report") ? new Promise(resolve => { deliver = resolve; }) : Promise.resolve({ data: { status: "completed" } });
+  ctx.pollFullDocumentReviewJob("job-A", "doc-A");
+  await Promise.resolve();
+  ctx.state.documentSessionId = "doc-B";
+  ctx.state.fullDocumentReviewJobId = "job-B";
+  ctx.state.modelTaskBusy = true;
+  deliver({ data: { summary: "A complete" } });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.strictEqual(ctx.getActiveReviewJobRecord("word.document_review.full", "doc-A"), null);
+  assert.strictEqual(helpers.isTaskSlotBusy(ctx.state.activeTaskSlots, "wps", "word.document_review.full", "doc-A"), false);
+  assert.strictEqual(ctx.getActiveResultRecord("word.document_review", "doc-A").jobId, "job-A");
+  assert.strictEqual(ctx.state.fullDocumentReviewJobId, "job-B");
+  assert.strictEqual(ctx.state.modelTaskBusy, true);
+});
+
+test("old full submission rejection does not clear another document's active task", async () => {
+  const ctx = createBaseTestContext();
+  let rejectPost;
+  ctx.extractFullDocumentReviewBodyYielding = () => Promise.resolve({ documentId: "doc", contentSha256: "same", structureSha256: "same", reviewCharacterCount: 10, blocks: [{}], batches: [], editSignal: "1" });
+  ctx.ensureFullDocumentReviewPreparation = () => {};
+  ctx.uploadFullDocumentReviewBatches = () => Promise.resolve();
+  ctx.discardFullDocumentReviewSnapshot = () => Promise.resolve();
+  ctx.request = (url) => {
+    if (url.endsWith("/jobs")) return new Promise((resolve, reject) => { rejectPost = reject; });
+    if (url.endsWith("/commit")) return Promise.resolve({ data: { snapshotId: "snapshot", snapshotToken: "token" } });
+    return Promise.resolve({ data: { sessionId: "session", uploadToken: "token" } });
+  };
+  vm.runInNewContext(functionSource("runFullDocumentReview"), ctx);
+  const pending = ctx.runFullDocumentReview();
+  await new Promise(resolve => setImmediate(resolve));
+  ctx.state.documentSessionId = "doc-B";
+  ctx.state.fullDocumentReviewJobId = "job-B";
+  ctx.state.fullDocumentReviewPreparing = true;
+  ctx.state.modelTaskBusy = true;
+  ctx.state.status = "B running";
+  rejectPost(Object.assign(new Error("A rejected"), { httpStatus: 400 }));
+  await pending;
+  assert.strictEqual(ctx.state.fullDocumentReviewJobId, "job-B");
+  assert.strictEqual(ctx.state.fullDocumentReviewPreparing, true);
+  assert.strictEqual(ctx.state.modelTaskBusy, true);
+  assert.strictEqual(ctx.state.status, "B running");
+});
+
+test("full history page remains valid when a background active result arrives", async () => {
+  const ctx = createBaseTestContext();
+  let deliver;
+  let rendered = false;
+  ctx.state.viewingHistoryReport = { jobId: "history-job" };
+  ctx.request = () => new Promise(resolve => { deliver = resolve; });
+  ctx.renderFullDocumentReviewIssuePage = () => { rendered = true; };
+  vm.runInNewContext(functionSource("loadFullDocumentReviewIssuePage"), ctx);
+  const pending = ctx.loadFullDocumentReviewIssuePage("history-job", {}, "");
+  ctx.setActiveResultRecord("word.document_review", "doc-session-1", { jobId: "background-job" });
+  deliver({ data: { issues: [] } });
+  await pending;
+  assert.strictEqual(rendered, true);
+});
+
+test("full snapshot cleanup cannot clear a newer task started while discard is pending", async () => {
+  const ctx = createBaseTestContext();
+  let finishDiscard;
+  ctx.extractFullDocumentReviewBodyYielding = () => Promise.reject(new Error("old extraction failed"));
+  ctx.discardFullDocumentReviewSnapshot = () => new Promise(resolve => { finishDiscard = resolve; });
+  vm.runInNewContext(functionSource("runFullDocumentReview"), ctx);
+  const pending = ctx.runFullDocumentReview();
+  await new Promise(resolve => setImmediate(resolve));
+  ctx.setActiveReviewJobRecord("word.document_review.full", "doc-session-1", { jobId: "new-job" });
+  ctx.state.fullDocumentReviewJobId = "new-job";
+  ctx.state.modelTaskBusy = true;
+  ctx.state.status = "new task running";
+  finishDiscard();
+  await pending;
+  assert.strictEqual(ctx.getActiveReviewJobRecord("word.document_review.full", "doc-session-1").jobId, "new-job");
+  assert.strictEqual(ctx.state.status, "new task running");
+  assert.strictEqual(ctx.state.modelTaskBusy, true);
 });

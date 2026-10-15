@@ -71,15 +71,24 @@ class WritingJobStore:
         self.coordinator = coordinator or get_long_task_coordinator()
         self._submission_lock = threading.Lock()
         self._active_doc_sessions: Dict[Tuple[str, str, str], str] = {}
+        self._job_identities: Dict[str, Tuple[str, str, str]] = {}
 
     def start(self, request: WordDocumentRequest, trace_id: str) -> Dict:
         job_id = _normalize_client_job_id(getattr(request, "client_job_id", "")) or trace_id
         doc_session = str(getattr(request, "document_session_id", "") or "").strip()
         host = str(getattr(request, "host", "") or "wps").strip()
+        identity = (host, self.task_type, doc_session)
 
         with self._submission_lock:
             existing = self.coordinator.get(job_id, task_type=self.task_type)
             if existing is not None:
+                recorded_identity = self._job_identities.get(job_id)
+                if recorded_identity is not None and recorded_identity != identity:
+                    raise AdapterError(
+                        "WORD_WRITING_TASK_CONFLICT",
+                        "任务编号已绑定到其他文档会话或宿主。",
+                        status_code=409,
+                    )
                 return existing
 
             # Document session active slot guard: reject duplicate concurrent task in same document session
@@ -150,6 +159,7 @@ class WritingJobStore:
                 priority_class=PRIORITY_INTERACTIVE,
                 allow_running_cancel=is_streaming,
             )
+            self._job_identities[job_id] = identity
             if doc_session:
                 self._active_doc_sessions[(host, self.task_type, doc_session)] = job_id
             return submitted
