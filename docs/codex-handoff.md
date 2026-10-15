@@ -1,5 +1,19 @@
 # Codex Handoff - AI-WPS
 
+## 三宿主支持手填默认模型及功能模型（Issue #257，2026-10-16）
+
+- 开发前已快进拉取最新仓库代码，在独立隔离工作树 `.worktrees/issue-257-manual-model-input`（分支 `worktree-issue-257-manual-model-input`）中进行 TDD 开发。
+- 解除直连服务手填模型的目录限制与强制测试调用阻断：
+  - 后端：`DirectServiceStore` 引入持久化手填模型列表（`customModels`），解除 `DIRECT_SERVICE_CUSTOM_MODEL_NOT_ALLOWED` 与 `DIRECT_SERVICE_CUSTOM_MODEL_UNVERIFIED` 报错拦截；提供 FastAPI 与 Standalone 双运行时对等的 `POST/DELETE /provider/direct-services/{id}/custom-models` 轻量端点；删除在用模型时执行跨任务平滑重置（默认模型置空，任务选择平滑回退为未指定/继承状态，不阻断删除）；`ProviderClient` 允许未测试验证的手填模型直接发起真实任务调用。
+  - 前端：Word、Excel (ET)、PPT (WPP) 三宿主任务窗格全面对齐：直连服务编辑卡片和各任务模型选择下拉框中常驻手填入口（`value="__manual__"`）；展开基于 Apple Design 设计规范的手填模型管理面板（Inset Grouped 结构、Capsule 药丸标签、单项删除按钮、`:active` 物理缩放动效）；支持在面板中即时添加、删除和联动选中；各宿主 helper 允许未验证手填模型通过就绪校验。
+- 架构决策：同步更新 `docs/adr/0128-share-direct-model-services-across-hosts.md`，记录手填模型常驻、即时管理与平滑重置规则。
+- 验证结论：
+  - Kylin V10 SP1 ARM64（Python 3.8.10）：后端全量 pytest `1807 passed / 55 skipped / 0 failed`，包含 Issue 257 专项、直连全链路与 Preview 交付回归。
+  - 正式插件契约与浏览器测试：`node --test formal-plugin-kit/tests/*.test.js` 全量 `652 passed / 0 failed`（包含三宿主手填模型专项 15 项）。
+  - 原型插件：`wps-addon` Vitest `12 passed / 0 failed`，Vite 生产构建成功。
+  - 代码兼容性与规范：`packaging/check_python38_compatibility.py` 扫描 87 个生产 Python 文件通过；`git diff --check` 0 警告；`config/adapter.json`、`run/`、`.scratch/` 等本地运行态文件未被触碰或提交。
+- 本轮以源码提交，未打交付包或替换 UTM 安装；真实模型扣费及真实 WPS 客户端 GUI 渲染效果仍待真机验收。
+
 ## PPT 再次生成与任务隔离（Issue #254，2026-10-15）
 
 - 开发前已快进拉取，基准为 `ffff7dcb5ea16d47fbeeb80c313ae3dfa77cd2fb`，当时远端已是最新；沿用 main，保留已有本地修改。

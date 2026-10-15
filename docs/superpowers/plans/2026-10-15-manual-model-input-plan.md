@@ -177,23 +177,23 @@
 - Consumes: Word 插件中已验证的面板模板与状态机模式
 - Produces: Excel 与 PPT 插件对等具备手填模型管理能力
 
-- [ ] **Step 1: 在契约测试中加入 Excel 与 PPT 测试用例**
+- [x] **Step 1: 在契约测试中加入 Excel 与 PPT 测试用例**
   扩展 `formal-plugin-kit/tests/issue257-manual-model-input.test.js`，加入针对 Excel (`wps-ai-assistant-et_1.0.0`) 和 PPT (`wps-ai-assistant-wpp_1.0.0`) 的面板展开、即时添加、单项删除与平滑回退测试断言。
 
-- [ ] **Step 2: 运行测试验证失败**
+- [x] **Step 2: 运行测试验证失败**
   运行：`node --test formal-plugin-kit/tests/issue257-manual-model-input.test.js`
   预期：Excel 与 PPT 对应的测试用例 FAIL。
 
-- [ ] **Step 3: 将 Word 插件的实现模式移植并适配到 ET 与 WPP**
+- [x] **Step 3: 将 Word 插件的实现模式移植并适配到 ET 与 WPP**
   - 同步更新 ET 的 `taskpane.html`、`taskpane.css`、`taskpane-helpers.js` 与 `taskpane.js`；
   - 同步更新 WPP 的 `taskpane.html`、`taskpane.css`、`taskpane-helpers.js` 与 `taskpane.js`；
   - 确保三宿主交互体验、元素命名与行为契约 100% 对齐。
 
-- [ ] **Step 4: 运行前端契约测试验证通过**
+- [x] **Step 4: 运行前端契约测试验证通过**
   运行：`node --test formal-plugin-kit/tests/issue257-manual-model-input.test.js`
   预期：Word、Excel、PPT 全部通过。
 
-- [ ] **Step 5: 提交本任务修改**
+- [x] **Step 5: 提交本任务修改**
   ```bash
   git add formal-plugin-kit/wps-ai-assistant-et_1.0.0/ formal-plugin-kit/wps-ai-assistant-wpp_1.0.0/ formal-plugin-kit/tests/issue257-manual-model-input.test.js
   git commit -m "feat(et,wpp): align manual model input management across Excel and PPT"
@@ -207,28 +207,28 @@
 - Modify: `docs/adr/0128-share-direct-model-services-across-hosts.md`
 - Modify: `docs/codex-handoff.md`
 
-- [ ] **Step 1: 更新 ADR-0128 架构决策记录**
+- [x] **Step 1: 更新 ADR-0128 架构决策记录**
   在 `docs/adr/0128-share-direct-model-services-across-hosts.md` 中：
   - 更新关于手填模型必须先通过验证调用才能生效的陈旧规定；
   - 补充手填模型清单（`customModels`）常驻可用、即时增删管理及删除在用模型时的平滑重置规则。
 
-- [ ] **Step 2: 运行前端全部契约测试与原型测试**
+- [x] **Step 2: 运行前端全部契约测试与原型测试**
   在工作区运行：
   - `node --test formal-plugin-kit/tests/*.test.js`（验证全部插件契约无退化）
   - `npm --prefix wps-addon test` 与 `npm --prefix wps-addon run build`
 
-- [ ] **Step 3: 在 Kylin V10 ARM64 上运行全量后端测试**
+- [x] **Step 3: 在 Kylin V10 ARM64 上运行全量后端测试**
   同步最新代码到 Kylin V10，并运行：
   - `ssh cloud@192.168.64.3 'cd /data/home/cloud/AI-WPS-kylin-test && PATH=/data/home/cloud/.venvs/ai-wps-test-py38/bin:/data/home/cloud/.local/bin:$PATH PYTHONPATH=adapter_service /data/home/cloud/.venvs/ai-wps-test-py38/bin/python -m pytest -q adapter_service/tests'`
   预期：1800+ 项测试全绿，0 失败。
 
-- [ ] **Step 4: 运行交付兼容性扫描与 Git 差异检查**
+- [x] **Step 4: 运行交付兼容性扫描与 Git 差异检查**
   在工作区运行：
   - `python3 packaging/check_python38_compatibility.py`
   - `git diff --check`
   预期：0 语法兼容性错误，0 格式/空白警告。
 
-- [ ] **Step 5: 更新 `docs/codex-handoff.md` 并提交完成记录**
+- [x] **Step 5: 更新 `docs/codex-handoff.md` 并提交完成记录**
   记录 Issue #257 开发过程、全量测试数据与未验证项（真实模型扣费及真实 WPS GUI 渲染需人工验收）。
   ```bash
   git add docs/adr/0128-share-direct-model-services-across-hosts.md docs/codex-handoff.md
