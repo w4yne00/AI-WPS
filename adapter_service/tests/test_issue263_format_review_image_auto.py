@@ -1,6 +1,7 @@
 """Issue 263: direct format review auto image mode, no separate authorization."""
 import json
 import threading
+from io import BytesIO
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -10,6 +11,7 @@ from unittest.mock import patch
 from app.core.errors import AdapterError
 from app.services.direct_services import DirectServiceError, DirectServiceStore
 from app.services.provider_client import ProviderClient
+from app.core.config import AppSettings
 
 
 TASK = "word.format_review"
@@ -189,6 +191,74 @@ class FormatReviewImageAutoTests(TestCase):
                 calls, outcomes = self._concurrent_validation(kind, lambda *_args, **_kwargs: summary, saved_leader=True)
                 self.assertEqual(calls, [kind])
                 self.assertTrue(all(isinstance(result, dict) and result["success"] for result in outcomes), outcomes)
+
+    def test_shared_waiter_times_out_without_releasing_owner(self):
+        for kind in ("format", "image"):
+            with self.subTest(kind=kind):
+                started, release = threading.Event(), threading.Event()
+                outcomes, calls = [], []
+                draft = {"serviceId": self.service["id"], "modelName": "catalog-model"}
+
+                def transport(*_args, **_kwargs):
+                    calls.append(kind)
+                    started.set()
+                    self.assertTrue(release.wait(2))
+                    return {"answer": "red green red green red green red green"} if kind == "image" else {"success": True}
+
+                def validate():
+                    client = ProviderClient(AppSettings(timeout_seconds=1), direct_service_store=self.store)
+                    client.settings.timeout_seconds = 0.02
+                    try:
+                        if kind == "image":
+                            result = client.validate_task_image_selection(TASK, "bounded", draft)
+                        else:
+                            result = client.validate_task_model_selection(TASK, draft, "bounded")
+                        outcomes.append(result)
+                    except Exception as exc:
+                        outcomes.append(exc)
+
+                method = "_post_direct_task" if kind == "image" else "_validate_format_semantic_direct"
+                with patch.object(ProviderClient, method, side_effect=transport), \
+                     patch("secrets.choice", side_effect=lambda choices: choices[0]):
+                    owner = threading.Thread(target=validate)
+                    owner.start()
+                    self.assertTrue(started.wait(1))
+                    follower = threading.Thread(target=validate)
+                    follower.start()
+                    try:
+                        follower.join(0.3)
+                        self.assertFalse(follower.is_alive(), "shared validation did not expire")
+                        self.assertEqual(len(outcomes), 1)
+                        self.assertIsInstance(outcomes[0], AdapterError)
+                        self.assertEqual(outcomes[0].code, "PROVIDER_TIMEOUT")
+                        self.assertEqual(calls, [kind])
+                        self.assertTrue(owner.is_alive())
+                        follower = threading.Thread(target=validate)
+                        follower.start()
+                        follower.join(0.3)
+                        self.assertFalse(follower.is_alive())
+                        self.assertEqual(len(outcomes), 2)
+                        self.assertEqual(outcomes[1].code, "PROVIDER_TIMEOUT")
+                        self.assertEqual(calls, [kind])
+                    finally:
+                        release.set()
+                        owner.join(2)
+                        follower.join(2)
+
+    def test_image_validation_uses_short_settings_with_sixty_second_cap(self):
+        for configured, expected in ((5, 5), (600, 60)):
+            with self.subTest(configured=configured):
+                client = ProviderClient(AppSettings(timeout_seconds=configured), direct_service_store=self.store)
+                response = BytesIO(json.dumps({"choices": [{"message": {
+                    "content": "red green red green red green red green"
+                }}]}).encode("utf-8"))
+                with patch("secrets.choice", side_effect=lambda choices: choices[0]), \
+                     patch("urllib.request.urlopen", return_value=response) as opened:
+                    result = client.validate_task_image_selection(
+                        TASK, "image-budget", {"serviceId": self.service["id"], "modelName": "catalog-model"},
+                    )
+                self.assertTrue(result["success"])
+                self.assertLessEqual(opened.call_args.kwargs["timeout"], expected)
 
     def test_concurrent_probe_failure_is_shared_and_can_retry(self):
         for kind in ("format", "image"):

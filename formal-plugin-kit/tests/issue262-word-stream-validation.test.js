@@ -323,13 +323,54 @@ function confirmationPane(taskType, manual = false) {
       return { data: { taskModelSelection: { ...body.taskModelSelection } } };
     }
   };
-  for (const name of ["saveTaskModelSelection", "activateWorkflowProfile"]) {
+  for (const name of ["formatReviewUsesCatalogConfirm", "saveTaskModelSelection", "activateWorkflowProfile"]) {
     const start = js.indexOf("  function " + name + "(");
     const end = js.indexOf("\n  function ", start + 1);
     ctx[name] = vm.runInNewContext("(" + js.slice(start, end) + ")", ctx);
   }
   return { ...ctx, context: ctx, draft, service, saved, status, calls, probe,
     switchTask: task => { currentTask = task; } };
+}
+
+for (const taskType of ["word.smart_write", "word.smart_imitation", "word.format_review"]) {
+  for (const fail of [false, true]) {
+    test(`${taskType} settings validation ${fail ? "failure" : "success"} releases busy after leaving the task`, async () => {
+      const p = confirmationPane(taskType);
+      const pending = p.saveTaskModelSelection();
+      p.switchTask("word.document_review");
+      p.status.textContent = "另一个任务";
+      if (fail) p.probe.reject(new Error("旧验证失败"));
+      else p.probe.resolve({ data: { success: true, streamingCapability: "validated" } });
+      await pending;
+      assert.strictEqual(p.state.workflowProfileMutationBusy, false);
+      assert.strictEqual(p.calls.length, 1, "leaving the task must not activate its old draft or start another probe");
+      assert.strictEqual(p.state.taskModelSelections[taskType], p.saved);
+      assert.strictEqual(p.status.textContent, "另一个任务");
+    });
+  }
+  for (const stage of ["activation", "refresh"]) {
+    test(`${taskType} settings ${stage} completion releases busy without overwriting the new task`, async () => {
+      const p = confirmationPane(taskType);
+      const response = deferred();
+      if (stage === "activation") {
+        const request = p.context.request;
+        p.context.request = (url, body) => url.endsWith("/activate") ? response.promise : request(url, body);
+        p.context.loadDirectServices = async () => { p.status.textContent = "刷新覆盖了当前页面"; };
+      } else {
+        p.context.loadWorkflowProfiles = () => response.promise;
+      }
+      p.probe.resolve({ data: { success: true, streamingCapability: "validated" } });
+      const pending = p.saveTaskModelSelection();
+      await new Promise(resolve => setImmediate(resolve));
+      p.switchTask("word.document_review");
+      p.status.textContent = "另一个任务";
+      response.resolve({ data: { taskModelSelection: { ...p.draft } } });
+      await pending;
+      assert.strictEqual(p.state.workflowProfileMutationBusy, false);
+      assert.strictEqual(p.state.taskModelSelections[taskType].serviceId, p.service.id);
+      assert.strictEqual(p.status.textContent, "另一个任务");
+    });
+  }
 }
 
 for (const taskType of ["word.smart_write", "word.smart_imitation"]) {

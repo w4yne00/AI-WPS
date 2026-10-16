@@ -2,12 +2,13 @@ import json
 import threading
 import time
 import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch, MagicMock
 
 from app.core.config import AppSettings
-from app.core.errors import AdapterError, ProviderUnavailableError
+from app.core.errors import AdapterError, ProviderTimeoutError, ProviderUnavailableError
 from app.services.direct_services import DirectServiceStore
 from app.services.provider_client import ProviderClient
 
@@ -217,6 +218,86 @@ class Issue262StreamValidationTests(unittest.TestCase):
         thread = threading.Thread(target=worker, name=trace_id)
         thread.start()
         return thread, results, errors
+
+    def test_probe_stops_dripping_partial_sse_line_at_total_deadline(self):
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.end_headers()
+                try:
+                    for _ in range(50):
+                        self.wfile.write(b":")
+                        self.wfile.flush()
+                        time.sleep(0.01)
+                    self.wfile.write(b"\n\ndata: [DONE]\n\n")
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+
+            def log_message(self, *_args):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        server.daemon_threads = True
+        worker = threading.Thread(target=server.serve_forever, daemon=True)
+        worker.start()
+        try:
+            started = time.monotonic()
+            with self.assertRaises(ProviderTimeoutError):
+                self.client._probe_direct_streaming(
+                    "word.smart_write", "deadline", "synthetic",
+                    {"providerBaseUrl": "http://127.0.0.1:%s" % server.server_port,
+                     "modelName": "synthetic"}, 0.05,
+                )
+            self.assertLess(time.monotonic() - started, 0.25)
+        finally:
+            server.shutdown()
+            server.server_close()
+            worker.join(2)
+
+    def test_validation_fallback_uses_remaining_short_probe_budget(self):
+        service = self._create_service()
+        clock = [100.0]
+        observed = []
+
+        def open_response(_request, timeout):
+            observed.append(timeout)
+            if len(observed) == 1:
+                clock[0] += 3
+                return FakeSseResponse([], {"Content-Type": "application/json"})
+            return FakeSseResponse([
+                json.dumps({"choices": [{"message": {"content": "系统已完成部署。"}}]})
+            ], {"Content-Type": "application/json"})
+
+        with patch("app.services.provider_client.time.monotonic", side_effect=lambda: clock[0]), \
+             patch("urllib.request.urlopen", side_effect=open_response):
+            result = self.client.validate_task_model_selection(
+                "word.smart_write", {"serviceId": service["id"], "modelName": "gpt-4o"}, "short-budget",
+            )
+        self.assertTrue(result["success"])
+        self.assertEqual(observed, [5, 2])
+
+    def test_validation_budget_caps_long_model_task_timeout(self):
+        service = self._create_service()
+        answers = {
+            "word.smart_write": "系统已完成部署。",
+            "word.smart_imitation": "系统已完成联调。",
+            "excel.analysis": '{"overview":"完成","findings":[],"risks":[],"actions":[]}',
+            "ppt.slide_assistant": '{"suggestedTitle":"进展","summary":"完成","keyPoints":[],"layoutAdvice":[],"plainText":"完成"}',
+        }
+        for task_type, answer in answers.items():
+            for configured, expected in ((600, 60), (5, 5)):
+                with self.subTest(task=task_type, configured=configured):
+                    chunk = {"choices": [{"delta": {"content": answer}, "finish_reason": "stop"}]}
+                    with patch.object(self.settings, "timeout_seconds", configured), \
+                         patch("urllib.request.urlopen", return_value=FakeSseResponse([
+                             "data: " + json.dumps(chunk) + "\n\n"
+                         ])) as open_response:
+                        result = self.client.validate_task_model_selection(
+                            task_type, {"serviceId": service["id"], "modelName": task_type + str(configured)}, "bounded-probe",
+                        )
+                    self.assertTrue(result["success"])
+                    self.assertLessEqual(open_response.call_args.kwargs["timeout"], expected)
 
     def _observe_follower_registration(self, follower_name):
         registered = threading.Event()

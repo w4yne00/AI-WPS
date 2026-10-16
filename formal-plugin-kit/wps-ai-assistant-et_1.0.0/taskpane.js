@@ -942,7 +942,9 @@
   }
 
   function request(path, payload, requestOptions) {
-    var timeoutMs = requestOptions && requestOptions.timeoutMs;
+    var isValidation = path.indexOf("/provider/") === 0 && /\/validate(?:-image)?$/.test(path);
+    // Format semantics may require three 60-second attempts.
+    var timeoutMs = (requestOptions && requestOptions.timeoutMs) || (isValidation ? 185000 : 0);
     var requestMethod = requestOptions && requestOptions.method;
     var controller = null;
     var timeoutId = null;
@@ -977,14 +979,8 @@
     if (timeoutMs && typeof AbortController !== "undefined") {
       controller = new AbortController();
       options.signal = controller.signal;
-      timeoutId = setTimeout(function () {
-        controller.abort();
-      }, timeoutMs);
     }
-    return fetch(ADAPTER_BASE_URL + path, options).then(function (response) {
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-      }
+    var responsePromise = fetch(ADAPTER_BASE_URL + path, options).then(function (response) {
       return response.json().then(function (body) {
         if (!response.ok) {
           var validation = body.data && body.data.validation;
@@ -1014,10 +1010,22 @@
         }
         return body;
       });
+    });
+    if (timeoutMs) {
+      responsePromise = Promise.race([responsePromise, new Promise(function (resolve, reject) {
+        timeoutId = setTimeout(function () {
+          var error = new Error(isValidation ? "模型能力验证超时，请稍后重试。" : "请求超过等待时限。");
+          error.name = "AbortError";
+          reject(error);
+          if (controller) controller.abort();
+        }, timeoutMs);
+      })]);
+    }
+    return responsePromise.then(function (body) {
+      if (timeoutId) clearTimeout(timeoutId);
+      return body;
     }, function (error) {
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-      }
+      if (timeoutId) clearTimeout(timeoutId);
       throw error;
     });
   }

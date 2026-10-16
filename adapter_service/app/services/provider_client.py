@@ -57,7 +57,7 @@ from app.core.features import (
     direct_streaming_enabled,
     streaming_capability_validated,
 )
-from app.services.direct_text_stream import read_direct_text_stream
+from app.services.direct_text_stream import read_direct_text_stream, _set_response_read_timeout
 from app.services.long_task_coordinator import LongTaskCancelled
 from app.services.ppt.document_text_extractor import extract_staged_document_text
 from app.services.word.image_semantics import ImageSemanticConfigStore
@@ -161,6 +161,7 @@ PPT_SLIDE_ASSISTANT_TIMEOUT_SECONDS = EXCEL_ANALYSIS_TIMEOUT_SECONDS
 PPT_STRUCTURE_REVIEW_TIMEOUT_SECONDS = EXCEL_ANALYSIS_TIMEOUT_SECONDS
 PPT_DOCUMENT_SLIDE_COUNTS = (5, 8, 10, 12, 15)
 INTERACTIVE_WRITING_TIMEOUT_SECONDS = 600
+MODEL_VALIDATION_TIMEOUT_SECONDS = 60
 MAX_STREAMING_PROBE_RESPONSE_BYTES = 5 * 1024 * 1024
 DIFY_INPUT_MODE_LEGACY = "legacy-input-query"
 DIFY_INPUT_MODE_USER_INPUT = "user-input-node"
@@ -170,7 +171,7 @@ _FORMAT_REVIEW_VALIDATIONS: Dict[Tuple[str, str, str], Future] = {}
 _FORMAT_REVIEW_VALIDATIONS_LOCK = threading.Lock()
 
 
-def _share_format_review_validation(store, kind, binding, validate):
+def _share_format_review_validation(store, kind, binding, validate, timeout):
     key = (str(store.config_path.resolve()), kind, json.dumps(binding, sort_keys=True))
     with _FORMAT_REVIEW_VALIDATIONS_LOCK:
         pending = _FORMAT_REVIEW_VALIDATIONS.get(key)
@@ -179,7 +180,10 @@ def _share_format_review_validation(store, kind, binding, validate):
             pending = Future()
             _FORMAT_REVIEW_VALIDATIONS[key] = pending
     if not owner:
-        return deepcopy(pending.result())
+        try:
+            return deepcopy(pending.result(timeout=timeout))
+        except FutureTimeoutError as exc:
+            raise ProviderTimeoutError("模型能力验证超过等待时限。") from exc
     try:
         result = validate()
         pending.set_result(result)
@@ -190,6 +194,35 @@ def _share_format_review_validation(store, kind, binding, validate):
     finally:
         with _FORMAT_REVIEW_VALIDATIONS_LOCK:
             del _FORMAT_REVIEW_VALIDATIONS[key]
+
+
+def _read_direct_response_body(response, deadline, max_bytes=None):
+    chunks = []
+    received_bytes = 0
+    read_chunk = getattr(response, "read1", None)
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise ProviderTimeoutError("模型响应读取超过等待时限。")
+        _set_response_read_timeout(response, remaining)
+        read_size = min(64 * 1024, max_bytes - received_bytes) if max_bytes is not None else 64 * 1024
+        if callable(read_chunk):
+            chunk = read_chunk(read_size)
+        elif max_bytes is not None:
+            chunk = response.read(read_size)
+        else:
+            chunk = response.read()
+        if time.monotonic() >= deadline:
+            raise ProviderTimeoutError("模型响应读取超过等待时限。")
+        if not chunk:
+            break
+        chunks.append(chunk)
+        received_bytes += len(chunk)
+        if max_bytes is not None and received_bytes >= max_bytes:
+            break
+        if not callable(read_chunk) and max_bytes is None:
+            break
+    return b"".join(chunks)
 
 
 
@@ -825,7 +858,7 @@ def _sanitize_provider_error_body(
     return str(sanitized)[:limit]
 
 
-def _read_http_error_raw_result(exc: error.HTTPError, control=None) -> Tuple[str, bool]:
+def _read_http_error_raw_result(exc: error.HTTPError, control=None, deadline=None) -> Tuple[str, bool]:
     cancel_callback = None
     if control is not None and hasattr(control, "set_cancel_callback") and hasattr(control, "clear_cancel_callback"):
         def interrupt_error_read():
@@ -843,14 +876,25 @@ def _read_http_error_raw_result(exc: error.HTTPError, control=None) -> Tuple[str
         cancel_callback = interrupt_error_read
         control.set_cancel_callback(cancel_callback)
     try:
+        if deadline is not None:
+            preview = _read_direct_response_body(exc.fp, deadline, max_bytes=4097)
+            return preview[:4096].decode("utf-8", errors="replace"), len(preview) <= 4096
         preview = exc.read(4096)
         has_more = bool(exc.read(4096))
         return preview.decode("utf-8", errors="replace"), not has_more
+    except ProviderTimeoutError:
+        raise
+    except (TimeoutError, socket.timeout) as read_error:
+        if deadline is not None:
+            raise ProviderTimeoutError("模型错误响应读取超过等待时限。") from read_error
+        return "", False
     except Exception:
         return "", False
     finally:
         if cancel_callback is not None:
             control.clear_cancel_callback(cancel_callback)
+        if deadline is not None and exc.fp is not None:
+            exc.close()
 
 
 def _read_http_error_raw(exc: error.HTTPError) -> str:
@@ -3216,6 +3260,8 @@ class ProviderClient:
         progress_callback=None,
         allow_streaming_fallback: bool = True,
     ) -> Dict:
+        if timeout <= 0:
+            raise ProviderTimeoutError("模型调用超过等待时限。")
         if prompt_asset is None:
             try:
                 prompt_asset = self.system_prompt_store.load(task_type)
@@ -3341,6 +3387,7 @@ class ProviderClient:
             headers=headers,
         )
         t_start = time.monotonic()
+        deadline = t_start + timeout
         t_headers = None
         first_visible_ms = None
         first_delta_seen = False
@@ -3400,7 +3447,7 @@ class ProviderClient:
                             trace_id,
                             query,
                             resolved_task_auth,
-                            timeout,
+                            max(0.0, deadline - time.monotonic()),
                             prompt_asset=prompt_asset,
                             response_format=response_format,
                             input_token_limit=input_token_limit,
@@ -3464,8 +3511,7 @@ class ProviderClient:
                             publish_callback=on_delta,
                             record_metric_callback=record_metric,
                             start_mono=t_start,
-                            timeout=(max(0.0, float(timeout) - (time.monotonic() - t_start))
-                                     if task_type == "ppt.material_outline" else float(timeout)),
+                            timeout=max(0.0, deadline - time.monotonic()),
                             cancel_checker=cancel_checker,
                             activity_callback=(progress_callback if task_type == "ppt.material_outline" else None),
                         )
@@ -3552,7 +3598,7 @@ class ProviderClient:
                     )
                     return normalized
 
-                raw_body = response.read().decode("utf-8")
+                raw_body = _read_direct_response_body(response, deadline).decode("utf-8")
                 t_complete = time.monotonic()
                 try:
                     body = json.loads(raw_body)
@@ -3651,7 +3697,8 @@ class ProviderClient:
             t_headers = time.monotonic()
             status = int(exc.code)
             raw_error_body, error_body_complete = _read_http_error_raw_result(
-                exc, progress_callback if task_type in ("word.material_composer", "ppt.material_outline") else None
+                exc, progress_callback if task_type in ("word.material_composer", "ppt.material_outline") else None,
+                deadline=deadline,
             )
             t_complete = time.monotonic() if error_body_complete else None
             perf_metrics = _provider_performance_metrics(
@@ -3697,7 +3744,7 @@ class ProviderClient:
                     trace_id,
                     query,
                     resolved_task_auth,
-                    timeout,
+                    max(0.0, deadline - time.monotonic()),
                     prompt_asset=prompt_asset,
                     response_format=response_format,
                     input_token_limit=input_token_limit,
@@ -3717,7 +3764,7 @@ class ProviderClient:
                     trace_id,
                     query,
                     resolved_task_auth,
-                    timeout,
+                    max(0.0, deadline - time.monotonic()),
                     prompt_asset=prompt_asset,
                     response_format=None,
                     input_token_limit=input_token_limit,
@@ -4383,64 +4430,17 @@ class ProviderClient:
         started_at = time.monotonic()
         try:
             with urllib_request.urlopen(req, timeout=timeout) as response:
-                accumulated = []
-                terminated = False
-                received_bytes = 0
                 content_type = str(response.headers.get("Content-Type", "")).lower()
                 if "text/event-stream" not in content_type:
                     raise StreamingUnsupportedError(
                         "直连模型未返回 text/event-stream。"
                     )
-                for raw_line in response:
-                    if time.monotonic() - started_at > timeout:
-                        raise ProviderTimeoutError("模型流式能力验证超过等待时限。")
-                    if isinstance(raw_line, bytes):
-                        received_bytes += len(raw_line)
-                        line = raw_line.decode("utf-8", errors="replace")
-                    else:
-                        line = str(raw_line)
-                        received_bytes += len(line.encode("utf-8"))
-                    if received_bytes > MAX_STREAMING_PROBE_RESPONSE_BYTES:
-                        raise AdapterError(
-                            "MODEL_RESPONSE_SIZE_LIMIT",
-                            "模型流式能力验证响应超过 5 MiB 上限。",
-                            status_code=502,
-                        )
-                    line = line.strip()
-                    if not line:
-                        continue
-                    if line.startswith("data:"):
-                        data_content = line[5:].strip()
-                        if data_content == "[DONE]":
-                            terminated = True
-                            break
-                        try:
-                            chunk = json.loads(data_content)
-                        except json.JSONDecodeError:
-                            continue
-                        if isinstance(chunk, dict) and isinstance(
-                            chunk.get("error"), dict
-                        ):
-                            raise ProviderUnavailableError(
-                                "模型后台在流式能力验证期间返回错误。"
-                            )
-                        choices = chunk.get("choices") or []
-                        if choices and isinstance(choices, list):
-                            choice = choices[0] if isinstance(choices[0], dict) else {}
-                            delta = choice.get("delta") or {}
-                            content = delta.get("content") or delta.get("text") or ""
-                            if content:
-                                accumulated.append(content)
-                            if choice.get("finish_reason"):
-                                terminated = True
-                                break
-
-                if not terminated:
-                    raise ProviderMidStreamDisconnectError(
-                        "模型后台在流式能力验证完成前断开连接。"
-                    )
-
-                return strip_think_tag_content("".join(accumulated))
+                result = read_direct_text_stream(
+                    response, publish_callback=lambda _text: None,
+                    timeout=max(0.0, timeout - (time.monotonic() - started_at)),
+                    max_bytes=MAX_STREAMING_PROBE_RESPONSE_BYTES,
+                )
+                return result["rewrittenText"]
         except error.HTTPError as exc:
             status = exc.code
             if status in (401, 403):
@@ -4567,6 +4567,8 @@ class ProviderClient:
         }
 
         if task_type == "word.format_review":
+            validation_timeout = min(self.settings.timeout_seconds, MODEL_VALIDATION_TIMEOUT_SECONDS)
+            task_auth["validationTimeoutSeconds"] = validation_timeout
             selection_data = {**selection_data, "serviceId": service_id}
             binding = self.direct_service_store.format_validation_binding(service, selection_data)
             from app.services.direct_services import DirectServiceError
@@ -4600,6 +4602,7 @@ class ProviderClient:
                 return format_semantic_validation
             format_semantic_validation = _share_format_review_validation(
                 self.direct_service_store, "format", binding, validate_format,
+                timeout=3 * validation_timeout,
             )
             if is_custom:
                 self.direct_service_store.mark_custom_model_validated(
@@ -4634,9 +4637,10 @@ class ProviderClient:
                 "MODEL_CONFIG_TASK_UNSUPPORTED", "不支持的任务类型。", status_code=400
             )
 
-        timeout = max(self.settings.timeout_seconds, INTERACTIVE_WRITING_TIMEOUT_SECONDS)
-        streaming_status = "not_checked"
         is_word_writing_task = task_type in {"word.smart_write", "word.smart_imitation"}
+        timeout = min(self.settings.timeout_seconds, MODEL_VALIDATION_TIMEOUT_SECONDS)
+        deadline = time.monotonic() + timeout
+        streaming_status = "not_checked"
 
         probe_future = None
         should_probe = True
@@ -4691,12 +4695,15 @@ class ProviderClient:
                     _validate_probe_answer(task_type, answer)
                     streaming_status = "validated"
                 except StreamingUnsupportedError:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise ProviderTimeoutError("模型能力验证超过等待时限。")
                     body = self.post_task(
                         task_type,
                         trace_id,
                         {"validation": True},
                         probe,
-                        timeout_seconds=timeout,
+                        timeout_seconds=remaining,
                         task_auth=task_auth,
                     )
                     answer = extract_answer(body)
@@ -4872,7 +4879,7 @@ class ProviderClient:
                     result = self._post_direct_task(
                         task_type, trace_id,
                         "Identify the eight vertical color panels in the attached image, from left to right. Reply only with eight English color names separated by spaces. Use red, green, blue, yellow, cyan, or magenta.",
-                        auth, max(self.settings.timeout_seconds, INTERACTIVE_WRITING_TIMEOUT_SECONDS),
+                        auth, min(self.settings.timeout_seconds, MODEL_VALIDATION_TIMEOUT_SECONDS),
                         prompt_asset={"content": "Inspect the supplied synthetic test image.", "version": "image-probe.v1", "hashPrefix": ""},
                         image_files=[{"path": str(image_path), "mimeType": "image/png"}],
                     )
@@ -4891,7 +4898,10 @@ class ProviderClient:
             return {"success": True, "taskModelSelection": saved, "visualCapability": {"validated": True},
                     "mayIncurModelCost": True}
 
-        result = _share_format_review_validation(store, "image", binding, validate_image)
+        result = _share_format_review_validation(
+            store, "image", binding, validate_image,
+            timeout=min(self.settings.timeout_seconds, MODEL_VALIDATION_TIMEOUT_SECONDS),
+        )
         if draft is None:
             result["taskModelSelection"] = store.get_task_model_selection(task_type)
         return result
@@ -6221,7 +6231,7 @@ class ProviderClient:
             trace_id,
             input_data,
             prompt,
-            timeout_seconds=60,
+            timeout_seconds=min(60, auth.get("validationTimeoutSeconds", 60)),
             task_auth=auth,
             input_token_limit=MAX_FORMAT_SEMANTIC_INPUT_TOKENS,
             image_files=input_data.get("image_files"),

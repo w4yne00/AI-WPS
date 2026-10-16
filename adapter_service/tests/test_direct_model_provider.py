@@ -8,7 +8,7 @@ from unittest.mock import patch
 from urllib.error import HTTPError, URLError
 
 from app.core.config import AppSettings
-from app.core.errors import AdapterError, ProviderUnavailableError
+from app.core.errors import AdapterError, ProviderTimeoutError, ProviderUnavailableError
 from app.services.model_configurations import ACCESS_DIRECT_MODEL, ModelConfigurationStore
 from app.services.model_configurations import ACCESS_WORKFLOW_PLATFORM
 from app.services.long_task_coordinator import LongTaskCoordinator
@@ -61,6 +61,49 @@ class RecordingControl:
 
 
 class DirectModelProviderTests(unittest.TestCase):
+    def test_direct_json_read_rejects_response_after_total_deadline(self):
+        clock = [100.0]
+
+        class SlowResponse(FakeResponse):
+            def read(self):
+                clock[0] = 106.0
+                return super().read()
+
+            def read1(self, size):
+                return self.read()[:size]
+
+        response = SlowResponse({"choices": [{"message": {"content": "result"}}]})
+        with patch("app.services.provider_client.time.monotonic", side_effect=lambda: clock[0]), \
+             patch("urllib.request.urlopen", return_value=response):
+            with self.assertRaises(ProviderTimeoutError):
+                ProviderClient(AppSettings())._post_direct_task(
+                    "word.format_review", "json-deadline", "synthetic",
+                    {"providerBaseUrl": "https://example.com/v1", "modelName": "synthetic"}, 5,
+                    prompt_asset={"content": "synthetic", "version": "test", "hashPrefix": ""},
+                )
+
+    def test_direct_http_error_body_obeys_the_same_total_deadline(self):
+        clock = [100.0]
+
+        class SlowErrorBody(BytesIO):
+            def read(self, size=-1):
+                clock[0] = 106.0
+                return super().read(size)
+
+            def read1(self, size=-1):
+                return self.read(size)
+
+        failure = HTTPError("https://example.com/v1/chat/completions", 500, "failed", {},
+                            SlowErrorBody(b'{"error":{"message":"unavailable"}}'))
+        with patch("app.services.provider_client.time.monotonic", side_effect=lambda: clock[0]), \
+             patch("urllib.request.urlopen", side_effect=failure):
+            with self.assertRaises(ProviderTimeoutError):
+                ProviderClient(AppSettings())._post_direct_task(
+                    "word.format_review", "error-deadline", "synthetic",
+                    {"providerBaseUrl": "https://example.com/v1", "modelName": "synthetic"}, 5,
+                    prompt_asset={"content": "synthetic", "version": "test", "hashPrefix": ""},
+                )
+
     def test_system_prompt_manifest_exposes_all_supported_tasks(self) -> None:
         metadata = SystemPromptStore().list_metadata()
 
@@ -931,7 +974,7 @@ class DirectModelProviderTests(unittest.TestCase):
             {**control.metrics, "providerAttempts": 1},
         )
 
-    @patch("app.services.provider_client.time.monotonic", side_effect=[1.0, 2.0, 5.0])
+    @patch("app.services.provider_client.time.monotonic", side_effect=[1.0, 2.0, 2.0, 5.0, 5.0, 5.0, 5.0])
     @patch("app.services.provider_client.urllib_request.urlopen")
     def test_direct_http_error_measures_complete_body_read(
         self, urlopen, _monotonic
@@ -998,7 +1041,7 @@ class DirectModelProviderTests(unittest.TestCase):
 
     @patch(
         "app.services.provider_client.time.monotonic",
-        side_effect=[0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+        side_effect=[0.0, 1.0, 1.0, 2.0, 2.0, 2.0, 2.0, 2.0, 3.0, 4.0, 4.0, 5.0, 5.0, 6.0],
     )
     @patch("app.services.provider_client.urllib_request.urlopen")
     def test_direct_fallback_accumulates_provider_attempt_metrics(

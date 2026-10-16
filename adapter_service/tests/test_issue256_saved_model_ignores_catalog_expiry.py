@@ -3,7 +3,8 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from io import BytesIO
+from unittest.mock import patch
 
 from app.core.models import ExcelAnalysisRequest
 from app.services.direct_services import DirectServiceStore
@@ -11,9 +12,8 @@ from app.services.model_configurations import ModelConfigurationStore
 from app.services.provider_client import ProviderClient
 
 
-def _chat_response(text: str) -> MagicMock:
-    response = MagicMock()
-    response.read.return_value = json.dumps(
+def _chat_response(text: str):
+    body = json.dumps(
         {
             "id": "chatcmpl-256",
             "choices": [
@@ -37,9 +37,14 @@ def _chat_response(text: str) -> MagicMock:
             ],
         }
     ).encode("utf-8")
-    response.getheader.return_value = "application/json"
-    response.__enter__.return_value = response
-    return response
+    class Response(BytesIO):
+        headers = {"Content-Type": "application/json"}
+
+        def __enter__(self):
+            BytesIO.__init__(self, body)
+            return self
+
+    return Response(body)
 
 
 class SavedModelIgnoresCatalogExpiryTests(unittest.TestCase):

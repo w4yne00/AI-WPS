@@ -2,7 +2,8 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
+from io import BytesIO
 
 from app.services.direct_services import DirectServiceStore, DirectServiceError
 
@@ -382,14 +383,19 @@ class ManualModelInputApiAndClientTests(unittest.TestCase):
 
         # Mock urllib request for test execution
         with patch("app.services.provider_client.urllib_request.urlopen") as mock_url:
-            mock_resp = MagicMock()
-            mock_resp.headers = {"Content-Type": "application/json"}
-            mock_resp.read.return_value = json.dumps({
+            body = json.dumps({
                 "choices": [{"message": {"content": "Generated text"}}],
                 "usage": {"completion_tokens": 10, "prompt_tokens": 10, "total_tokens": 20},
             }).encode("utf-8")
-            mock_url.return_value = mock_resp
-            mock_url.return_value.__enter__.return_value = mock_resp
+
+            class Response(BytesIO):
+                headers = {"Content-Type": "application/json"}
+
+                def __enter__(self):
+                    BytesIO.__init__(self, body)
+                    return self
+
+            mock_url.return_value = Response(body)
 
 
             result = provider_client.validate_task_model_selection(
