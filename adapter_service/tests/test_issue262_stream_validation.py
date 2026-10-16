@@ -15,6 +15,8 @@ class FakeSseResponse:
     def __init__(self, sse_lines, headers=None):
         self.sse_lines = sse_lines
         self.headers = headers or {"Content-Type": "text/event-stream"}
+        self._raw = b"".join(line.encode("utf-8") if isinstance(line, str) else line for line in sse_lines)
+        self._pos = 0
 
     def __enter__(self):
         return self
@@ -26,11 +28,26 @@ class FakeSseResponse:
         for line in self.sse_lines:
             yield line.encode("utf-8") if isinstance(line, str) else line
 
-    def read(self):
-        out = []
-        for line in self.sse_lines:
-            out.append(line.encode("utf-8") if isinstance(line, str) else line)
-        return b"".join(out)
+    def read(self, size=-1, *args, **kwargs):
+        if size is None or size < 0:
+            res = self._raw[self._pos:]
+            self._pos = len(self._raw)
+            return res
+        res = self._raw[self._pos:self._pos + size]
+        self._pos += len(res)
+        return res
+
+    def readline(self, *args, **kwargs):
+        if self._pos >= len(self._raw):
+            return b""
+        newline_pos = self._raw.find(b"\n", self._pos)
+        if newline_pos == -1:
+            res = self._raw[self._pos:]
+            self._pos = len(self._raw)
+            return res
+        res = self._raw[self._pos:newline_pos + 1]
+        self._pos = newline_pos + 1
+        return res
 
     def close(self):
         pass
@@ -204,30 +221,30 @@ class Issue262StreamValidationTests(unittest.TestCase):
         results = []
 
         def worker(trace_id):
-            with patch("urllib.request.urlopen", side_effect=slow_urlopen):
-                r = self.client.validate_task_model_selection(
-                    "word.smart_write",
-                    {"serviceId": service["id"], "modelName": "gpt-4o"},
-                    trace_id,
-                )
-                results.append(r)
+            r = self.client.validate_task_model_selection(
+                "word.smart_write",
+                {"serviceId": service["id"], "modelName": "gpt-4o"},
+                trace_id,
+            )
+            results.append(r)
 
-        t1 = threading.Thread(target=worker, args=("trace-concurrent-1",))
-        t1.start()
+        with patch("urllib.request.urlopen", side_effect=slow_urlopen):
+            t1 = threading.Thread(target=worker, args=("trace-concurrent-1",))
+            t1.start()
 
-        # Wait until t1 is in slow_urlopen
-        probe_started_event.wait(timeout=2.0)
+            # Wait until t1 is in slow_urlopen
+            probe_started_event.wait(timeout=2.0)
 
-        # Launch concurrent t2
-        t2 = threading.Thread(target=worker, args=("trace-concurrent-2",))
-        t2.start()
+            # Launch concurrent t2
+            t2 = threading.Thread(target=worker, args=("trace-concurrent-2",))
+            t2.start()
 
-        # Small yield to let t2 hit validate_task_model_selection
-        time.sleep(0.05)
-        proceed_event.set()
+            # Small yield to let t2 hit validate_task_model_selection
+            time.sleep(0.05)
+            proceed_event.set()
 
-        t1.join(timeout=3.0)
-        t2.join(timeout=3.0)
+            t1.join(timeout=3.0)
+            t2.join(timeout=3.0)
 
         self.assertEqual(len(results), 2)
         for r in results:

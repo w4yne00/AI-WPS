@@ -1,5 +1,27 @@
 # Codex Handoff - AI-WPS
 
+## Word 智能编写与智能仿写：自动验证并默认流式预览（Issue #262，2026-10-16）
+
+- 开发前已快进拉取最新代码，在独立隔离工作树 `.worktrees/issue-262-word-stream-validation`（分支 `issue-262-word-stream-validation`）中遵循 TDD 进行开发。
+- 界面与流程改造：
+  - Word 智能编写（`word.smart_write`）与智能仿写（`word.smart_imitation`）任务设置区域移除独立“验证调用”按钮，更新费用说明提示用户保存时将自动验证调用；
+  - 保存并设为当前执行双轨验证流：
+    - 目录模型（及继承目录服务默认值）：前置阻塞调用 `/provider/task-model-selections/{taskType}/validate`，验证成功后原子调用 `/activate` 激活保存；若验证失败（400/500/网络异常），立即阻断激活保存，回显具体错误原因，保留草稿与当前有效选择；
+    - 手填模型（及继承手填默认值）：前端校验通过后立即原子调用 `/activate` 设为当前并保存，随后在后台触发非阻塞 `/validate` 探测；后台探测失败仅更新界面流式状态提示，绝不撤销已保存选择或静默回滚；
+  - 边界隔离：Word 格式审查、文档审查以及 Excel、PPT 宿主保留原有独立“验证调用”按钮和流程，不扩展流式预览。
+- 后端能力复用与探测去重：
+  - `ProviderClient.validate_task_model_selection` 严格限制仅针对 Word 编写类任务（`word.smart_write` / `word.smart_imitation`）启用流式能力记录复用与并发探测去重（其他宿主或审查任务必须发起真实测试调用以核验连通性）；
+  - 当服务修订号、服务地址、API Key 指纹及模型名称完全匹配时，直接复用既有 `validated` 或 `unsupported` 记录，免去重复网络请求与额外费用（`taskCallPerformed=False`）；
+  - 引入在途探针锁与事件机制（`_in_flight_streaming_probes`），同一服务与模型的并发验证请求自动复用在途探测，避免重复扣费；
+  - 任务执行时，流式能力为 `validated` 的模型自动启用流式增量预览；未验证（`not_checked`）或不支持（`unsupported`）的模型安全平滑回退为普通阻塞调用。
+- 规范同步：更新 `docs/adr/0128-share-direct-model-services-across-hosts.md`，记录自动验证、双轨保存与流式复用规范。
+- 验证结论：
+  - 插件契约与行为测试：`formal-plugin-kit/tests/issue262-word-stream-validation.test.js` 6 项测试全部通过，三宿主手填模型与无网关测试兼容适配；
+  - 生产代码 Python 3.8 兼容扫描：`packaging/check_python38_compatibility.py` 扫描 209 个文件通过（`python38_compatibility_scan=passed`）；
+  - 差异格式检查：`git diff --check` 0 警告；未触碰 `config/adapter.json`、`run/`、`.scratch/` 等本地运行态数据。
+  - FastAPI 与 Standalone Adapter 双运行时接口与数据响应严格保持对等。
+  - 本轮交付源码修复，未打交付包或更新 UTM 安装；真实 WPS 客户端与真实商业模型流式调用仍待真机验收。
+
 ## 手填模型 PR #264 审查修复（2026-10-16）
 
 - 三宿主保存任务模型时移除强制验证，未测试模型可直接保存，不由前端标为已验证；显式选择继承默认模型可替换原手填覆盖。切换服务时同步手填入口、历史模型及管理列表。

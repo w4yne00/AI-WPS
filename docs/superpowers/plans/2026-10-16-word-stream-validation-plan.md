@@ -162,23 +162,23 @@
 - Modify: `docs/adr/0128-share-direct-model-services-across-hosts.md`
 - Modify: `docs/codex-handoff.md`
 
-- [ ] **Step 1: 更新 ADR-0128 文档**
+- [x] **Step 1: 更新 ADR-0128 文档**
   协调 ADR-0128 中关于手填模型与任务验证的约定：明确 Word 智能编写与智能仿写确认模型时自动处理验证，目录模型保存前自动验证流式能力，手填模型即刻保存并后台探测流式能力，未完成验证前使用普通调用。
 
-- [ ] **Step 2: 执行全量本地契约与兼容性测试**
-  - `PATH="/Users/waynesmini/Documents/AI-WPS/.venv/bin:$PATH" node --test formal-plugin-kit/tests/*.test.js`
+- [x] **Step 2: 执行全量本地契约与兼容性测试**
+  - `node --test formal-plugin-kit/tests/*.test.js`
   - `git diff --check`
   - Python 3.8 兼容性检查
 
-- [ ] **Step 3: 在 Kylin V10 ARM64 环境执行全量后端 pytest**
+- [x] **Step 3: 在 Kylin V10 ARM64 环境执行全量后端 pytest**
   - 通过 SSH 在 Kylin 虚拟机中运行：
     `ssh cloud@192.168.64.3 'cd /data/home/cloud/AI-WPS-kylin-test && git status && ...'`
   - 确保全量后端测试通过（0 failed）。
 
-- [ ] **Step 4: 更新 `docs/codex-handoff.md`**
+- [x] **Step 4: 更新 `docs/codex-handoff.md`**
   记录 Issue #262 的改动背景、基准提交、新增测试结果与未验证边界。
 
-- [ ] **Step 5: 提交最终文档**
+- [x] **Step 5: 提交最终文档**
   ```bash
   git add docs/adr/0128-share-direct-model-services-across-hosts.md docs/codex-handoff.md docs/superpowers/
   git commit -m "docs: update ADR-0128 and record handoff for issue #262"
