@@ -7,6 +7,7 @@ import threading
 import time
 import uuid
 from copy import deepcopy
+from concurrent.futures import Future, TimeoutError as FutureTimeoutError
 from contextlib import contextmanager
 from http.client import HTTPConnection, HTTPSConnection, IncompleteRead, RemoteDisconnected
 from pathlib import Path
@@ -2304,6 +2305,9 @@ def _composer_image_data_uri(image: dict) -> str:
 
 
 class ProviderClient:
+    _in_flight_streaming_probes = {}
+    _streaming_probe_lock = threading.Lock()
+
     def __init__(
         self,
         settings: Optional[AppSettings] = None,
@@ -4587,41 +4591,89 @@ class ProviderClient:
 
         timeout = max(self.settings.timeout_seconds, INTERACTIVE_WRITING_TIMEOUT_SECONDS)
         streaming_status = "not_checked"
+        is_word_writing_task = task_type in {"word.smart_write", "word.smart_imitation"}
 
-        try:
-            answer = self._probe_direct_streaming(
-                task_type, trace_id, probe, task_auth, timeout
+        probe_future = None
+        should_probe = True
+        task_call_performed = True
+        if is_word_writing_task:
+            binding = {
+                "serviceRevision": int(service.get("revision", 1)),
+                "serviceBaseUrl": normalize_service_base_url(service.get("serviceBaseUrl", "")),
+                "apiKeyFingerprint": DirectServiceStore.api_key_fingerprint(service.get("apiKey", "")),
+            }
+            probe_key = (
+                service["id"], binding["serviceRevision"], binding["serviceBaseUrl"],
+                binding["apiKeyFingerprint"], model_name,
             )
-            _validate_probe_answer(task_type, answer)
-            streaming_status = "validated"
-        except StreamingUnsupportedError:
-            body = self.post_task(
-                task_type,
-                trace_id,
-                {"validation": True},
-                probe,
-                timeout_seconds=timeout,
-                task_auth=task_auth,
+            existing_cap = self.direct_service_store.get_streaming_capability(
+                service["id"], model_name
             )
-            answer = extract_answer(body)
-            _validate_probe_answer(task_type, answer)
-            streaming_status = "unsupported"
+            with self._streaming_probe_lock:
+                # Recheck after acquiring the lock: another probe may have just finished.
+                if existing_cap.get("status") not in {"validated", "unsupported"}:
+                    existing_cap = self.direct_service_store.get_streaming_capability(
+                        service["id"], model_name
+                    )
+                if (
+                    existing_cap.get("status") in {"validated", "unsupported"}
+                    and existing_cap.get("serviceId") == service["id"]
+                    and existing_cap.get("modelName") == model_name
+                    and all(existing_cap.get(key) == value for key, value in binding.items())
+                ):
+                    streaming_status = existing_cap["status"]
+                    should_probe = False
+                    task_call_performed = False
+                else:
+                    probe_future = self._in_flight_streaming_probes.get(probe_key)
+                    if probe_future is None:
+                        probe_future = Future()
+                        self._in_flight_streaming_probes[probe_key] = probe_future
+                    else:
+                        should_probe = False
+            if probe_future is not None and not should_probe:
+                try:
+                    streaming_status = probe_future.result(timeout=timeout)
+                except FutureTimeoutError as exc:
+                    raise ProviderTimeoutError() from exc
 
-        binding = {
-            "serviceRevision": int(service.get("revision", 1)),
-            "serviceBaseUrl": normalize_service_base_url(
-                service.get("serviceBaseUrl", "")
-            ),
-            "apiKeyFingerprint": DirectServiceStore.api_key_fingerprint(
-                service.get("apiKey", "")
-            ),
-        }
-        self.direct_service_store.record_streaming_capability(
-            service["id"],
-            model_name,
-            streaming_status,
-            expected_binding=binding,
-        )
+        if should_probe:
+            try:
+                try:
+                    answer = self._probe_direct_streaming(
+                        task_type, trace_id, probe, task_auth, timeout
+                    )
+                    _validate_probe_answer(task_type, answer)
+                    streaming_status = "validated"
+                except StreamingUnsupportedError:
+                    body = self.post_task(
+                        task_type,
+                        trace_id,
+                        {"validation": True},
+                        probe,
+                        timeout_seconds=timeout,
+                        task_auth=task_auth,
+                    )
+                    answer = extract_answer(body)
+                    _validate_probe_answer(task_type, answer)
+                    streaming_status = "unsupported"
+
+                if is_word_writing_task:
+                    self.direct_service_store.record_streaming_capability(
+                        service["id"], model_name, streaming_status, expected_binding=binding,
+                    )
+            except BaseException as exc:
+                if probe_future is not None:
+                    probe_future.set_exception(exc)
+                raise
+            else:
+                if probe_future is not None:
+                    probe_future.set_result(streaming_status)
+            finally:
+                if probe_future is not None:
+                    with self._streaming_probe_lock:
+                        if self._in_flight_streaming_probes.get(probe_key) is probe_future:
+                            self._in_flight_streaming_probes.pop(probe_key)
 
         if is_custom:
             self.direct_service_store.mark_custom_model_validated(
@@ -4643,11 +4695,11 @@ class ProviderClient:
             "modelName": model_name,
             "customModel": is_custom,
             "customModelValidated": True,
-            "taskCallPerformed": True,
+            "taskCallPerformed": task_call_performed,
             "taskContractValidated": True,
             "streamingCapability": streaming_status,
-            "mayIncurModelCost": True,
-            "costWarning": "验证调用会真实请求模型，可能产生费用并等待服务返回。",
+            "mayIncurModelCost": task_call_performed,
+            "costWarning": "验证调用会真实请求模型，可能产生费用并等待服务返回。" if task_call_performed else "",
         }
 
     def _validation_configuration_identity(self, configuration: Dict) -> Dict:
