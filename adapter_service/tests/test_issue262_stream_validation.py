@@ -55,7 +55,22 @@ class Issue262StreamValidationTests(unittest.TestCase):
         )
 
     def tearDown(self):
-        self.tmp.cleanup()
+        try:
+            self.tmp.cleanup()
+        except OSError:
+            time.sleep(0.05)
+            try:
+                self.tmp.cleanup()
+            except OSError:
+                pass
+
+    def _wait_completed(self, store, job_id):
+        for _ in range(100):
+            job = store.get(job_id)
+            if job and job.get("status") in {"completed", "failed"}:
+                return job
+            time.sleep(0.01)
+        return None
 
     def _create_service(self, name="流式复用测试服务", model="gpt-4o"):
         svc = self.store.create_service(
@@ -221,6 +236,168 @@ class Issue262StreamValidationTests(unittest.TestCase):
 
         # Network call should only have executed ONCE due to in-flight deduplication
         self.assertEqual(urlopen_call_count[0], 1)
+
+    def test_smart_write_uses_streaming_when_capability_validated(self):
+        from app.services.long_task_coordinator import LongTaskCoordinator
+        from app.services.word.writing_jobs import SmartWriteJobStore
+        from app.core.models import WordDocumentRequest
+
+        worker = MagicMock()
+        worker.snapshot_task_auth.return_value = {
+            "accessMethod": "direct_model",
+            "serviceId": "direct_svc_1",
+            "modelName": "gpt-4o",
+            "streamingCapability": "validated",
+        }
+        worker.smart_write.return_value = {
+            "text": "改写结果",
+            "plainText": "改写结果",
+            "rewrittenText": "改写结果",
+        }
+        from app.services.task_history import TaskHistoryStore
+        history_store = TaskHistoryStore(self.root / "history")
+        coordinator = LongTaskCoordinator(max_running=1, max_queued=2)
+        store = SmartWriteJobStore(worker=worker, coordinator=coordinator)
+
+        req_payload = {
+            "documentId": "doc1.docx",
+            "scene": "word",
+            "selectionMode": "selection",
+            "clientJobId": "client-stream-1",
+            "content": {"plainText": "原文字段"},
+            "options": {"rewrite_action": "rewrite"},
+        }
+        req = (
+            WordDocumentRequest.model_validate(req_payload)
+            if hasattr(WordDocumentRequest, "model_validate")
+            else WordDocumentRequest.parse_obj(req_payload)
+        )
+
+        with patch.dict("os.environ", {"AI_WPS_ENABLE_DIRECT_STREAMING": "1"}), \
+             patch("app.services.word.writing_jobs.get_task_history_store", return_value=history_store):
+            submitted = store.start(req, "trace-stream-1")
+            self.assertTrue(submitted["streamingEnabled"])
+            self._wait_completed(store, submitted["jobId"])
+
+    def test_smart_write_uses_blocking_when_capability_unsupported_or_not_checked(self):
+        from app.services.long_task_coordinator import LongTaskCoordinator
+        from app.services.word.writing_jobs import SmartWriteJobStore
+        from app.services.task_history import TaskHistoryStore
+        from app.core.models import WordDocumentRequest
+
+        coordinator = LongTaskCoordinator(max_running=1, max_queued=2)
+        history_store = TaskHistoryStore(self.root / "history")
+
+        for status in ["unsupported", "not_checked", None]:
+            worker = MagicMock()
+            worker.snapshot_task_auth.return_value = {
+                "accessMethod": "direct_model",
+                "serviceId": "direct_svc_1",
+                "modelName": "gpt-4o",
+                "streamingCapability": status,
+            }
+            worker.smart_write.return_value = {
+                "text": "阻塞结果",
+                "plainText": "阻塞结果",
+                "rewrittenText": "阻塞结果",
+            }
+            store = SmartWriteJobStore(worker=worker, coordinator=coordinator)
+            req_payload = {
+                "documentId": "doc1.docx",
+                "scene": "word",
+                "selectionMode": "selection",
+                "clientJobId": f"client-block-{status}",
+                "content": {"plainText": "原文字段"},
+                "options": {"rewrite_action": "rewrite"},
+            }
+            req = (
+                WordDocumentRequest.model_validate(req_payload)
+                if hasattr(WordDocumentRequest, "model_validate")
+                else WordDocumentRequest.parse_obj(req_payload)
+            )
+
+            with patch.dict("os.environ", {"AI_WPS_ENABLE_DIRECT_STREAMING": "1"}), \
+                 patch("app.services.word.writing_jobs.get_task_history_store", return_value=history_store):
+                submitted = store.start(req, f"trace-block-{status}")
+                self.assertFalse(submitted["streamingEnabled"])
+                self._wait_completed(store, submitted["jobId"])
+
+    def test_fastapi_and_standalone_parity_for_validation_and_streaming(self):
+        from io import BytesIO
+        from fastapi.testclient import TestClient
+        import standalone_adapter
+        from app.main import app
+        from app.services.model_configurations import ModelConfigurationStore
+
+        service = self._create_service(model="gpt-4o")
+        binding = {
+            "serviceRevision": int(service.get("revision", 1)),
+            "serviceBaseUrl": "https://api.example.com/v1",
+            "apiKeyFingerprint": DirectServiceStore.api_key_fingerprint("sk-secret-token-12345"),
+        }
+        self.store.record_streaming_capability(
+            service["id"],
+            "gpt-4o",
+            "validated",
+            expected_binding=binding,
+        )
+
+        # 1. FastAPI validation
+        with patch("app.api.provider.DirectServiceStore", return_value=self.store), \
+             patch("app.api.provider.ModelConfigurationStore", return_value=ModelConfigurationStore(self.config_path, self.key_dir)), \
+             patch("app.services.provider_client.load_settings", return_value=self.settings):
+            fastapi_resp = TestClient(app).post(
+                "/provider/task-model-selections/word.smart_write/validate",
+                json={"serviceId": service["id"], "modelName": "gpt-4o"},
+            )
+            self.assertEqual(fastapi_resp.status_code, 200)
+            fastapi_data = fastapi_resp.json()
+            self.assertTrue(fastapi_data["success"])
+            self.assertEqual(fastapi_data["data"]["streamingCapability"], "validated")
+            self.assertEqual(fastapi_data["data"]["taskCallPerformed"], False)
+
+        # 2. Standalone validation
+        orig_standalone_store = standalone_adapter.DirectServiceStore
+        orig_standalone_model = standalone_adapter.ModelConfigurationStore
+        try:
+            standalone_adapter.DirectServiceStore = lambda: self.store
+            standalone_adapter.ModelConfigurationStore = lambda: ModelConfigurationStore(self.config_path, self.key_dir)
+
+            writes = []
+            handler = object.__new__(standalone_adapter.Handler)
+            handler.path = "/provider/task-model-selections/word.smart_write/validate"
+            handler.command = "POST"
+            handler.requestline = "POST /provider/task-model-selections/word.smart_write/validate HTTP/1.1"
+            handler.request_version = "HTTP/1.1"
+            raw = json.dumps({"serviceId": service["id"], "modelName": "gpt-4o"}).encode("utf-8")
+            handler.headers = {"Content-Length": str(len(raw))}
+            handler.rfile = BytesIO(raw)
+            handler.close_connection = False
+            handler._reject_operation_block = lambda m, p: False
+            handler._reject_writing_policy_route_or_method = lambda m, p: False
+            handler._write = lambda status, payload: writes.append((status, payload))
+            handler._write_bytes = lambda status, payload, headers=None: writes.append(
+                (status, json.loads(payload.decode("utf-8")) if payload else {})
+            )
+            handler.do_POST()
+            status, standalone_data = writes[-1] if writes else (None, None)
+            self.assertEqual(status, 200)
+            self.assertTrue(standalone_data["success"])
+            self.assertEqual(standalone_data["data"]["streamingCapability"], "validated")
+            self.assertEqual(standalone_data["data"]["taskCallPerformed"], False)
+
+            # Both runtimes returned matching data fields
+            self.assertEqual(
+                fastapi_data["data"]["streamingCapability"],
+                standalone_data["data"]["streamingCapability"],
+            )
+            self.assertEqual(
+                fastapi_data["data"]["taskCallPerformed"],
+                standalone_data["data"]["taskCallPerformed"],
+            )
+        finally:
+            standalone_adapter.DirectServiceStore = orig_standalone_store
+            standalone_adapter.ModelConfigurationStore = orig_standalone_model
 
 
 if __name__ == "__main__":

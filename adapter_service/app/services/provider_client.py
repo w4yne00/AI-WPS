@@ -2304,6 +2304,10 @@ def _composer_image_data_uri(image: dict) -> str:
 
 
 class ProviderClient:
+    _in_flight_streaming_probes = set()
+    _streaming_probe_events = {}
+    _streaming_probe_lock = threading.Lock()
+
     def __init__(
         self,
         settings: Optional[AppSettings] = None,
@@ -2326,9 +2330,6 @@ class ProviderClient:
             else None
         )
         self.system_prompt_store = system_prompt_store or SystemPromptStore()
-        self._in_flight_streaming_probes = set()
-        self._streaming_probe_events = {}
-        self._streaming_probe_lock = threading.Lock()
 
     def refresh_settings(self) -> None:
         if self.reload_settings:

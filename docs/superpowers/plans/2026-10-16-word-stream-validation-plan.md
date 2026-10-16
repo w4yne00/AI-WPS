@@ -138,17 +138,17 @@
   - 验证有效流式能力开启增量预览，未验证或不支持模型平滑回退普通阻塞调用
   - FastAPI 与 Standalone 双运行时行为严格一致
 
-- [ ] **Step 1: 编写任务执行流式回退与双运行时集成测试**
+- [x] **Step 1: 编写任务执行流式回退与双运行时集成测试**
   - 在 `test_issue262_stream_validation.py` 中增加：
     - `test_smart_write_uses_streaming_when_capability_validated`: 当能力为 `validated` 时启动增量流式生成；
     - `test_smart_write_uses_blocking_when_capability_unsupported_or_not_checked`: 当能力为 `unsupported` 或 `not_checked`（手填未完成探测）时，以普通调用安全执行，不报错阻断；
     - `test_fastapi_and_standalone_parity_for_validation_and_streaming`: 验证 FastAPI 与 Standalone 运行时下验证端点和能力查询的完全对等。
 
-- [ ] **Step 2: 运行测试验证**
+- [x] **Step 2: 运行测试验证**
   运行：`PATH="/Users/waynesmini/Documents/AI-WPS/.venv/bin:$PATH" PYTHONPATH=adapter_service /Users/waynesmini/Documents/AI-WPS/.venv/bin/pytest -v adapter_service/tests/test_issue262_stream_validation.py`
   预期：PASS（或根据缺失细节调整代码直至通过）。
 
-- [ ] **Step 3: 提交本任务修改**
+- [x] **Step 3: 提交本任务修改**
   ```bash
   git add adapter_service/ tests
   git commit -m "test(adapter): verify streaming fallback and dual-runtime parity for Word tasks"
