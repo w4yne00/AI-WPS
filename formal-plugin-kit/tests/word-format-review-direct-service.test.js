@@ -166,7 +166,7 @@ test("renderTaskModelSelectionSection supports word.format_review with image mod
   assert.strictEqual(mockNodes["word-task-direct-service-section"].hidden, false);
   assert.strictEqual(mockNodes["word-task-direct-service-title"].textContent, "接入选择");
   assert.strictEqual(mockNodes["word-task-image-mode-row"].hidden, true, "image mode row must be hidden for smart_write");
-  assert.strictEqual(mockNodes["btn-validate-task-model-selection"].hidden, false);
+  assert.strictEqual(mockNodes["btn-validate-task-model-selection"].hidden, true);
 });
 
 test("getTaskModelSelectionDraft collects imageInputMode for word.format_review", () => {
