@@ -1080,10 +1080,14 @@ def authorize_task_model_selection_image(task_type: str, request: TaskImageAutho
 
 
 @router.post("/provider/task-model-selections/{task_type}/validate-image")
-def validate_task_model_selection_image(task_type: str) -> dict:
+def validate_task_model_selection_image(
+    task_type: str, request: Optional[TaskModelSelectionValidateRequest] = None
+) -> dict:
+    payload = request.dict(by_alias=True, exclude_unset=True) if request else {}
+    draft = payload if payload.get("serviceId") else None
     try:
         result = ProviderClient(direct_service_store=get_direct_service_store()).validate_task_image_selection(
-            task_type, "task-image-validation-{0}".format(int(time.time() * 1000))
+            task_type, "task-image-validation-{0}".format(int(time.time() * 1000)), draft
         )
     except DirectServiceError as exc:
         _raise_direct_service_error(exc)

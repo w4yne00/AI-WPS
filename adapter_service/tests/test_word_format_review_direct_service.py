@@ -71,8 +71,8 @@ class WordFormatReviewDirectServiceTest(unittest.TestCase):
         self.assertEqual(selection["temperature"], 0.3)
         self.assertEqual(selection["maxOutputTokens"], 4096)
         self.assertEqual(selection["contextWindowTokens"], 64000)
-        self.assertEqual(selection["imageInputMode"], "disabled")
-        self.assertEqual(selection["imageSemanticReadiness"]["code"], "disabled")
+        self.assertEqual(selection["imageInputMode"], "openai_image_url")
+        self.assertEqual(selection["imageSemanticReadiness"]["code"], "validation_required")
 
     def test_format_review_image_authorization_binding_and_stale_invalidation(self):
         """测试图片外发授权绑定到 (serviceHost, modelName, imageInputMode)，修改后自动失效。"""
@@ -111,7 +111,7 @@ class WordFormatReviewDirectServiceTest(unittest.TestCase):
         refreshed = self.store.get_task_model_selection("word.format_review")
         self.assertTrue(refreshed["imageExternalAuthorization"]["stale"])
         self.assertTrue(refreshed["imageSemanticValidation"]["stale"])
-        self.assertEqual(refreshed["imageSemanticReadiness"]["code"], "authorization_required")
+        self.assertEqual(refreshed["imageSemanticReadiness"]["code"], "validation_required")
 
         # 再次保存不能代替用户重新授权。
         rebound = self.store.update_task_model_selection(
@@ -141,8 +141,9 @@ class WordFormatReviewDirectServiceTest(unittest.TestCase):
             model_name="gpt-4o",
             image_input_mode="disabled",
         )
+        self.assertEqual(disabled_sel["imageInputMode"], "openai_image_url")
         self.assertIsNone(disabled_sel["imageExternalAuthorization"])
-        self.assertEqual(disabled_sel["imageSemanticReadiness"]["code"], "disabled")
+        self.assertEqual(disabled_sel["imageSemanticReadiness"]["code"], "validation_required")
 
     def test_format_review_format_semantic_validation_lifecycle(self):
         """测试格式语义协议验证记录及服务/模型变更后的失效检查。"""

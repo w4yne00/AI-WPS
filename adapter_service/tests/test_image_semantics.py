@@ -122,6 +122,61 @@ class ImageSemanticSafetyTests(unittest.TestCase):
             )["allowed"]
         )
 
+    def test_direct_pixels_skip_authorization_and_treat_disabled_mode_as_auto(self):
+        validation = {
+            "validated": True,
+            "configVersion": 4,
+            "serviceHost": "vision.example",
+            "accessMethod": "direct_model",
+            "imageInputMode": "openai_image_url",
+            "modelName": "vision-1",
+        }
+        stored_disabled = {
+            "configVersion": 4,
+            "serviceBaseUrl": "https://vision.example/v1",
+            "accessMethod": "direct_model",
+            "modelName": "vision-1",
+            "imageInputMode": "disabled",
+            "imageSemanticValidation": validation,
+        }
+
+        decision = image_pixel_policy({"enabled": True}, stored_disabled)
+
+        self.assertTrue(decision["allowed"])
+        self.assertEqual(decision["reason"], "ready")
+        self.assertEqual(decision["mode"], "openai_image_url")
+        self.assertNotIn("imageExternalAuthorization", stored_disabled)
+
+        missing_probe = dict(stored_disabled)
+        missing_probe.pop("imageSemanticValidation")
+        blocked = image_pixel_policy({"enabled": True}, missing_probe)
+        self.assertFalse(blocked["allowed"])
+        self.assertEqual(blocked["reason"], "image_capability_validation_required")
+
+        switched_off = image_pixel_policy({"enabled": False}, stored_disabled)
+        self.assertFalse(switched_off["allowed"])
+        self.assertEqual(switched_off["reason"], "image_semantics_disabled")
+
+        workflow = {
+            "configVersion": 1,
+            "serviceBaseUrl": "https://dify.example/v1",
+            "accessMethod": "workflow_platform",
+            "modelName": "vision-1",
+            "imageInputMode": "disabled",
+            "imageSemanticValidation": {
+                "validated": True,
+                "configVersion": 1,
+                "serviceHost": "dify.example",
+                "accessMethod": "workflow_platform",
+                "imageInputMode": "disabled",
+                "modelName": "vision-1",
+            },
+        }
+        workflow_decision = image_pixel_policy({"enabled": True}, workflow)
+        self.assertFalse(workflow_decision["allowed"])
+        self.assertEqual(workflow_decision["reason"], "image_input_mode_disabled")
+        self.assertEqual(workflow_decision["mode"], "disabled")
+
     def test_inventory_preserves_deterministic_picture_facts_when_visuals_are_off(self):
         inventory = collect_image_inventory(
             {

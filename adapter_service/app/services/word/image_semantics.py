@@ -69,38 +69,48 @@ def _binding_matches(record: Any, binding: Dict[str, Any]) -> bool:
     return not record.get("stale", False) and all(record.get(key) == value for key, value in binding.items())
 
 
+def effective_direct_image_mode(mode: Any) -> str:
+    """Direct format review no longer has a manual image-mode switch."""
+
+    clean = str(mode or "disabled")
+    if clean == "disabled":
+        return "openai_image_url"
+    return clean
+
+
 def image_pixel_policy(
     runtime_config: Optional[Dict[str, Any]],
     model_configuration: Optional[Dict[str, Any]],
 ) -> Dict[str, Any]:
     """Return the auditable decision for sending image pixels.
 
-    The result is intentionally false unless every independent safety gate is
-    present and bound to the current model configuration revision.
+    Direct format review treats a stored disabled mode as openai_image_url and
+    does not require a separate image authorization. Workflow configs keep the
+    mode and authorization gates. The master switch still blocks real pixels.
     """
 
     runtime = runtime_config if isinstance(runtime_config, dict) else {}
     configuration = model_configuration if isinstance(model_configuration, dict) else {}
+    access_method = str(configuration.get("accessMethod", ""))
     mode = str(configuration.get("imageInputMode", "disabled"))
-    binding = _image_binding(configuration)
+    direct = access_method == "direct_model"
+    if direct:
+        mode = effective_direct_image_mode(mode)
+    binding = _image_binding({**configuration, "imageInputMode": mode})
     authorization = configuration.get("imageExternalAuthorization")
     validation = configuration.get("imageSemanticValidation")
     enabled = runtime.get("enabled") is True
-    allowed = (
-        enabled
-        and mode in IMAGE_INPUT_MODES[1:]
-        and _binding_matches(authorization, {**binding})
-        and bool(authorization.get("authorized"))
-        and _binding_matches(validation, {**binding})
-        and bool(validation.get("validated"))
-    )
+    mode_open = mode in IMAGE_INPUT_MODES[1:]
+    vision_ready = _binding_matches(validation, binding) and bool((validation or {}).get("validated"))
+    authorized = _binding_matches(authorization, binding) and bool((authorization or {}).get("authorized"))
+    allowed = enabled and mode_open and vision_ready and (direct or authorized)
     if runtime.get("enabled") is not True:
         reason = "image_semantics_disabled"
-    elif mode == "disabled":
+    elif not mode_open:
         reason = "image_input_mode_disabled"
-    elif not _binding_matches(authorization, binding) or not bool((authorization or {}).get("authorized")):
+    elif not direct and not authorized:
         reason = "image_external_authorization_required"
-    elif not _binding_matches(validation, binding) or not bool((validation or {}).get("validated")):
+    elif not vision_ready:
         reason = "image_capability_validation_required"
     else:
         reason = "ready"

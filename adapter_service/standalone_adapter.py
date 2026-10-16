@@ -3208,7 +3208,8 @@ class Handler(BaseHTTPRequestHandler):
                         result = {"taskModelSelection": store.set_image_external_authorization(task_type, payload["authorized"], expected_selection=payload.get("expectedSelection"), expected_service_revision=payload.get("expectedServiceRevision"))}
                     else:
                         result = ProviderClient(direct_service_store=store).validate_task_image_selection(
-                            task_type, new_trace_id("standalone-image-validation")
+                            task_type, new_trace_id("standalone-image-validation"),
+                            payload if payload.get("serviceId") else None,
                         )
                 except DirectServiceError as error:
                     self._write_direct_service_error(error)

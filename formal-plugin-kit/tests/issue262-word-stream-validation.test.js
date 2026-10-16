@@ -8,7 +8,7 @@ const wordRoot = path.join(__dirname, "../wps-ai-assistant_1.0.0");
 const excelRoot = path.join(__dirname, "../wps-ai-assistant-et_1.0.0");
 const pptRoot = path.join(__dirname, "../wps-ai-assistant-wpp_1.0.0");
 
-test("Word taskpane: renderTaskModelSelectionSection hides validate button for smart_write and smart_imitation", () => {
+test("Word taskpane: renderTaskModelSelectionSection hides validate button for all three automatic-validation tasks", () => {
   const js = fs.readFileSync(path.join(wordRoot, "taskpane.js"), "utf8");
   const start = js.indexOf("  function renderTaskModelSelectionSection(");
   const end = js.indexOf("\n  function ", start + 1);
@@ -25,32 +25,36 @@ test("Word taskpane: renderTaskModelSelectionSection hides validate button for s
   const tasksToTest = [
     { task: "word.smart_write", expectedHidden: true },
     { task: "word.smart_imitation", expectedHidden: true },
-    { task: "word.format_review", expectedHidden: false },
+    { task: "word.format_review", expectedHidden: true },
     { task: "word.document_review", expectedHidden: false },
+    { task: "word.material_composer", expectedHidden: false },
   ];
 
   for (const { task, expectedHidden } of tasksToTest) {
-    elements["btn-validate-task-model-selection"] = { id: "btn-validate-task-model-selection", hidden: !expectedHidden };
-    const context = {
-      state: { workflowProfileSelections: {}, taskModelSelections: {} },
-      getWorkflowProfileData: () => ({ activeProfileId: "direct_svc_1" }),
-      byId: getEl,
-      getSettingsWorkflowTaskType: () => task,
-      findDirectService: () => ({ id: "svc_1", name: "Test Svc", modelList: ["gpt-4o"], defaultModel: "gpt-4o" }),
-      helpers: require(path.join(wordRoot, "taskpane-helpers.js")),
-      renderCustomModelsList: () => {},
-      escapeWorkflowText: s => s,
-    };
+    for (const activeProfileId of ["direct_svc_1", ""]) {
+      elements["btn-validate-task-model-selection"] = { id: "btn-validate-task-model-selection", hidden: !expectedHidden };
+      const context = {
+        state: { workflowProfileSelections: {}, taskModelSelections: {} },
+        getWorkflowProfileData: () => ({ activeProfileId }),
+        byId: getEl,
+        getSettingsWorkflowTaskType: () => task,
+        findDirectService: () => ({ id: "svc_1", name: "Test Svc", modelList: ["gpt-4o"], defaultModel: "gpt-4o" }),
+        helpers: require(path.join(wordRoot, "taskpane-helpers.js")),
+        renderCustomModelsList: () => {},
+        escapeWorkflowText: s => s,
+        formatReviewVisionStatusText: () => "",
+      };
 
-    const render = vm.runInNewContext(`(${js.slice(start, end)})`, context);
-    render(task);
+      const render = vm.runInNewContext(`(${js.slice(start, end)})`, context);
+      render(task);
 
-    const btn = getEl("btn-validate-task-model-selection");
-    assert.strictEqual(
-      btn.hidden,
-      expectedHidden,
-      `For task ${task}, btn-validate-task-model-selection hidden should be ${expectedHidden}`
-    );
+      const btn = getEl("btn-validate-task-model-selection");
+      assert.strictEqual(
+        btn.hidden,
+        expectedHidden,
+        `For task ${task}, btn-validate-task-model-selection hidden should be ${expectedHidden}, active profile ${activeProfileId}`
+      );
+    }
   }
 });
 
@@ -418,3 +422,24 @@ for (const taskType of ["word.smart_write", "word.smart_imitation"]) {
     });
   }
 }
+
+test("Word service changes preserve validate button visibility for each task", () => {
+  const js = fs.readFileSync(path.join(wordRoot, "taskpane.js"), "utf8");
+  const start = js.indexOf("  function handleTaskDirectServiceSelectChange(");
+  const end = js.indexOf("\n  function ", start + 1);
+  for (const task of ["word.smart_write", "word.smart_imitation", "word.format_review", "word.document_review", "word.material_composer"]) {
+    const elements = {};
+    const context = {
+      state: {},
+      byId: id => elements[id] || (elements[id] = { value: id.endsWith("service-select") ? "direct_svc_1" : "", hidden: false }),
+      getSettingsWorkflowTaskType: () => task,
+      findDirectService: () => ({ defaultModel: "catalog-model", modelList: ["catalog-model"] }),
+      helpers: { ...require(path.join(wordRoot, "taskpane-helpers.js")), renderModelOptionsWithCustom() {} },
+      renderCustomModelsList() {}, escapeWorkflowText: value => value
+    };
+    const change = vm.runInNewContext("(" + js.slice(start, end) + ")", context);
+    change();
+    assert.strictEqual(elements["btn-validate-task-model-selection"].hidden,
+      ["word.smart_write", "word.smart_imitation", "word.format_review"].includes(task), task);
+  }
+});

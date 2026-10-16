@@ -166,6 +166,31 @@ DIFY_INPUT_MODE_LEGACY = "legacy-input-query"
 DIFY_INPUT_MODE_USER_INPUT = "user-input-node"
 DIFY_INPUT_MODES = (DIFY_INPUT_MODE_LEGACY, DIFY_INPUT_MODE_USER_INPUT)
 _PROVIDER_INPUT_MODE_CACHE: Dict[str, str] = {}
+_FORMAT_REVIEW_VALIDATIONS: Dict[Tuple[str, str, str], Future] = {}
+_FORMAT_REVIEW_VALIDATIONS_LOCK = threading.Lock()
+
+
+def _share_format_review_validation(store, kind, binding, validate):
+    key = (str(store.config_path.resolve()), kind, json.dumps(binding, sort_keys=True))
+    with _FORMAT_REVIEW_VALIDATIONS_LOCK:
+        pending = _FORMAT_REVIEW_VALIDATIONS.get(key)
+        owner = pending is None
+        if owner:
+            pending = Future()
+            _FORMAT_REVIEW_VALIDATIONS[key] = pending
+    if not owner:
+        return deepcopy(pending.result())
+    try:
+        result = validate()
+        pending.set_result(result)
+        return result
+    except BaseException as exc:
+        pending.set_exception(exc)
+        raise
+    finally:
+        with _FORMAT_REVIEW_VALIDATIONS_LOCK:
+            del _FORMAT_REVIEW_VALIDATIONS[key]
+
 
 
 class FullDocumentReviewAnswer(str):
@@ -4544,17 +4569,37 @@ class ProviderClient:
         if task_type == "word.format_review":
             selection_data = {**selection_data, "serviceId": service_id}
             binding = self.direct_service_store.format_validation_binding(service, selection_data)
-            try:
-                format_semantic_validation = self._validate_format_semantic_direct(trace_id, task_auth)
-            except AdapterError as exc:
-                self.direct_service_store.record_format_semantic_validation(
-                    task_type, {"success": False, "errorCode": exc.code},
-                    selection=selection_data, expected_binding=binding,
+            from app.services.direct_services import DirectServiceError
+            def validate_format():
+                existing = {}
+                try:
+                    current = self.direct_service_store.get_task_model_selection(task_type)
+                    existing = current.get("formatSemanticValidation") or {}
+                except DirectServiceError:
+                    existing = {}
+                reused = (
+                    bool(existing.get("success"))
+                    and not existing.get("stale")
+                    and all(existing.get(key) == value for key, value in binding.items())
                 )
-                raise
-            self.direct_service_store.record_format_semantic_validation(
-                task_type, format_semantic_validation,
-                selection=selection_data, expected_binding=binding,
+                if reused:
+                    return existing
+                else:
+                    try:
+                        format_semantic_validation = self._validate_format_semantic_direct(trace_id, task_auth)
+                    except AdapterError as exc:
+                        self.direct_service_store.record_format_semantic_validation(
+                            task_type, {"success": False, "errorCode": exc.code},
+                            selection=selection_data, expected_binding=binding,
+                        )
+                        raise
+                    self.direct_service_store.record_format_semantic_validation(
+                        task_type, format_semantic_validation,
+                        selection=selection_data, expected_binding=binding,
+                    )
+                return format_semantic_validation
+            format_semantic_validation = _share_format_review_validation(
+                self.direct_service_store, "format", binding, validate_format,
             )
             if is_custom:
                 self.direct_service_store.mark_custom_model_validated(
@@ -4760,56 +4805,96 @@ class ProviderClient:
         }
         return binding, candidates
 
-    def validate_task_image_selection(self, task_type: str, trace_id: str) -> Dict:
+    def validate_task_image_selection(self, task_type: str, trace_id: str, selection: Optional[Dict] = None) -> Dict:
         import secrets
         import struct
         import tempfile
         import zlib
 
+        from app.services.direct_services import DirectServiceError
+        from app.services.word.image_semantics import effective_direct_image_mode
+
+        if task_type != "word.format_review":
+            raise DirectServiceError("DIRECT_SERVICE_TASK_UNSUPPORTED", "任务不支持视觉能力验证。")
         store = self.direct_service_store
-        service, selection, binding, authorization = store.image_validation_snapshot(task_type)
-        auth = {
-            "providerBaseUrl": service["serviceBaseUrl"],
-            "apiKey": service["apiKey"],
-            "modelName": selection.get("effectiveModel"),
-            "temperature": selection.get("temperature"),
-            "maxOutputTokens": selection.get("maxOutputTokens"),
-            "contextWindowTokens": selection.get("contextWindowTokens"),
-            "accessMethod": ACCESS_DIRECT_MODEL,
-        }
-        palette = [
-            ("red", (255, 0, 0)), ("green", (0, 255, 0)), ("blue", (0, 0, 255)),
-            ("yellow", (255, 255, 0)), ("cyan", (0, 255, 255)), ("magenta", (255, 0, 255)),
-        ]
-        panels = []
-        for _ in range(8):
-            choices = [item for item in palette if not panels or item != panels[-1]]
-            panels.append(secrets.choice(choices))
-        def chunk(kind, content):
-            return struct.pack("!I", len(content)) + kind + content + struct.pack("!I", zlib.crc32(kind + content) & 0xffffffff)
-        png = (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack("!2I5B", 512, 64, 8, 2, 0, 0, 0)) +
-               chunk(b"IDAT", zlib.compress((b"\0" + b"".join(bytes(rgb) * 64 for _, rgb in panels)) * 64)) + chunk(b"IEND", b""))
-        try:
-            with tempfile.TemporaryDirectory(prefix="ai-wps-image-probe-") as directory:
-                image_path = Path(directory) / "probe.png"
-                image_path.write_bytes(png)
-                result = self._post_direct_task(
-                    task_type, trace_id,
-                    "Identify the eight vertical color panels in the attached image, from left to right. Reply only with eight English color names separated by spaces. Use red, green, blue, yellow, cyan, or magenta.",
-                    auth, max(self.settings.timeout_seconds, INTERACTIVE_WRITING_TIMEOUT_SECONDS),
-                    prompt_asset={"content": "Inspect the supplied synthetic test image.", "version": "image-probe.v1", "hashPrefix": ""},
-                    image_files=[{"path": str(image_path), "mimeType": "image/png"}],
+        draft = selection if isinstance(selection, dict) and selection.get("serviceId") else None
+        if draft is None:
+            service, target, binding, authorization = store.image_validation_snapshot(task_type)
+        else:
+            service = store.get_service(str(draft.get("serviceId", "")), include_secret=True)
+            target = dict(draft)
+            target["imageInputMode"] = effective_direct_image_mode(target.get("imageInputMode"))
+            target["effectiveModel"] = str(target.get("modelName") or service.get("defaultModel") or "")
+            binding = store.image_validation_binding(service, target)
+            authorization = None
+        def validate_image():
+            try:
+                current = store.get_task_model_selection(task_type)
+            except DirectServiceError:
+                current = {}
+            existing = current.get("imageSemanticValidation") or {}
+            if (
+                existing.get("validated")
+                and not existing.get("stale")
+                and all(existing.get(key) == value for key, value in binding.items())
+            ):
+                return {
+                    "success": True,
+                    "taskModelSelection": current,
+                    "visualCapability": {"validated": True, "reused": True},
+                    "mayIncurModelCost": False,
+                }
+            auth = {
+                "providerBaseUrl": service["serviceBaseUrl"],
+                "apiKey": service["apiKey"],
+                "modelName": target.get("effectiveModel") or target.get("modelName") or service.get("defaultModel"),
+                "temperature": target.get("temperature"),
+                "maxOutputTokens": target.get("maxOutputTokens"),
+                "contextWindowTokens": target.get("contextWindowTokens"),
+                "accessMethod": ACCESS_DIRECT_MODEL,
+            }
+            palette = [
+                ("red", (255, 0, 0)), ("green", (0, 255, 0)), ("blue", (0, 0, 255)),
+                ("yellow", (255, 255, 0)), ("cyan", (0, 255, 255)), ("magenta", (255, 0, 255)),
+            ]
+            panels = []
+            for _ in range(8):
+                choices = [item for item in palette if not panels or item != panels[-1]]
+                panels.append(secrets.choice(choices))
+            def chunk(kind, content):
+                return struct.pack("!I", len(content)) + kind + content + struct.pack("!I", zlib.crc32(kind + content) & 0xffffffff)
+            png = (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack("!2I5B", 512, 64, 8, 2, 0, 0, 0)) +
+                   chunk(b"IDAT", zlib.compress((b"\0" + b"".join(bytes(rgb) * 64 for _, rgb in panels)) * 64)) + chunk(b"IEND", b""))
+            try:
+                with tempfile.TemporaryDirectory(prefix="ai-wps-image-probe-") as directory:
+                    image_path = Path(directory) / "probe.png"
+                    image_path.write_bytes(png)
+                    result = self._post_direct_task(
+                        task_type, trace_id,
+                        "Identify the eight vertical color panels in the attached image, from left to right. Reply only with eight English color names separated by spaces. Use red, green, blue, yellow, cyan, or magenta.",
+                        auth, max(self.settings.timeout_seconds, INTERACTIVE_WRITING_TIMEOUT_SECONDS),
+                        prompt_asset={"content": "Inspect the supplied synthetic test image.", "version": "image-probe.v1", "hashPrefix": ""},
+                        image_files=[{"path": str(image_path), "mimeType": "image/png"}],
+                    )
+                if re.findall(r"[a-z]+", str(result.get("answer", "")).lower()) != [color for color, _ in panels]:
+                    raise AdapterError("IMAGE_CAPABILITY_VALIDATION_FAILED", "模型未能识别合成测试图片，图片语义保持关闭。", status_code=502)
+            except AdapterError as exc:
+                store.record_image_semantic_validation(
+                    task_type, {"validated": False, "errorCode": exc.code, "message": exc.message},
+                    expected_binding=binding, expected_authorization=authorization, selection=draft,
                 )
-            if re.findall(r"[a-z]+", str(result.get("answer", "")).lower()) != [color for color, _ in panels]:
-                raise AdapterError("IMAGE_CAPABILITY_VALIDATION_FAILED", "模型未能识别合成测试图片，图片语义保持关闭。", status_code=502)
-        except AdapterError as exc:
-            store.record_image_semantic_validation(task_type, {"validated": False, "errorCode": exc.code},
-                                                   expected_binding=binding, expected_authorization=authorization)
-            raise
-        saved = store.record_image_semantic_validation(task_type, {"validated": True},
-                                                       expected_binding=binding, expected_authorization=authorization)
-        return {"success": True, "taskModelSelection": saved, "visualCapability": {"validated": True},
-                "mayIncurModelCost": True}
+                raise
+            saved = store.record_image_semantic_validation(
+                task_type, {"validated": True},
+                expected_binding=binding, expected_authorization=authorization, selection=draft,
+            )
+            return {"success": True, "taskModelSelection": saved, "visualCapability": {"validated": True},
+                    "mayIncurModelCost": True}
+
+        result = _share_format_review_validation(store, "image", binding, validate_image)
+        if draft is None:
+            result["taskModelSelection"] = store.get_task_model_selection(task_type)
+        return result
 
     def _validate_format_semantic_direct(self, trace_id: str, task_auth: Dict) -> Dict:
         from app.services.word.format_semantics import (

@@ -299,8 +299,9 @@ class FormatReviewDirectServiceDefaultTests(unittest.TestCase):
                 model_name="vision-1",
                 image_input_mode="disabled",
             )
-            self.assertEqual(disabled["imageInputMode"], "disabled")
+            self.assertEqual(disabled["imageInputMode"], "openai_image_url")
             self.assertIsNone(disabled["imageExternalAuthorization"])
+            self.assertEqual(disabled["imageSemanticReadiness"]["code"], "validation_required")
 
     def test_completeness_and_activation_ignore_probe_result(self):
         # Break: probe failure blocks complete/activate.

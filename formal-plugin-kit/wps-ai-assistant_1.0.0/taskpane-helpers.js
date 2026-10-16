@@ -6018,8 +6018,6 @@
     bind("btn-close-word-task-custom-models", "click", "closeWordTaskCustomModels");
     bind("btn-add-word-task-manual-model", "click", "addWordTaskCustomModel");
     bind("btn-validate-task-model-selection", "click", "validateTaskSelection");
-    bind("btn-authorize-task-images", "click", "authorizeTaskImages");
-    bind("btn-revoke-task-images", "click", "revokeTaskImages");
     bind("btn-validate-task-images", "click", "validateTaskImages");
     bind("btn-save-task-model-selection", "click", "saveTaskSelection");
   }
