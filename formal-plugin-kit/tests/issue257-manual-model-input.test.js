@@ -48,6 +48,7 @@ for (const host of hosts) {
       loadDirectServices: async () => {},
       request: async (url, payload, options) => {
         calls.push({ url, payload, options });
+        if (url.endsWith("/validate")) return { data: { streamingCapability: "validated" } };
         return { data: { taskModelSelection: payload && payload.taskModelSelection,
           directService: Object.assign({}, service, { defaultModel: "", customModels: [], revision: 2 }) } };
       } };

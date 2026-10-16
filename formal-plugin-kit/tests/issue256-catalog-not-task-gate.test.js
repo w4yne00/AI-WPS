@@ -123,6 +123,7 @@ for (const [host, root] of hosts) {
         TASK_API_KEY_DEFS: [], EXCEL_FORMULA_WORKFLOW_TASK_TYPE: "excel.formula_assistant", EXCEL_SMART_FILL_WORKFLOW_TASK_TYPE: "excel.smart_fill",
         request: async (url, body) => {
           requests.push({ url, body });
+          if (url.endsWith("/validate")) return { data: { streamingCapability: "validated" } };
           return { data: { taskModelSelection: { ...body.taskModelSelection } } };
         }
       };

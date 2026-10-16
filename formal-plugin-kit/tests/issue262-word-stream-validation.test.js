@@ -280,3 +280,141 @@ test("Excel and PPT: validate button remains visible and unchanged", () => {
     );
   }
 });
+
+function deferred() {
+  let resolve, reject;
+  const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+}
+
+function confirmationPane(taskType, manual = false) {
+  const js = fs.readFileSync(path.join(wordRoot, "taskpane.js"), "utf8");
+  const service = { id: "direct_svc_new", name: "新服务", keyConfigured: true,
+    defaultModel: manual ? "manual-model" : "catalog-model", modelList: ["catalog-model"],
+    customModels: manual ? ["manual-model"] : [] };
+  const saved = { serviceId: "direct_svc_old", modelName: "old-model" };
+  const draft = { serviceId: service.id, modelName: "", customModel: false };
+  const state = { taskModelSelections: { [taskType]: saved }, taskApiKeys: {},
+    workflowProfileSelections: { [taskType]: saved.serviceId }, taskModelConfigStatusByTask: {} };
+  const status = { textContent: "" };
+  const probe = deferred();
+  const calls = [];
+  let currentTask = taskType;
+  const ctx = {
+    state, helpers: require(path.join(wordRoot, "taskpane-helpers.js")), TASK_API_KEY_DEFS: [],
+    getTaskModelSelectionDraft: () => ({ ...draft }),
+    getSettingsWorkflowTaskType: () => currentTask, getCurrentWorkflowTaskType: () => currentTask,
+    findDirectService: () => service, getWorkflowProfileData: () => ({ activeProfileId: saved.serviceId }),
+    getWorkflowProfileById: () => ({ complete: true }), isWorkflowInteractionBlocked: () => false,
+    byId: id => id.endsWith("-model-select") ? { value: draft.modelName } : status,
+    setWorkflowProfileMutationBusy: busy => { state.workflowProfileMutationBusy = busy; },
+    loadWorkflowProfiles: async () => {}, loadDirectServices: async () => {},
+    renderWorkflowProfileStrip() {}, renderWorkflowTaskTabs() {}, renderWorkflowProfileManager() {},
+    renderTaskModelSelectionSection() {}, renderModelInterfaceState() {}, focusTaskModelConfigTrigger() {},
+    setNodeTextIfChanged: (node, text) => { node.textContent = text; },
+    setStatus: text => { status.textContent = text; }, describeFetchError: error => error.message,
+    request: async (url, body) => {
+      calls.push(url);
+      if (url.endsWith("/validate")) return probe.promise;
+      return { data: { taskModelSelection: { ...body.taskModelSelection } } };
+    }
+  };
+  for (const name of ["saveTaskModelSelection", "activateWorkflowProfile"]) {
+    const start = js.indexOf("  function " + name + "(");
+    const end = js.indexOf("\n  function ", start + 1);
+    ctx[name] = vm.runInNewContext("(" + js.slice(start, end) + ")", ctx);
+  }
+  return { ...ctx, context: ctx, draft, service, saved, status, calls, probe,
+    switchTask: task => { currentTask = task; } };
+}
+
+for (const taskType of ["word.smart_write", "word.smart_imitation"]) {
+  test(`${taskType} catalog unsupported keeps the saved selection and draft`, async () => {
+    const p = confirmationPane(taskType);
+    p.probe.resolve({ data: { streamingCapability: "unsupported" } });
+    await p.saveTaskModelSelection();
+    assert.deepStrictEqual(p.calls, [`/provider/task-model-selections/${taskType}/validate`]);
+    assert.strictEqual(p.state.taskModelSelections[taskType], p.saved);
+    assert.strictEqual(p.draft.serviceId, p.service.id);
+    assert.match(p.status.textContent, /不支持流式|未通过流式/);
+  });
+
+  test(`${taskType} compact catalog switch validates once before activation`, async () => {
+    const p = confirmationPane(taskType);
+    const pending = p.activateWorkflowProfile(p.service.id, taskType, p.saved.serviceId);
+    await p.activateWorkflowProfile(p.service.id, taskType, p.saved.serviceId);
+    assert.deepStrictEqual(p.calls, [`/provider/task-model-selections/${taskType}/validate`]);
+    p.probe.resolve({ data: { streamingCapability: "validated" } });
+    await pending;
+    assert.strictEqual(p.calls[1], `/provider/direct-services/${p.service.id}/activate`);
+  });
+
+  test(`${taskType} compact unsupported switch preserves previous activation`, async () => {
+    const p = confirmationPane(taskType);
+    p.probe.resolve({ data: { streamingCapability: "unsupported" } });
+    await p.activateWorkflowProfile(p.service.id, taskType, p.saved.serviceId);
+    assert.strictEqual(p.calls.length, 1);
+    assert.ok(p.calls[0].endsWith("/validate"));
+    assert.strictEqual(p.state.workflowProfileSelections[taskType], p.saved.serviceId);
+    assert.strictEqual(p.state.taskModelSelections[taskType], p.saved);
+  });
+
+  test(`${taskType} compact inherited manual model activates without awaiting probe`, async () => {
+    const p = confirmationPane(taskType, true);
+    await p.activateWorkflowProfile(p.service.id, taskType, p.saved.serviceId);
+    assert.deepStrictEqual(p.calls, [`/provider/direct-services/${p.service.id}/activate`,
+      `/provider/task-model-selections/${taskType}/validate`]);
+    assert.strictEqual(p.state.workflowProfileMutationBusy, false);
+    p.probe.reject(new Error("探测失败"));
+    await new Promise(resolve => setImmediate(resolve));
+    assert.strictEqual(p.state.taskModelSelections[taskType].serviceId, p.service.id);
+  });
+
+  test(`${taskType} compact validation cannot activate after switching tasks`, async () => {
+    const p = confirmationPane(taskType);
+    const pending = p.activateWorkflowProfile(p.service.id, taskType, p.saved.serviceId);
+    p.switchTask("word.document_review");
+    p.probe.resolve({ data: { streamingCapability: "validated" } });
+    await pending;
+    assert.strictEqual(p.calls.length, 1);
+    assert.strictEqual(p.state.workflowProfileSelections[taskType], p.saved.serviceId);
+    assert.strictEqual(p.state.workflowProfileMutationBusy, false);
+  });
+
+  for (const stage of ["activation", "refresh"]) {
+    test(`${taskType} compact ${stage} completion releases busy after switching tasks`, async () => {
+      const p = confirmationPane(taskType);
+      const response = deferred();
+      if (stage === "activation") {
+        const request = p.context.request;
+        p.context.request = (url, body) => url.endsWith("/activate") ? response.promise : request(url, body);
+      } else {
+        p.context.loadWorkflowProfiles = () => response.promise;
+      }
+      p.probe.resolve({ data: { streamingCapability: "validated" } });
+      const pending = p.activateWorkflowProfile(p.service.id, taskType, p.saved.serviceId);
+      await new Promise(resolve => setImmediate(resolve));
+      p.switchTask("word.document_review");
+      p.status.textContent = "另一个任务";
+      response.resolve({ data: { taskModelSelection: { ...p.draft } } });
+      await pending;
+      assert.strictEqual(p.state.workflowProfileMutationBusy, false);
+      assert.strictEqual(p.state.taskModelSelections[taskType].serviceId, p.service.id);
+      assert.strictEqual(p.status.textContent, "另一个任务");
+    });
+  }
+
+  for (const fail of [false, true]) {
+    test(`${taskType} stale manual probe ${fail ? "failure" : "success"} leaves edited selection feedback intact`, async () => {
+      const p = confirmationPane(taskType, true);
+      await p.saveTaskModelSelection();
+      p.draft.serviceId = "direct_svc_other";
+      p.draft.modelName = "other-model";
+      p.status.textContent = "正在编辑另一个模型";
+      if (fail) p.probe.reject(new Error("旧探测失败"));
+      else p.probe.resolve({ data: { streamingCapability: "validated" } });
+      await new Promise(resolve => setImmediate(resolve));
+      assert.strictEqual(p.status.textContent, "正在编辑另一个模型");
+    });
+  }
+}

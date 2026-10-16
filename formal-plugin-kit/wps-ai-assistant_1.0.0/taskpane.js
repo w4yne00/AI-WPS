@@ -4600,28 +4600,50 @@
       }
       return Promise.resolve();
     }
+    var isDirectService = String(profileId || "").startsWith("direct_svc_");
+    var autoValidate = isDirectService && (taskType === "word.smart_write" || taskType === "word.smart_imitation");
     state.taskModelConfigStatusByTask[taskType] = "";
-    state.workflowProfileSelections[taskType] = profileId;
+    if (!autoValidate) state.workflowProfileSelections[taskType] = profileId;
     if (typeof invalidateWorkflowProfileRequests === "function") {
       invalidateWorkflowProfileRequests(taskType);
     }
     setWorkflowProfileMutationBusy(true);
-    var isDirectService = String(profileId || "").startsWith("direct_svc_");
-    var activationPromise = isDirectService
-      ? request("/provider/direct-services/" + encodeURIComponent(profileId) + "/activate", {
+    var selection = {
+      serviceId: profileId, modelName: "", customModel: false,
+      temperature: null, maxOutputTokens: null, contextWindowTokens: null
+    };
+    var service = autoValidate ? findDirectService(profileId) : null;
+    var manualModel = autoValidate && helpers.isManualTaskModelSelection(selection, service);
+    var originatingTask = getCurrentWorkflowTaskType();
+    var operationId;
+    var probeNotice = "";
+    if (autoValidate) {
+      state.directServiceOperationId = Number(state.directServiceOperationId || 0) + 1;
+      operationId = state.directServiceOperationId;
+      if (!manualModel) setStatus("正在验证目录模型的流式能力（会真实请求模型，可能产生费用）...");
+    }
+    function isCurrentActivation() {
+      return !autoValidate || (state.directServiceOperationId === operationId && getCurrentWorkflowTaskType() === originatingTask);
+    }
+    function abandonActivation() {
+      if (autoValidate && state.directServiceOperationId === operationId) setWorkflowProfileMutationBusy(false);
+      return { superseded: true };
+    }
+    function activate() {
+      if (!isCurrentActivation()) {
+        return Promise.resolve(abandonActivation());
+      }
+      return isDirectService ? request("/provider/direct-services/" + encodeURIComponent(profileId) + "/activate", {
         taskType: taskType,
-        taskModelSelection: {
-          serviceId: profileId,
-          modelName: "",
-          customModel: false,
-          temperature: null,
-          maxOutputTokens: null,
-          contextWindowTokens: null
-        }
-      })
-      : request("/provider/model-configurations/" + encodeURIComponent(profileId) + "/activate", {});
+        taskModelSelection: selection
+      }) : request("/provider/model-configurations/" + encodeURIComponent(profileId) + "/activate", {});
+    }
+    var activationPromise = autoValidate
+      ? helpers.validateWordWritingCatalogSelection(taskType, selection, service, request).then(activate)
+      : activate();
     return activationPromise
       .then(function (body) {
+        if ((body && body.superseded) || (autoValidate && state.directServiceOperationId !== operationId)) return abandonActivation();
         if (isDirectService) {
           state.workflowProfileSelections[taskType] = profileId;
           state.taskModelConfigStatusByTask[taskType] = "";
@@ -4637,6 +4659,24 @@
             configured: true,
             taskKeyConfigured: true
           });
+          if (manualModel) {
+            probeNotice = "模型配置已切换，正在后台探测流式能力...";
+            request("/provider/task-model-selections/" + encodeURIComponent(taskType) + "/validate", selection)
+              .then(function (probeBody) {
+                var result = probeBody && probeBody.data && (probeBody.data.validation || probeBody.data);
+                return result && result.streamingCapability === "validated";
+              }, function () { return false; })
+              .then(function (validated) {
+                if (!isCurrentActivation()) return;
+                var active = state.taskModelSelections[taskType];
+                if (!active || active.serviceId !== profileId || (active.modelName || "") !== "") return;
+                probeNotice = validated ? "模型配置已切换（流式能力已确认）。" : "模型配置已切换（流式探测未通过，将使用普通调用）。";
+                var draft = typeof getTaskModelSelectionDraft === "function" ? getTaskModelSelectionDraft() : selection;
+                if (!state.workflowProfileMutationBusy && draft.serviceId === selection.serviceId && (draft.modelName || "") === "") {
+                  setStatus(probeNotice);
+                }
+              });
+          }
         } else {
           var nextData = normalizeWorkflowProfileData(body && body.data || {}, taskType);
           if (typeof invalidateWorkflowProfileRequests === "function") {
@@ -4655,11 +4695,13 @@
             taskKeyConfigured: Boolean(profile && profile.keyConfigured)
           });
         }
+        if (!isCurrentActivation()) return abandonActivation();
         var dsRefresh = typeof loadDirectServices === "function" ? loadDirectServices() : Promise.resolve();
         return Promise.all([
           loadWorkflowProfiles(taskType),
           dsRefresh
         ]).then(function () {
+          if (!isCurrentActivation()) return abandonActivation();
           state.workflowProfileMutationBusy = false;
           renderWorkflowProfileStrip();
           renderWorkflowTaskTabs();
@@ -4670,8 +4712,9 @@
             renderFullDocumentReviewEntry();
           }
           renderModelInterfaceState(state.modelInterfaceDetectable);
-          setStatus("模型配置已切换，从下一次任务开始生效。");
+          setStatus(probeNotice || "模型配置已切换，从下一次任务开始生效。");
         }).catch(function (refreshError) {
+          if (!isCurrentActivation()) return abandonActivation();
           state.workflowProfileMutationBusy = false;
           renderWorkflowProfileStrip();
           renderWorkflowTaskTabs();
@@ -4687,6 +4730,9 @@
         });
       })
       .catch(function (error) {
+        if (!isCurrentActivation()) {
+          return abandonActivation();
+        }
         var previousProfile = typeof getWorkflowProfileById === "function"
           ? getWorkflowProfileById(taskType, previousProfileId)
           : (typeof findWorkflowProfile === "function" ? findWorkflowProfile(previousProfileId, taskType) : null);
@@ -6125,19 +6171,7 @@
       return;
     }
     var isWordAutoValidateTask = (taskType === "word.smart_write" || taskType === "word.smart_imitation");
-    var svcCustoms = (currentSvc && currentSvc.customModels) || [];
-    var svcCatalog = (currentSvc && currentSvc.modelList) || [];
-    var isCustom = Boolean(draft.customModel);
-    if (!draft.modelName) {
-      var defaultM = (currentSvc && currentSvc.defaultModel) || "";
-      if (defaultM) {
-        isCustom = (svcCustoms.indexOf(defaultM) >= 0) || (svcCatalog.indexOf(defaultM) < 0 && svcCatalog.length > 0);
-      }
-    } else {
-      if (svcCustoms.indexOf(draft.modelName) >= 0) {
-        isCustom = true;
-      }
-    }
+    var isCustom = isWordAutoValidateTask && helpers.isManualTaskModelSelection(draft, currentSvc);
 
     state.directServiceOperationId = Number(state.directServiceOperationId || 0) + 1;
     var operationId = state.directServiceOperationId;
@@ -6208,8 +6242,8 @@
       if (statusNode) {
         statusNode.textContent = "正在验证调用并检测流式能力（会真实请求模型，可能产生费用）...";
       }
-      return request("/provider/task-model-selections/" + encodeURIComponent(taskType) + "/validate", draft)
-        .then(function (valBody) {
+      return helpers.validateWordWritingCatalogSelection(taskType, draft, currentSvc, request)
+        .then(function () {
           if (state.directServiceOperationId !== operationId || getSettingsWorkflowTaskType() !== taskType) {
             return { superseded: true };
           }
@@ -6227,16 +6261,21 @@
     }
 
     if (isWordAutoValidateTask && isCustom) {
+      function canShowProbeResult() {
+        if (state.directServiceOperationId !== operationId || getSettingsWorkflowTaskType() !== taskType) {
+          return false;
+        }
+        var currentDraft = getTaskModelSelectionDraft();
+        var curSel = state.taskModelSelections && state.taskModelSelections[taskType];
+        return curSel && curSel.serviceId === draft.serviceId && (curSel.modelName || "") === (draft.modelName || "") &&
+          ["serviceId", "modelName", "customModel", "temperature", "maxOutputTokens", "contextWindowTokens"].every(function (key) {
+            return (currentDraft[key] == null ? "" : currentDraft[key]) === (draft[key] == null ? "" : draft[key]);
+          });
+      }
       return executeActivation("已保存并设为当前，正在后台探测流式能力...", function () {
-        var probeOpId = operationId;
         request("/provider/task-model-selections/" + encodeURIComponent(taskType) + "/validate", draft)
           .then(function (valBody) {
-            if (state.directServiceOperationId !== probeOpId || getSettingsWorkflowTaskType() !== taskType) {
-              return;
-            }
-            var curSel = state.taskModelSelections && state.taskModelSelections[taskType];
-            var curModel = (curSel && curSel.modelName) || "";
-            if (curSel && curSel.serviceId === draft.serviceId && curModel === (draft.modelName || "")) {
+            if (canShowProbeResult()) {
               var cap = (valBody && valBody.data && (valBody.data.streamingCapability || (valBody.data.validation && valBody.data.validation.streamingCapability)));
               if (cap === "validated") {
                 if (statusNode) statusNode.textContent = "已保存并设为当前（流式能力已确认）。";
@@ -6246,12 +6285,7 @@
             }
           })
           .catch(function () {
-            if (state.directServiceOperationId !== probeOpId || getSettingsWorkflowTaskType() !== taskType) {
-              return;
-            }
-            var curSel = state.taskModelSelections && state.taskModelSelections[taskType];
-            var curModel = (curSel && curSel.modelName) || "";
-            if (curSel && curSel.serviceId === draft.serviceId && curModel === (draft.modelName || "")) {
+            if (canShowProbeResult()) {
               if (statusNode) statusNode.textContent = "已保存并设为当前（流式探测未通过，将使用普通调用）。";
             }
           });

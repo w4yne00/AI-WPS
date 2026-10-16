@@ -292,6 +292,7 @@ test("Word direct services behavior: max 5 limit, single key, and activation rol
     loadWorkflowProfiles() { return Promise.resolve({}); },
     request(url, payload, options) {
       requestsMade.push({ url, payload, method: options && options.method || "POST" });
+      if (url.endsWith("/validate")) return Promise.resolve({ data: { streamingCapability: "validated" } });
       if (url.includes("/activate")) {
         return Promise.resolve({ data: { active: true } });
       }
@@ -781,6 +782,7 @@ test("task selection save atomically activates and synchronizes preflight state"
     loadDirectServices() { return Promise.resolve(); },
     request(url, payload, options) {
       requests.push({ url, payload, method: options && options.method });
+      if (url.endsWith("/validate")) return Promise.resolve({ data: { streamingCapability: "validated" } });
       return Promise.resolve({ data: { taskModelSelection: payload.taskModelSelection } });
     }
   };

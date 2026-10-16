@@ -7,6 +7,7 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch, MagicMock
 
 from app.core.config import AppSettings
+from app.core.errors import AdapterError, ProviderUnavailableError
 from app.services.direct_services import DirectServiceStore
 from app.services.provider_client import ProviderClient
 
@@ -200,59 +201,217 @@ class Issue262StreamValidationTests(unittest.TestCase):
         self.assertTrue(res2.get("taskCallPerformed", False))
         self.assertEqual(mock_url2.call_count, 1)
 
+    def _start_validation(self, service, trace_id, model="gpt-4o", task_type="word.smart_write"):
+        results, errors = [], []
+
+        def worker():
+            try:
+                results.append(self.client.validate_task_model_selection(
+                    task_type,
+                    {"serviceId": service["id"], "modelName": model},
+                    trace_id,
+                ))
+            except Exception as exc:
+                errors.append(exc)
+
+        thread = threading.Thread(target=worker, name=trace_id)
+        thread.start()
+        return thread, results, errors
+
+    def _observe_follower_registration(self, follower_name):
+        registered = threading.Event()
+        lock = threading.Lock()
+
+        class ObservedLock:
+            def __enter__(self):
+                lock.acquire()
+
+            def __exit__(self, *args):
+                lock.release()
+                if threading.current_thread().name == follower_name:
+                    registered.set()
+
+        self.client._streaming_probe_lock = ObservedLock()
+        return registered
+
     def test_validate_task_model_selection_deduplicates_in_flight_probes(self):
-        service = self._create_service(model="gpt-4o")
-        sse_lines = [
-            'data: {"choices": [{"delta": {"content": "系统已完成"}}]}\n\n',
-            'data: {"choices": [{"delta": {"content": "部署。"}}]}\n\n',
-            'data: [DONE]\n\n',
-        ]
+        service = self._create_service()
+        started, proceed = threading.Event(), threading.Event()
+        registered = self._observe_follower_registration("follower")
 
-        urlopen_call_count = [0]
-        probe_started_event = threading.Event()
-        proceed_event = threading.Event()
+        def slow_probe(*args):
+            started.set()
+            if not proceed.wait(3):
+                raise RuntimeError("test probe was not released")
+            return "系统已完成部署。"
 
-        def slow_urlopen(req, timeout=None):
-            urlopen_call_count[0] += 1
-            probe_started_event.set()
-            proceed_event.wait(timeout=2.0)
-            return FakeSseResponse(sse_lines)
+        with patch.object(self.client, "_probe_direct_streaming", side_effect=slow_probe) as probe:
+            owner = self._start_validation(service, "owner")
+            try:
+                self.assertTrue(started.wait(2))
+                follower = self._start_validation(service, "follower", task_type="word.smart_imitation")
+                self.assertTrue(registered.wait(2))
+            finally:
+                proceed.set()
+                owner[0].join(3)
+            follower[0].join(3)
 
-        results = []
+        for thread, results, errors in (owner, follower):
+            self.assertFalse(thread.is_alive())
+            self.assertEqual(errors, [])
+            self.assertEqual(results[0]["streamingCapability"], "validated")
+        self.assertEqual(probe.call_count, 1)
 
-        def worker(trace_id):
-            r = self.client.validate_task_model_selection(
-                "word.smart_write",
-                {"serviceId": service["id"], "modelName": "gpt-4o"},
-                trace_id,
+    def test_concurrent_validation_shares_owner_failure_without_retry(self):
+        service = self._create_service()
+        started, proceed = threading.Event(), threading.Event()
+        registered = self._observe_follower_registration("follower")
+
+        def failing_probe(*args):
+            started.set()
+            if not proceed.wait(3):
+                raise RuntimeError("test probe was not released")
+            raise ProviderUnavailableError("模型服务暂不可用。")
+
+        with patch.object(self.client, "_probe_direct_streaming", side_effect=failing_probe) as probe:
+            owner = self._start_validation(service, "owner")
+            try:
+                self.assertTrue(started.wait(2))
+                follower = self._start_validation(service, "follower")
+                self.assertTrue(registered.wait(2))
+            finally:
+                proceed.set()
+                owner[0].join(3)
+            follower[0].join(3)
+
+        for thread, results, errors in (owner, follower):
+            self.assertFalse(thread.is_alive())
+            self.assertEqual(results, [])
+            self.assertEqual(len(errors), 1)
+            self.assertEqual(errors[0].code, "PROVIDER_UNREACHABLE")
+        self.assertEqual(probe.call_count, 1)
+
+    def test_waiter_timeout_does_not_repeat_request_or_release_owner(self):
+        service = self._create_service()
+        started, proceed = threading.Event(), threading.Event()
+
+        def slow_probe(*args):
+            if threading.current_thread().name == "owner":
+                started.set()
+                if not proceed.wait(3):
+                    raise RuntimeError("test probe was not released")
+            return "系统已完成部署。"
+
+        with patch.object(self.client, "_probe_direct_streaming", side_effect=slow_probe) as probe, \
+             patch("app.services.provider_client.INTERACTIVE_WRITING_TIMEOUT_SECONDS", 0.02), \
+             patch.object(self.settings, "timeout_seconds", 0.02):
+            owner = self._start_validation(service, "owner")
+            try:
+                self.assertTrue(started.wait(2))
+                for name in ("waiter-1", "waiter-2"):
+                    thread, results, errors = self._start_validation(service, name)
+                    thread.join(2)
+                    self.assertFalse(thread.is_alive())
+                    self.assertEqual(results, [])
+                    self.assertEqual(len(errors), 1)
+                    self.assertIsInstance(errors[0], AdapterError)
+                    self.assertEqual(errors[0].code, "PROVIDER_TIMEOUT")
+                self.assertEqual(probe.call_count, 1)
+            finally:
+                proceed.set()
+                owner[0].join(3)
+        self.assertEqual(owner[2], [])
+
+    def test_updated_service_does_not_join_old_configuration_probe(self):
+        for changed_field in ("revision", "url", "key", "model"):
+            with self.subTest(changed_field=changed_field):
+                service = self._create_service(name="配置隔离-" + changed_field)
+                started, proceed, second_started = (threading.Event() for _ in range(3))
+
+                def slow_probe(*args):
+                    if threading.current_thread().name == "owner":
+                        started.set()
+                        if not proceed.wait(3):
+                            raise RuntimeError("test probe was not released")
+                    else:
+                        second_started.set()
+                    return "系统已完成部署。"
+
+                follower = None
+                with patch.object(self.client, "_probe_direct_streaming", side_effect=slow_probe) as probe:
+                    owner = self._start_validation(service, "owner")
+                    try:
+                        self.assertTrue(started.wait(2))
+                        model = "gpt-4o"
+                        if changed_field in {"revision", "url"}:
+                            self.store.update_service(
+                                service["id"], name="更新配置-" + changed_field,
+                                service_base_url=("https://updated.example.com/v1"
+                                                  if changed_field == "url"
+                                                  else service["serviceBaseUrl"]),
+                                expected_revision=service["revision"],
+                            )
+                        elif changed_field == "key":
+                            self.store.replace_api_key(
+                                service["id"], "sk-updated-key", expected_revision=service["revision"],
+                            )
+                        else:
+                            model = "GPT-4o"
+                        follower = self._start_validation(service, "new-config", model)
+                        self.assertTrue(second_started.wait(1), "新配置不应等待旧配置探测")
+                    finally:
+                        proceed.set()
+                        owner[0].join(3)
+                        if follower is not None:
+                            follower[0].join(3)
+                    self.assertEqual(follower[2], [])
+                    self.assertEqual(follower[1][0]["streamingCapability"], "validated")
+                    self.assertEqual(probe.call_count, 2)
+                    if changed_field != "model":
+                        self.assertEqual(owner[2][0].code, "DIRECT_SERVICE_CONFIG_CHANGED")
+                    else:
+                        self.assertEqual(owner[2], [])
+
+    def test_capability_created_before_probe_lock_is_reused(self):
+        service = self._create_service()
+        original_get = self.store.get_streaming_capability
+        calls = []
+
+        def racing_get(*args):
+            capability = original_get(*args)
+            calls.append(capability)
+            if len(calls) == 1:
+                self.store.record_streaming_capability(
+                    service["id"], "gpt-4o", "validated",
+                )
+            return capability
+
+        with patch.object(self.store, "get_streaming_capability", side_effect=racing_get), \
+             patch.object(self.client, "_probe_direct_streaming", return_value="系统已完成部署。") as probe:
+            result = self.client.validate_task_model_selection(
+                "word.smart_write", {"serviceId": service["id"], "modelName": "gpt-4o"}, "cache-race",
             )
-            results.append(r)
+        self.assertEqual(result["streamingCapability"], "validated")
+        self.assertFalse(result["taskCallPerformed"])
+        probe.assert_not_called()
 
-        with patch("urllib.request.urlopen", side_effect=slow_urlopen):
-            t1 = threading.Thread(target=worker, args=("trace-concurrent-1",))
-            t1.start()
-
-            # Wait until t1 is in slow_urlopen
-            probe_started_event.wait(timeout=2.0)
-
-            # Launch concurrent t2
-            t2 = threading.Thread(target=worker, args=("trace-concurrent-2",))
-            t2.start()
-
-            # Small yield to let t2 hit validate_task_model_selection
-            time.sleep(0.05)
-            proceed_event.set()
-
-            t1.join(timeout=3.0)
-            t2.join(timeout=3.0)
-
-        self.assertEqual(len(results), 2)
-        for r in results:
-            self.assertTrue(r["success"])
-            self.assertEqual(r["streamingCapability"], "validated")
-
-        # Network call should only have executed ONCE due to in-flight deduplication
-        self.assertEqual(urlopen_call_count[0], 1)
+    def test_other_tasks_still_perform_validation_when_capability_is_cached(self):
+        service = self._create_service()
+        self.store.record_streaming_capability(service["id"], "gpt-4o", "validated")
+        answers = {
+            "word.document_review": '{"summary":"通过","issues":[]}',
+            "excel.analysis": '{"overview":"完成","findings":[],"risks":[],"actions":[]}',
+            "ppt.slide_assistant": '{"suggestedTitle":"进展","summary":"完成","keyPoints":[],"layoutAdvice":[],"plainText":"完成"}',
+        }
+        for task_type, answer in answers.items():
+            with self.subTest(task_type=task_type), patch.object(
+                self.client, "_probe_direct_streaming", return_value=answer,
+            ) as probe:
+                result = self.client.validate_task_model_selection(
+                    task_type, {"serviceId": service["id"], "modelName": "gpt-4o"}, "other-task",
+                )
+                self.assertTrue(result["taskCallPerformed"])
+                self.assertEqual(probe.call_count, 1)
 
     def test_smart_write_uses_streaming_when_capability_validated(self):
         from app.services.long_task_coordinator import LongTaskCoordinator

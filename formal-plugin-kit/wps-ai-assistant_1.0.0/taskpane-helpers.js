@@ -6273,6 +6273,31 @@
     return getDirectServiceCatalogState(service).manualModelAllowed;
   }
 
+  function isManualTaskModelSelection(selection, service) {
+    var input = selection || {};
+    var models = (service && service.modelList) || [];
+    var customs = (service && service.customModels) || [];
+    var model = input.modelName || (service && service.defaultModel) || "";
+    return Boolean((input.modelName && input.customModel) || customs.indexOf(model) >= 0 ||
+      (model && models.length > 0 && models.indexOf(model) < 0));
+  }
+
+  function validateWordWritingCatalogSelection(taskType, selection, service, request) {
+    if ((taskType !== "word.smart_write" && taskType !== "word.smart_imitation") ||
+        isManualTaskModelSelection(selection, service)) {
+      return Promise.resolve();
+    }
+    return request("/provider/task-model-selections/" + encodeURIComponent(taskType) + "/validate", selection)
+      .then(function (body) {
+        var result = body && body.data && (body.data.validation || body.data);
+        if (!result || result.success === false || result.streamingCapability !== "validated") {
+          throw new Error("所选目录模型未通过流式能力验证，未保存配置。" +
+            (result && result.streamingCapability === "unsupported" ? "该模型不支持流式调用。" : ""));
+        }
+        return result;
+      });
+  }
+
   function validateTaskModelSelectionDraft(draft, context) {
     var input = draft || {};
     var serviceId = String(input.serviceId || "").trim();
@@ -7214,6 +7239,8 @@
     validateDirectServiceDraft: validateDirectServiceDraft,
     getDirectServiceCatalogState: getDirectServiceCatalogState,
     isDirectServiceManualModelAllowed: isDirectServiceManualModelAllowed,
+    isManualTaskModelSelection: isManualTaskModelSelection,
+    validateWordWritingCatalogSelection: validateWordWritingCatalogSelection,
     validateTaskModelSelectionDraft: validateTaskModelSelectionDraft,
     validateDirectTaskSelectionReadiness: validateDirectTaskSelectionReadiness,
     renderModelOptionsWithCustom: renderModelOptionsWithCustom,
