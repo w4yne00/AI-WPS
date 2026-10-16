@@ -4833,6 +4833,7 @@
     if (!confirmWorkflowEditorDiscard()) {
       return;
     }
+    state.directServiceOperationId = Number(state.directServiceOperationId || 0) + 1;
     state.settingsWorkflowTaskType = taskType;
     state.workflowProfileEditor = null;
     syncSettingsRefreshController();
@@ -4945,6 +4946,10 @@
       if (directServiceOperationId && state.directServiceOperationId !== directServiceOperationId) {
         return { superseded: true };
       }
+      var previousSelection = (state.taskModelSelections || {})["word.format_review"];
+      var previousService = previousSelection && (state.directServices || []).find(function (service) { return service.id === previousSelection.serviceId; });
+      var preserveTaskDraft = previousSelection && getSettingsWorkflowTaskType() === "word.format_review" &&
+        formatReviewSelectionBinding(getTaskModelSelectionDraft(), previousService) !== formatReviewSelectionBinding(previousSelection, previousService);
       state.directServices = (dsBody && dsBody.data && dsBody.data.directServices) || [];
       state.legacyDirectPending = (dsBody && dsBody.data && dsBody.data.legacyDirectPending) || {};
       if (typeof renderLegacyDirectPendingStatus === "function") {
@@ -4961,6 +4966,17 @@
       } else if (rawSelections && typeof rawSelections === "object") {
         selectionsMap = rawSelections;
       }
+      var refreshedSelection = selectionsMap["word.format_review"];
+      var refreshedService = refreshedSelection && (state.directServices || []).find(function (service) { return service.id === refreshedSelection.serviceId; });
+      if (previousSelection && refreshedSelection &&
+          formatReviewSelectionBinding(previousSelection, previousService) === formatReviewSelectionBinding(refreshedSelection, refreshedService)) {
+        ["formatSemanticValidation", "imageSemanticValidation"].forEach(function (field) {
+          var record = previousSelection[field];
+          if (record && record.operationId !== undefined && record.operationId === state.directServiceOperationId) {
+            refreshedSelection[field] = record;
+          }
+        });
+      }
       state.taskModelSelections = selectionsMap;
       TASK_API_KEY_DEFS.forEach(function (definition) {
         var taskType = definition.taskType;
@@ -4970,7 +4986,7 @@
         }
       });
       renderDirectServicesList();
-      renderTaskModelSelectionSection();
+      if (!preserveTaskDraft) renderTaskModelSelectionSection();
       renderWorkflowProfileStrip();
       renderWorkflowProfileManager();
       return { success: true };
@@ -5908,6 +5924,11 @@
         statusNode.textContent = "模型目录当前可用，不能使用高级手填模型；请从目录选择。";
       } else if (catalog.fetchStatus === "error" && catalog.cacheStatus === "valid") {
         statusNode.textContent = "目录刷新失败，当前继续使用有效缓存；请留意最近一次错误。";
+      } else if (currentTask === "word.format_review" && currentSelection && currentSelection.formatSemanticValidation) {
+        var semantic = currentSelection.formatSemanticValidation;
+        statusNode.textContent = semantic.pending
+          ? (semantic.operationId === state.directServiceOperationId ? "正在验证格式语义…" : "")
+          : (semantic.stale ? "" : (semantic.success ? "格式语义验证成功" : semantic.message || "格式语义验证失败。"));
       } else {
         statusNode.textContent = "";
       }
@@ -5990,10 +6011,25 @@
     return draft;
   }
 
+  function formatReviewSelectionBinding(selection, service) {
+    if (!selection || !service) return "";
+    return JSON.stringify([
+      service.id, service.revision, service.serviceBaseUrl, service.defaultModel,
+      selection.serviceId || "", selection.modelName || "",
+      selection.temperature == null ? null : selection.temperature,
+      selection.maxOutputTokens == null ? null : selection.maxOutputTokens,
+      selection.contextWindowTokens == null ? null : selection.contextWindowTokens,
+      selection.imageInputMode || "openai_image_url"
+    ]);
+  }
+
   function formatReviewVisionStatusText(selection) {
     var record = selection && selection.imageSemanticValidation;
     if (!record || record.stale) {
       return "未验证";
+    }
+    if (record.pending) {
+      return record.operationId === state.directServiceOperationId ? "正在验证视觉能力…" : "未验证";
     }
     if (record.validated) {
       return "视觉能力验证成功";
@@ -6026,21 +6062,37 @@
       if (statusNode) statusNode.textContent = "请先确认当前模型选择，再验证视觉能力。";
       return;
     }
-    var operationId = Number(state.directServiceOperationId || 0) + 1;
+    var operationId = Number(state.directServiceOperationId || 0);
     state.directServiceOperationId = operationId;
+    var imageOperationId = Number(state.taskImageValidationOperationId || 0) + 1;
+    state.taskImageValidationOperationId = imageOperationId;
+    var draftSnapshot = JSON.stringify(draft);
+    var selectionBinding = formatReviewSelectionBinding(saved, findDirectService(saved.serviceId));
+    function actionIsCurrent() {
+      return state.directServiceOperationId === operationId && state.taskImageValidationOperationId === imageOperationId &&
+        getSettingsWorkflowTaskType() === taskType &&
+        JSON.stringify(getTaskModelSelectionDraft()) === draftSnapshot &&
+        formatReviewSelectionBinding(state.taskModelSelections[taskType], findDirectService(saved.serviceId)) === selectionBinding;
+    }
     setWorkflowProfileMutationBusy(true);
+    saved.imageSemanticValidation = { pending: true, operationId: operationId };
     if (statusNode) statusNode.textContent = "正在验证视觉能力…";
     return request("/provider/task-model-selections/" + encodeURIComponent(taskType) + "/validate-image", {})
       .then(function (body) {
-        if (state.directServiceOperationId !== operationId || getSettingsWorkflowTaskType() !== taskType) return;
+        if (!actionIsCurrent()) return;
         var selection = body && body.data && body.data.taskModelSelection;
-        if (selection) state.taskModelSelections[taskType] = selection;
-        if (statusNode) statusNode.textContent = "视觉能力验证成功";
+        var record = selection && selection.imageSemanticValidation;
+        record = Object.assign({}, record || { validated: false, stale: false, message: "视觉能力验证未返回有效结果。" }, { operationId: operationId });
+        state.taskModelSelections[taskType].imageSemanticValidation = record;
+        if (statusNode) statusNode.textContent = record.validated && !record.stale
+          ? "视觉能力验证成功" : record.message || "视觉能力验证失败。";
       }).catch(function (error) {
-        if (state.directServiceOperationId !== operationId || getSettingsWorkflowTaskType() !== taskType) return;
-        if (statusNode) statusNode.textContent = describeFetchError(error);
+        if (!actionIsCurrent()) return;
+        var record = { validated: false, stale: false, operationId: operationId, message: describeFetchError(error) };
+        state.taskModelSelections[taskType].imageSemanticValidation = record;
+        if (statusNode) statusNode.textContent = record.message;
       }).then(function () {
-        if (state.directServiceOperationId === operationId) setWorkflowProfileMutationBusy(false);
+        if (state.directServiceOperationId === operationId && state.taskImageValidationOperationId === imageOperationId) setWorkflowProfileMutationBusy(false);
       });
   }
 
@@ -6185,12 +6237,40 @@
             statusNode.textContent = "已保存并设为当前。";
           }
           if (taskType === "word.format_review" && !catalogConfirm) {
-            request("/provider/task-model-selections/" + encodeURIComponent(taskType) + "/validate", draft).catch(function () {});
-            request("/provider/task-model-selections/" + encodeURIComponent(taskType) + "/validate-image", {}).catch(function (error) {
-              var visionStatus = byId("word-task-vision-status");
-              if (visionStatus && state.directServiceOperationId === operationId) {
-                visionStatus.textContent = describeFetchError(error);
-              }
+            var savedSelection = state.taskModelSelections[taskType];
+            var draftSnapshot = JSON.stringify(draft);
+            var selectionBinding = formatReviewSelectionBinding(savedSelection, findDirectService(draft.serviceId));
+            var imageOperationId = Number(state.taskImageValidationOperationId || 0);
+            function probeIsCurrent(probe) {
+              return state.directServiceOperationId === operationId && getSettingsWorkflowTaskType() === taskType &&
+                (probe.route !== "validate-image" || Number(state.taskImageValidationOperationId || 0) === imageOperationId) &&
+                JSON.stringify(getTaskModelSelectionDraft()) === draftSnapshot &&
+                formatReviewSelectionBinding(state.taskModelSelections[taskType], findDirectService(draft.serviceId)) === selectionBinding;
+            }
+            [
+              { route: "validate", field: "formatSemanticValidation", node: statusNode, label: "格式语义", flag: "success" },
+              { route: "validate-image", field: "imageSemanticValidation", node: byId("word-task-vision-status"), label: "视觉能力", flag: "validated" }
+            ].forEach(function (probe) {
+              savedSelection[probe.field] = { pending: true, operationId: operationId };
+              if (probe.node) probe.node.textContent = "正在验证" + probe.label + "…";
+              request("/provider/task-model-selections/" + encodeURIComponent(taskType) + "/" + probe.route,
+                probe.route === "validate" ? draft : {}).then(function (body) {
+                if (!probeIsCurrent(probe)) return;
+                var data = body && body.data || {};
+                var record = data[probe.field] || (data.taskModelSelection && data.taskModelSelection[probe.field]);
+                state.taskModelSelections[taskType][probe.field] = Object.assign({}, record || { message: probe.label + "验证未返回有效结果。" }, { operationId: operationId });
+                if (probe.route === "validate" && data.customModelValidated !== undefined) {
+                  state.taskModelSelections[taskType].customModelValidated = data.customModelValidated;
+                }
+                if (probe.node) probe.node.textContent = record && record[probe.flag] && !record.stale
+                  ? probe.label + "验证成功" : (record && record.message) || probe.label + "验证失败。";
+              }).catch(function (error) {
+                if (!probeIsCurrent(probe)) return;
+                var record = { stale: false, operationId: operationId, message: probe.label + "验证失败：" + describeFetchError(error) };
+                record[probe.flag] = false;
+                state.taskModelSelections[taskType][probe.field] = record;
+                if (probe.node) probe.node.textContent = record.message;
+              });
             });
           }
           if (taskType === "word.document_review" && typeof renderFullDocumentReviewEntry === "function") {
@@ -13236,6 +13316,24 @@
         validateTaskSelection: validateTaskModelSelection,
         validateTaskImages: function () { return performTaskImageAction(); },
         saveTaskSelection: saveTaskModelSelection
+      }
+    });
+
+    ["word-task-direct-service-select", "word-task-model-select", "word-task-temperature", "word-task-max-output", "word-task-context"].forEach(function (id) {
+      var node = byId(id);
+      if (node && typeof node.addEventListener === "function") {
+        node.addEventListener(id === "word-task-direct-service-select" || id === "word-task-model-select" ? "change" : "input", function () {
+          if (state.workflowProfileMutationBusy) return;
+          state.directServiceOperationId = Number(state.directServiceOperationId || 0) + 1;
+          var saved = (state.taskModelSelections || {})[getSettingsWorkflowTaskType()] || {};
+          if ((saved.formatSemanticValidation && saved.formatSemanticValidation.pending) ||
+              (saved.imageSemanticValidation && saved.imageSemanticValidation.pending)) {
+            var statusNode = byId("word-task-model-validation-status");
+            var visionStatus = byId("word-task-vision-status");
+            if (statusNode) statusNode.textContent = "参数已修改，请确认当前模型选择。";
+            if (visionStatus) visionStatus.textContent = "未验证";
+          }
+        });
       }
     });
 

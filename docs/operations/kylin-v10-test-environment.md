@@ -12,7 +12,7 @@
 - 已安装测试依赖：`pytest==7.4.4`、`httpx==0.27.2`（`httpx<0.28` 用于 FastAPI/Starlette `TestClient`）
 - Node.js：官方 `v22.23.2` ARM64 用户目录安装，前缀为 `/data/home/cloud/.local/share/ai-wps-node/node-v22.23.2-linux-arm64`
 - Node.js 命令链接：`/data/home/cloud/.local/bin/node`、`/data/home/cloud/.local/bin/npm`、`/data/home/cloud/.local/bin/npx`
-- 最近验证日期：2026-09-16
+- 最近验证日期：2026-10-16
 
 验证虚拟环境：
 
@@ -47,6 +47,13 @@ PATH=/data/home/cloud/.local/bin:$PATH \
 - 测试依赖已安装到 `/data/home/cloud/.venvs/ai-wps-test-py38`；运行依赖使用 `offline-deps/kylin-v10-arm-py38/` 锁定包，测试依赖使用文档锁定的 `pytest==7.4.4`、`httpx==0.27.2`。
 - Node.js 未使用系统仓库中的 `10.19.0~dfsg-3kylin1.6`，因为该版本过旧，不能作为当前 `Vite/Vitest` 测试环境；已改用官方 Node.js `22.23.2` ARM64 用户目录安装。
 - `192.168.64.3` 是当前虚拟机地址，若 DHCP 地址变化，应先重新确认 SSH 地址，再更新本文档。
+
+## 2026-10-16 环境恢复
+
+- 原文档中的虚拟环境已不存在；本轮在同一路径重建独立 Python 3.8.10 环境，复用 UTM 现有测试环境的依赖版本，包含 `fastapi==0.110.3`、`pydantic==2.8.2`、`httpx==0.27.2`、`pytest==7.4.4` 和 `pip==24.0`。`python -m pip check` 通过，不依赖 `/tmp` 中的虚拟环境。
+- 系统缺少 `ensurepip`，直接执行 `python3.8 -m venv` 不能完成安装。恢复时使用已有测试环境的 pip，通过 `--python` 指定新环境安装既有依赖；未修改系统 Python。
+- 本轮测试副本使用 `/tmp/ai-wps-pr266-regression`，与已有测试副本、现场配置和运行中的 Adapter 隔离；重启清理后需重新同步源码。
+- macOS 上的真实视口测试 `node --test formal-plugin-kit/tests/format-review-issue-cards.test.js` 在沙箱外运行，通过隔离的 `agent-browser` 会话启动 Chrome；不修改测试来跳过浏览器检查。
 
 ## 2026-09-16 验证结果
 

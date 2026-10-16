@@ -1,5 +1,7 @@
 """Issue 263: direct format review auto image mode, no separate authorization."""
 import json
+import threading
+from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
@@ -127,3 +129,189 @@ class FormatReviewImageAutoTests(TestCase):
             client.validate_task_model_selection(TASK, draft, "trace-1")
             client.validate_task_model_selection(TASK, draft, "trace-2")
         self.assertEqual(calls, ["semantic"])
+
+    def _concurrent_validation(self, kind, probe, change=None, saved_leader=False):
+        self._activate("openai_image_url", model="catalog-model")
+        draft = {"serviceId": self.service["id"], "modelName": "catalog-model",
+                 "imageInputMode": "openai_image_url"}
+        started, follower_joined, release = threading.Event(), threading.Event(), threading.Event()
+        calls = []
+        original_result = Future.result
+
+        def result(pending, *args, **kwargs):
+            if threading.current_thread().name == "validation-follower":
+                follower_joined.set()
+            return original_result(pending, *args, **kwargs)
+
+        def transport(*args, **kwargs):
+            calls.append(kind)
+            if threading.current_thread().name == "validation-follower":
+                follower_joined.set()
+            started.set()
+            self.assertTrue(release.wait(5))
+            return probe(*args, **kwargs)
+
+        def validate(name):
+            threading.current_thread().name = name
+            store = DirectServiceStore(self.config, Path(self.tmp.name) / "keys")
+            client = ProviderClient(direct_service_store=store)
+            selection = None if saved_leader and name == "validation-leader" else draft
+            if kind == "image":
+                return client.validate_task_image_selection(TASK, name, selection)
+            return client.validate_task_model_selection(TASK, selection or {}, name)
+
+        method = "_post_direct_task" if kind == "image" else "_validate_format_semantic_direct"
+        with patch.object(Future, "result", new=result), \
+                patch("secrets.choice", side_effect=lambda choices: choices[0]), \
+                patch.object(ProviderClient, method, side_effect=transport), \
+                ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(validate, "validation-leader")
+            self.assertTrue(started.wait(5))
+            second = pool.submit(validate, "validation-follower")
+            try:
+                self.assertTrue(follower_joined.wait(5))
+                if change:
+                    change()
+            finally:
+                release.set()
+            outcomes = []
+            for pending in (first, second):
+                try:
+                    outcomes.append(pending.result(timeout=5))
+                except Exception as exc:
+                    outcomes.append(exc)
+        return calls, outcomes
+
+    def test_concurrent_same_binding_is_shared_across_clients(self):
+        for kind in ("format", "image"):
+            with self.subTest(kind=kind):
+                summary = {"answer": "red green red green red green red green"} if kind == "image" else {"success": True}
+                calls, outcomes = self._concurrent_validation(kind, lambda *_args, **_kwargs: summary, saved_leader=True)
+                self.assertEqual(calls, [kind])
+                self.assertTrue(all(isinstance(result, dict) and result["success"] for result in outcomes), outcomes)
+
+    def test_concurrent_probe_failure_is_shared_and_can_retry(self):
+        for kind in ("format", "image"):
+            with self.subTest(kind=kind):
+                def fail(*_args, **_kwargs):
+                    raise AdapterError("MODEL_RESULT_INVALID", "invalid", status_code=502)
+                calls, outcomes = self._concurrent_validation(kind, fail)
+                self.assertEqual(calls, [kind])
+                self.assertTrue(all(isinstance(result, AdapterError) and result.code == "MODEL_RESULT_INVALID" for result in outcomes), outcomes)
+                client = ProviderClient(direct_service_store=self.store)
+                if kind == "format":
+                    with patch.object(ProviderClient, "_validate_format_semantic_direct", return_value={"success": True}):
+                        self.assertTrue(client.validate_task_model_selection(TASK, {}, "retry")["success"])
+                else:
+                    with patch("secrets.choice", side_effect=lambda choices: choices[0]), \
+                            patch.object(ProviderClient, "_post_direct_task", return_value={"answer": "red green red green red green red green"}):
+                        self.assertTrue(client.validate_task_image_selection(TASK, "retry")["success"])
+
+    def test_shared_probe_cannot_mark_replacement_selection_validated(self):
+        for kind in ("format", "image"):
+            with self.subTest(kind=kind):
+                summary = {"answer": "red green red green red green red green"} if kind == "image" else {"success": True}
+                calls, outcomes = self._concurrent_validation(
+                    kind, lambda *_args, **_kwargs: summary,
+                    change=lambda: self._activate(model="vision"),
+                )
+                self.assertEqual(calls, [kind])
+                self.assertTrue(all(isinstance(result, dict) for result in outcomes), outcomes)
+                saved = self.store.get_task_model_selection(TASK)
+                self.assertEqual(saved["modelName"], "vision")
+                self.assertEqual(saved["formatSemanticReadiness"]["code"], "validation_required")
+                self.assertEqual(saved["imageSemanticReadiness"]["code"], "validation_required")
+
+    def test_draft_image_validation_rejects_other_tasks_before_model_call(self):
+        client = ProviderClient(direct_service_store=self.store)
+        draft = {"serviceId": self.service["id"], "modelName": "vision", "imageInputMode": "openai_image_url"}
+        for task in ("excel.smart_fill", "word.smart_write"):
+            with self.subTest(task=task), patch.object(ProviderClient, "_post_direct_task") as transport:
+                with self.assertRaises(DirectServiceError) as raised:
+                    client.validate_task_image_selection(task, "invalid-task", draft)
+                self.assertEqual(raised.exception.code, "DIRECT_SERVICE_TASK_UNSUPPORTED")
+                transport.assert_not_called()
+
+    def test_unexpected_probe_error_reaches_both_callers_and_can_retry(self):
+        for kind in ("format", "image"):
+            with self.subTest(kind=kind):
+                def fail(*_args, **_kwargs):
+                    raise RuntimeError("transport crashed")
+                calls, outcomes = self._concurrent_validation(kind, fail)
+                self.assertEqual(calls, [kind])
+                self.assertTrue(all(isinstance(result, RuntimeError) and str(result) == "transport crashed" for result in outcomes), outcomes)
+                client = ProviderClient(direct_service_store=self.store)
+                summary = {"answer": "red green red green red green red green"} if kind == "image" else {"success": True}
+                method = "_post_direct_task" if kind == "image" else "_validate_format_semantic_direct"
+                with patch("secrets.choice", side_effect=lambda choices: choices[0]), \
+                        patch.object(ProviderClient, method, return_value=summary):
+                    if kind == "image":
+                        self.assertTrue(client.validate_task_image_selection(TASK, "retry")["success"])
+                    else:
+                        self.assertTrue(client.validate_task_model_selection(TASK, {}, "retry")["success"])
+
+    def test_concurrent_different_binding_or_config_file_probes_are_independent(self):
+        for kind in ("format", "image"):
+            for difference in ("parameters", "config"):
+                with self.subTest(kind=kind, difference=difference):
+                    self._activate("openai_image_url", model="catalog-model")
+                    draft = {"serviceId": self.service["id"], "modelName": "catalog-model", "imageInputMode": "openai_image_url"}
+                    draft["temperature"] = 0.1 if difference == "parameters" else 0.2
+                    other_draft = dict(draft)
+                    other_store = self.store
+                    if difference == "parameters":
+                        other_draft["temperature"] = 0.5
+                    else:
+                        other_config = Path(self.tmp.name) / "other-config.json"
+                        other_config.write_text(self.config.read_text(encoding="utf-8"), encoding="utf-8")
+                        other_store = DirectServiceStore(other_config, Path(self.tmp.name) / "keys")
+                    first_started, second_started, release = threading.Event(), threading.Event(), threading.Event()
+                    calls = []
+                    summary = {"answer": "red green red green red green red green"} if kind == "image" else {"success": True}
+
+                    def transport(*args, **kwargs):
+                        trace = args[1] if kind == "image" else args[0]
+                        calls.append(trace)
+                        (first_started if trace == "first" else second_started).set()
+                        self.assertTrue(release.wait(5))
+                        return summary
+
+                    def validate(store, selection, trace):
+                        client = ProviderClient(direct_service_store=store)
+                        if kind == "image":
+                            return client.validate_task_image_selection(TASK, trace, selection)
+                        return client.validate_task_model_selection(TASK, selection, trace)
+
+                    method = "_post_direct_task" if kind == "image" else "_validate_format_semantic_direct"
+                    with patch("secrets.choice", side_effect=lambda choices: choices[0]), \
+                            patch.object(ProviderClient, method, side_effect=transport), \
+                            ThreadPoolExecutor(max_workers=2) as pool:
+                        first = pool.submit(validate, self.store, draft, "first")
+                        self.assertTrue(first_started.wait(5))
+                        second = pool.submit(validate, other_store, other_draft, "second")
+                        try:
+                            self.assertTrue(second_started.wait(5), "unrelated probe waited for the first")
+                        finally:
+                            release.set()
+                        self.assertTrue(first.result(timeout=5)["success"])
+                        self.assertTrue(second.result(timeout=5)["success"])
+                    self.assertCountEqual(calls, ["first", "second"])
+
+    def test_shared_probe_rejects_service_change_and_releases_failed_request(self):
+        for kind in ("format", "image"):
+            with self.subTest(kind=kind):
+                summary = {"answer": "red green red green red green red green"} if kind == "image" else {"success": True}
+                def rotate():
+                    revision = self.store.get_service(self.service["id"])["revision"]
+                    self.store.replace_api_key(self.service["id"], "key-" + kind, expected_revision=revision)
+                calls, outcomes = self._concurrent_validation(kind, lambda *_args, **_kwargs: summary, change=rotate)
+                self.assertEqual(calls, [kind])
+                self.assertTrue(all(isinstance(result, DirectServiceError) and result.code == "DIRECT_SERVICE_CONFIG_CHANGED" for result in outcomes), outcomes)
+                client = ProviderClient(direct_service_store=self.store)
+                method = "_post_direct_task" if kind == "image" else "_validate_format_semantic_direct"
+                with patch("secrets.choice", side_effect=lambda choices: choices[0]), \
+                        patch.object(ProviderClient, method, return_value=summary):
+                    if kind == "image":
+                        self.assertTrue(client.validate_task_image_selection(TASK, "retry")["success"])
+                    else:
+                        self.assertTrue(client.validate_task_model_selection(TASK, {}, "retry")["success"])

@@ -64,8 +64,11 @@ class FormatDirectValidationTests(TestCase):
 
     def test_failed_revalidation_revokes_success(self):
         self.save(self.a)
-        self.assertEqual(self.validate(self.draft(self.a)).status_code, 200)
-        self.assertEqual(self.validate(self.draft(self.a), AdapterError('MODEL_RESULT_INVALID', 'invalid', status_code=502)).status_code, 502)
+        def fail_after_concurrent_success(*args):
+            self.store.record_format_semantic_validation(TASK, {'success': True})
+            self.assertEqual(self.store.get_task_model_selection(TASK)['formatSemanticReadiness']['code'], 'ready')
+            raise AdapterError('MODEL_RESULT_INVALID', 'invalid', status_code=502)
+        self.assertEqual(self.validate(self.draft(self.a), fail_after_concurrent_success).status_code, 502)
         self.assertEqual(self.store.get_task_model_selection(TASK)['formatSemanticReadiness']['code'], 'validation_required')
 
     def test_key_rotation_and_same_host_path_change_invalidate(self):
@@ -97,12 +100,12 @@ class FormatDirectValidationTests(TestCase):
         result = self.api.post('/provider/direct-services/' + self.a['id'] + '/activate', json={'taskType': TASK, 'taskModelSelection': draft})
         self.assertEqual(result.status_code, 200)
 
-    def standalone(self, action, payload):
+    def standalone(self, action, payload, task=TASK):
         import standalone_adapter
         captured = {}
         handler = object.__new__(standalone_adapter.Handler)
         raw = json.dumps(payload).encode()
-        handler.path = ROUTE + '/' + action
+        handler.path = '/provider/task-model-selections/' + task + '/' + action
         handler.headers = {'Content-Length': str(len(raw))}
         handler.rfile = BytesIO(raw)
         handler._write = lambda status, body: captured.update(status=status, body=body)
@@ -110,7 +113,7 @@ class FormatDirectValidationTests(TestCase):
             handler.do_POST()
         return captured
 
-    def test_image_public_authorization_and_real_probe_fastapi_and_standalone(self):
+    def test_image_public_probe_then_cached_reuse_fastapi_and_standalone(self):
         self.image_save()
         for standalone in (False, True):
             with self.subTest(standalone=standalone):
@@ -142,14 +145,30 @@ class FormatDirectValidationTests(TestCase):
                     return response
                 with patch('app.services.provider_client.urllib_request.urlopen', side_effect=transport):
                     self.assertEqual(post('validate-image', {}), 200)
-                self.assertEqual(len(requests), 1)
+                self.assertEqual(len(requests), 0 if standalone else 1)
                 self.assertEqual(self.store.get_task_model_selection(TASK)['imageSemanticReadiness']['code'], 'ready')
+
+    def test_draft_image_public_endpoints_reject_unsupported_tasks_before_model_call(self):
+        draft = {**self.draft(self.a), 'imageInputMode': 'openai_image_url'}
+        for task in ('excel.smart_fill', 'word.smart_write'):
+            for standalone in (False, True):
+                with self.subTest(task=task, standalone=standalone), \
+                        patch.object(ProviderClient, '_post_direct_task') as transport:
+                    if standalone:
+                        status = self.standalone('validate-image', draft, task=task)['status']
+                    else:
+                        status = self.api.post('/provider/task-model-selections/' + task + '/validate-image', json=draft).status_code
+                    self.assertEqual(status, 400)
+                    transport.assert_not_called()
 
     def test_image_failure_revokes_previous_success(self):
         self.image_save()
         self.api.post(ROUTE + '/image-authorization', json={'authorized': True})
-        self.store.record_image_semantic_validation(TASK, {'validated': True})
-        with patch.object(ProviderClient, '_post_direct_task', return_value={'answer': 'cannot see image'}):
+        def fail_after_concurrent_success(*args, **kwargs):
+            self.store.record_image_semantic_validation(TASK, {'validated': True})
+            self.assertEqual(self.store.get_task_model_selection(TASK)['imageSemanticReadiness']['code'], 'ready')
+            return {'answer': 'cannot see image'}
+        with patch.object(ProviderClient, '_post_direct_task', side_effect=fail_after_concurrent_success):
             result = self.api.post(ROUTE + '/validate-image', json={})
         self.assertEqual(result.status_code, 502)
         self.assertEqual(self.store.get_task_model_selection(TASK)['imageSemanticReadiness']['code'], 'validation_required')
