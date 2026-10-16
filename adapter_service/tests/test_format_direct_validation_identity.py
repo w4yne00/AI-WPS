@@ -119,8 +119,6 @@ class FormatDirectValidationTests(TestCase):
                         return self.standalone(action, payload)['status']
                     return self.api.post(ROUTE + '/' + action, json=payload).status_code
                 self.assertEqual(post('image-authorization', {'authorized': False}), 200)
-                self.assertEqual(post('validate-image', {}), 409)
-                self.assertEqual(post('image-authorization', {'authorized': True}), 200)
                 requests = []
                 def transport(req, **kwargs):
                     import base64, struct, zlib

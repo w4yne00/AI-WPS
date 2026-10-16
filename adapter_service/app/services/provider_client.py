@@ -4540,18 +4540,33 @@ class ProviderClient:
         if task_type == "word.format_review":
             selection_data = {**selection_data, "serviceId": service_id}
             binding = self.direct_service_store.format_validation_binding(service, selection_data)
+            from app.services.direct_services import DirectServiceError
+            existing = {}
             try:
-                format_semantic_validation = self._validate_format_semantic_direct(trace_id, task_auth)
-            except AdapterError as exc:
+                current = self.direct_service_store.get_task_model_selection(task_type)
+                existing = current.get("formatSemanticValidation") or {}
+            except DirectServiceError:
+                existing = {}
+            reused = (
+                bool(existing.get("success"))
+                and not existing.get("stale")
+                and all(existing.get(key) == value for key, value in binding.items())
+            )
+            if reused:
+                format_semantic_validation = existing
+            else:
+                try:
+                    format_semantic_validation = self._validate_format_semantic_direct(trace_id, task_auth)
+                except AdapterError as exc:
+                    self.direct_service_store.record_format_semantic_validation(
+                        task_type, {"success": False, "errorCode": exc.code},
+                        selection=selection_data, expected_binding=binding,
+                    )
+                    raise
                 self.direct_service_store.record_format_semantic_validation(
-                    task_type, {"success": False, "errorCode": exc.code},
+                    task_type, format_semantic_validation,
                     selection=selection_data, expected_binding=binding,
                 )
-                raise
-            self.direct_service_store.record_format_semantic_validation(
-                task_type, format_semantic_validation,
-                selection=selection_data, expected_binding=binding,
-            )
             if is_custom:
                 self.direct_service_store.mark_custom_model_validated(
                     task_type,
@@ -4708,21 +4723,49 @@ class ProviderClient:
         }
         return binding, candidates
 
-    def validate_task_image_selection(self, task_type: str, trace_id: str) -> Dict:
+    def validate_task_image_selection(self, task_type: str, trace_id: str, selection: Optional[Dict] = None) -> Dict:
         import secrets
         import struct
         import tempfile
         import zlib
 
+        from app.services.direct_services import DirectServiceError
+        from app.services.word.image_semantics import effective_direct_image_mode
+
         store = self.direct_service_store
-        service, selection, binding, authorization = store.image_validation_snapshot(task_type)
+        draft = selection if isinstance(selection, dict) and selection.get("serviceId") else None
+        if draft is None:
+            service, target, binding, authorization = store.image_validation_snapshot(task_type)
+        else:
+            service = store.get_service(str(draft.get("serviceId", "")), include_secret=True)
+            target = dict(draft)
+            target["imageInputMode"] = effective_direct_image_mode(target.get("imageInputMode"))
+            target["effectiveModel"] = str(target.get("modelName") or service.get("defaultModel") or "")
+            binding = store.image_validation_binding(service, target)
+            authorization = None
+        try:
+            current = store.get_task_model_selection(task_type)
+        except DirectServiceError:
+            current = {}
+        existing = current.get("imageSemanticValidation") or {}
+        if (
+            existing.get("validated")
+            and not existing.get("stale")
+            and all(existing.get(key) == value for key, value in binding.items())
+        ):
+            return {
+                "success": True,
+                "taskModelSelection": current,
+                "visualCapability": {"validated": True, "reused": True},
+                "mayIncurModelCost": False,
+            }
         auth = {
             "providerBaseUrl": service["serviceBaseUrl"],
             "apiKey": service["apiKey"],
-            "modelName": selection.get("effectiveModel"),
-            "temperature": selection.get("temperature"),
-            "maxOutputTokens": selection.get("maxOutputTokens"),
-            "contextWindowTokens": selection.get("contextWindowTokens"),
+            "modelName": target.get("effectiveModel") or target.get("modelName") or service.get("defaultModel"),
+            "temperature": target.get("temperature"),
+            "maxOutputTokens": target.get("maxOutputTokens"),
+            "contextWindowTokens": target.get("contextWindowTokens"),
             "accessMethod": ACCESS_DIRECT_MODEL,
         }
         palette = [
@@ -4751,11 +4794,15 @@ class ProviderClient:
             if re.findall(r"[a-z]+", str(result.get("answer", "")).lower()) != [color for color, _ in panels]:
                 raise AdapterError("IMAGE_CAPABILITY_VALIDATION_FAILED", "模型未能识别合成测试图片，图片语义保持关闭。", status_code=502)
         except AdapterError as exc:
-            store.record_image_semantic_validation(task_type, {"validated": False, "errorCode": exc.code},
-                                                   expected_binding=binding, expected_authorization=authorization)
+            store.record_image_semantic_validation(
+                task_type, {"validated": False, "errorCode": exc.code, "message": exc.message},
+                expected_binding=binding, expected_authorization=authorization, selection=draft,
+            )
             raise
-        saved = store.record_image_semantic_validation(task_type, {"validated": True},
-                                                       expected_binding=binding, expected_authorization=authorization)
+        saved = store.record_image_semantic_validation(
+            task_type, {"validated": True},
+            expected_binding=binding, expected_authorization=authorization, selection=draft,
+        )
         return {"success": True, "taskModelSelection": saved, "visualCapability": {"validated": True},
                 "mayIncurModelCost": True}
 

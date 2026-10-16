@@ -31,7 +31,7 @@ from app.services.model_configurations import (
     host_for_task,
     normalize_service_base_url,
 )
-from app.services.word.image_semantics import IMAGE_INPUT_MODES
+from app.services.word.image_semantics import IMAGE_INPUT_MODES, effective_direct_image_mode
 from app.services.workflow_profiles import SUPPORTED_WORKFLOW_TASKS
 
 
@@ -56,7 +56,7 @@ def _format_review_image_binding(service: dict, selection: dict) -> Dict[str, An
         "configVersion": 1,
         "serviceHost": _service_host(str(service.get("serviceBaseUrl", ""))),
         "accessMethod": ACCESS_DIRECT_MODEL,
-        "imageInputMode": str(selection.get("imageInputMode", "disabled")),
+        "imageInputMode": effective_direct_image_mode(selection.get("imageInputMode")),
         "modelName": effective_model,
     }
 
@@ -70,7 +70,7 @@ def _format_review_format_semantic_binding(service: dict, selection: dict) -> Di
         "temperature": selection.get("temperature"),
         "maxOutputTokens": selection.get("maxOutputTokens"),
         "contextWindowTokens": selection.get("contextWindowTokens"),
-        "imageInputMode": selection.get("imageInputMode") or "openai_image_url",
+        "imageInputMode": effective_direct_image_mode(selection.get("imageInputMode")),
     }
 
 
@@ -1946,6 +1946,8 @@ class DirectServiceStore:
                     raw.get("imageInputMode")
                     or ("openai_image_url" if task == "word.format_review" else "disabled")
                 )
+                if task == "word.format_review":
+                    image_mode = effective_direct_image_mode(image_mode)
                 image_authorization = None
                 image_validation = None
                 image_readiness = None
@@ -1953,9 +1955,11 @@ class DirectServiceStore:
                 format_semantic_readiness = None
 
                 if task == "word.format_review":
-                    img_binding = self.image_validation_binding(service, raw)
+                    binding_selection = dict(raw)
+                    binding_selection["imageInputMode"] = image_mode
+                    img_binding = self.image_validation_binding(service, binding_selection)
                     raw_auth = raw.get("imageExternalAuthorization")
-                    if image_mode == "disabled" or not isinstance(raw_auth, dict):
+                    if not isinstance(raw_auth, dict):
                         image_authorization = None
                     else:
                         is_stale = (
@@ -1966,6 +1970,9 @@ class DirectServiceStore:
                         image_authorization = {**raw_auth, "stale": is_stale}
 
                     raw_val = raw.get("imageSemanticValidation")
+                    draft_image = payload.get("imageSemanticDraftValidations", {}).get(task)
+                    if _binding_matches(draft_image, img_binding):
+                        raw_val = draft_image
                     if not isinstance(raw_val, dict):
                         image_validation = None
                     else:
@@ -1976,23 +1983,7 @@ class DirectServiceStore:
                         )
                         image_validation = {**raw_val, "stale": is_stale}
 
-                    if image_mode not in IMAGE_INPUT_MODES or image_mode == "disabled":
-                        image_readiness = {
-                            "code": "disabled",
-                            "ready": False,
-                            "label": "图片输入已禁用。",
-                        }
-                    elif (
-                        not image_authorization
-                        or not image_authorization.get("authorized")
-                        or image_authorization.get("stale")
-                    ):
-                        image_readiness = {
-                            "code": "authorization_required",
-                            "ready": False,
-                            "label": "请授权当前任务向所选模型服务发送图片。",
-                        }
-                    elif (
+                    if (
                         not image_validation
                         or not image_validation.get("validated")
                         or image_validation.get("stale")
@@ -2000,13 +1991,13 @@ class DirectServiceStore:
                         image_readiness = {
                             "code": "validation_required",
                             "ready": False,
-                            "label": "请使用无敏感测试图片完成视觉能力验证。",
+                            "label": "视觉能力尚未验证。",
                         }
                     else:
                         image_readiness = {
                             "code": "ready",
                             "ready": True,
-                            "label": "图片外发授权和视觉能力验证均有效。",
+                            "label": "视觉能力验证有效。",
                         }
 
                     fmt_binding = self.format_validation_binding(service, raw)
@@ -2582,7 +2573,7 @@ class DirectServiceStore:
     @_serialized_store_transaction
     def record_image_semantic_validation(
         self, task_type: str, summary: dict, expected_binding: Optional[dict] = None,
-        expected_authorization: Optional[dict] = None,
+        expected_authorization: Optional[dict] = None, selection: Optional[dict] = None,
     ) -> dict:
         clean_task = self._validate_task_type(task_type)
         if clean_task != "word.format_review":
@@ -2595,26 +2586,44 @@ class DirectServiceStore:
             services = self._service_map(payload)
             selections = self._selection_map(payload)
             raw = selections.get(clean_task, {})
-            service_id = str(raw.get("serviceId", "")).strip()
-            service = self._require_service(services, service_id)
-            binding = self.image_validation_binding(service, raw)
-            if expected_binding is not None and (
-                binding != expected_binding or raw.get("imageExternalAuthorization") != expected_authorization
+            validated_selection = dict(raw if selection is None else selection)
+            service = self._require_service(services, str(validated_selection.get("serviceId", "")))
+            validated_selection["imageInputMode"] = effective_direct_image_mode(
+                validated_selection.get("imageInputMode")
+            )
+            binding = self.image_validation_binding(service, validated_selection)
+            if expected_binding is not None and binding != expected_binding:
+                raise DirectServiceError("DIRECT_SERVICE_CONFIG_CHANGED", "图片授权或模型配置在验证期间发生变化，请重新验证。")
+            current_service = services.get(str(raw.get("serviceId", "")), {})
+            current_selection = dict(raw)
+            current_selection["imageInputMode"] = effective_direct_image_mode(raw.get("imageInputMode"))
+            current_binding = (
+                self.image_validation_binding(current_service, current_selection) if current_service else {}
+            )
+            stored_authorization = raw.get("imageExternalAuthorization")
+            if (
+                selection is None
+                and expected_authorization is not None
+                and binding == current_binding
+                and stored_authorization != expected_authorization
             ):
                 raise DirectServiceError("DIRECT_SERVICE_CONFIG_CHANGED", "图片授权或模型配置在验证期间发生变化，请重新验证。")
-            raw["imageSemanticValidation"] = {
-                "validated": bool(
-                    summary.get("validated", summary.get("success", False))
-                ),
+            record = {
+                "validated": bool(summary.get("validated", summary.get("success", False))),
                 "completedAt": str(summary.get("completedAt") or _utc_now()),
                 "errorCode": str(summary.get("errorCode") or "")[:80],
+                "message": str(summary.get("message") or "")[:200],
                 **binding,
             }
-            raw["updatedAt"] = _utc_now()
-            selections[clean_task] = raw
-            payload["taskModelSelections"] = selections
+            drafts = payload.setdefault("imageSemanticDraftValidations", {})
+            drafts[clean_task] = record
+            if binding == current_binding:
+                raw["imageSemanticValidation"] = record
+                raw["updatedAt"] = _utc_now()
+                selections[clean_task] = raw
+                payload["taskModelSelections"] = selections
             save_config_payload(payload, self.config_path)
-            return self.get_task_model_selection(clean_task)
+            return self.get_task_model_selection(clean_task) if selection is None else dict(record)
 
     def image_validation_binding(self, service: dict, selection: dict) -> dict:
         return {**_format_review_image_binding(service, selection), **self.format_validation_binding(service, selection)}
@@ -2625,12 +2634,15 @@ class DirectServiceStore:
         with _STORE_LOCK:
             selection = self.get_task_model_selection(task_type)
             service = self.get_service(selection.get("serviceId", ""), include_secret=True)
-            authorization = selection.get("imageExternalAuthorization") or {}
-            if (selection.get("imageInputMode") != "openai_image_url" or
-                    not authorization.get("authorized") or authorization.get("stale")):
-                raise DirectServiceError("IMAGE_AUTHORIZATION_REQUIRED", "请先保存图片模式并授权当前任务图片外发。")
-            binding = self.image_validation_binding(service, selection)
-            authorization = {k: v for k, v in authorization.items() if k != "stale"}
+            authorization = selection.get("imageExternalAuthorization")
+            if isinstance(authorization, dict):
+                authorization = {key: value for key, value in authorization.items() if key != "stale"}
+            else:
+                authorization = None
+            mode = effective_direct_image_mode(selection.get("imageInputMode"))
+            if mode != "openai_image_url":
+                raise DirectServiceError("IMAGE_INPUT_MODE_REQUIRED", "当前图片模式不支持视觉探测。")
+            binding = self.image_validation_binding(service, {**selection, "imageInputMode": mode})
             return service, selection, binding, authorization
 
     def format_validation_binding(self, service: dict, selection: dict) -> dict:

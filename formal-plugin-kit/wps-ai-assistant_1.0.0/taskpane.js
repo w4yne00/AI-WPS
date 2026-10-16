@@ -5788,6 +5788,10 @@
     var currentTask = getSettingsWorkflowTaskType();
     var isSupportedTask = (currentTask === "word.smart_write" || currentTask === "word.smart_imitation" || currentTask === "word.format_review" || currentTask === "word.document_review" || currentTask === "word.material_composer");
     section.hidden = !isSupportedTask;
+    var validateButton = byId("btn-validate-task-model-selection");
+    if (validateButton) {
+      validateButton.hidden = currentTask === "word.format_review";
+    }
     var materialHelp = byId("word-material-model-help");
     if (materialHelp) materialHelp.hidden = currentTask !== "word.material_composer";
     if (!isSupportedTask) {
@@ -5884,13 +5888,15 @@
       contextInput.value = currentSelection && currentSelection.contextWindowTokens ? currentSelection.contextWindowTokens : "";
     }
     var imageModeRow = byId("word-task-image-mode-row");
-    var imageModeSelect = byId("word-task-image-input-mode");
+    var visionStatus = byId("word-task-vision-status");
     if (imageModeRow) {
       imageModeRow.hidden = (currentTask !== "word.format_review");
     }
-    if (imageModeSelect && currentTask === "word.format_review") {
-      var currentImageMode = (currentSelection && currentSelection.imageInputMode) || "openai_image_url";
-      imageModeSelect.value = currentImageMode;
+    if (validateButton) {
+      validateButton.hidden = currentTask === "word.format_review";
+    }
+    if (visionStatus && currentTask === "word.format_review") {
+      visionStatus.textContent = formatReviewVisionStatusText(currentSelection);
     }
     if (costWarning) {
       costWarning.hidden = false;
@@ -5940,12 +5946,12 @@
     if (panel) panel.hidden = true;
     var currentTask = getSettingsWorkflowTaskType();
     var imageModeRow = byId("word-task-image-mode-row");
-    var imageModeSelect = byId("word-task-image-input-mode");
+    var validateButton = byId("btn-validate-task-model-selection");
     if (imageModeRow) {
       imageModeRow.hidden = (currentTask !== "word.format_review");
     }
-    if (imageModeSelect && currentTask === "word.format_review") {
-      imageModeSelect.value = "openai_image_url";
+    if (validateButton) {
+      validateButton.hidden = currentTask === "word.format_review";
     }
     if (statusNode) {
       statusNode.textContent = catalog.fetchStatus === "error" && catalog.cacheStatus === "valid"
@@ -5979,45 +5985,60 @@
       contextWindowTokens: contextVal !== "" && Number(contextVal) !== 0 ? Number(contextVal) : null
     };
     if (taskType === "word.format_review") {
-      var imageModeVal = (byId("word-task-image-input-mode") && byId("word-task-image-input-mode").value) || "openai_image_url";
-      draft.imageInputMode = imageModeVal;
+      draft.imageInputMode = "openai_image_url";
     }
     return draft;
   }
 
-  function performTaskImageAction(action, authorized) {
+  function formatReviewVisionStatusText(selection) {
+    var record = selection && selection.imageSemanticValidation;
+    if (!record || record.stale) {
+      return "未验证";
+    }
+    if (record.validated) {
+      return "视觉能力验证成功";
+    }
+    return record.message || "视觉能力验证失败。";
+  }
+
+  function formatReviewUsesCatalogConfirm(draft, service) {
+    var model = (draft && draft.modelName) || (service && service.defaultModel) || "";
+    var customModels = (service && service.customModels) || [];
+    if (!model || (draft && draft.customModel) || customModels.indexOf(model) >= 0) {
+      return false;
+    }
+    var catalog = helpers.getDirectServiceCatalogState
+      ? helpers.getDirectServiceCatalogState(service || {})
+      : { usableForSelection: false, models: [] };
+    var models = catalog.models || [];
+    return Boolean(catalog.usableForSelection && models.indexOf(model) >= 0);
+  }
+
+  function performTaskImageAction() {
     var taskType = getSettingsWorkflowTaskType();
-    var statusNode = byId("word-task-model-validation-status");
+    var statusNode = byId("word-task-vision-status");
     var saved = (state.taskModelSelections || {})[taskType] || {};
     var draft = getTaskModelSelectionDraft();
     if (taskType !== "word.format_review" || state.workflowProfileMutationBusy) return;
-    var fields = ["serviceId", "modelName", "imageInputMode", "temperature", "maxOutputTokens", "contextWindowTokens"];
+    var fields = ["serviceId", "modelName", "temperature", "maxOutputTokens", "contextWindowTokens"];
     var changed = fields.some(function (key) { return (draft[key] == null ? "" : draft[key]) !== (saved[key] == null ? "" : saved[key]); });
-    if (!saved.serviceId || changed || saved.imageInputMode !== "openai_image_url") {
-      if (statusNode) statusNode.textContent = "请先保存当前模型选择和图片输入模式，再授权或验证图片。";
+    if (!saved.serviceId || changed) {
+      if (statusNode) statusNode.textContent = "请先确认当前模型选择，再验证视觉能力。";
       return;
     }
-    var service = findDirectService(saved.serviceId) || {};
-    if (action === "image-authorization" && authorized && !window.confirm(
-      "允许格式审查向「" + (service.name || "所选服务") + "」发送本任务图片？\n服务地址：" +
-      (service.serviceBaseUrl || "") + "\n模型：" + (saved.effectiveModel || saved.modelName || service.defaultModel || "") +
-      "\n授权仅用于当前任务及模型配置，可随时撤销。"
-    )) return;
     var operationId = Number(state.directServiceOperationId || 0) + 1;
     state.directServiceOperationId = operationId;
     setWorkflowProfileMutationBusy(true);
-    if (statusNode) statusNode.textContent = action === "validate-image"
-      ? "正在发送无敏感内容的合成测试图片，验证会产生模型调用费用…" : "正在保存图片授权…";
-    return request("/provider/task-model-selections/" + encodeURIComponent(taskType) + "/" + action,
-      action === "image-authorization" ? { authorized: Boolean(authorized), expectedSelection: draft, expectedServiceRevision: service.revision } : {})
+    if (statusNode) statusNode.textContent = "正在验证视觉能力…";
+    return request("/provider/task-model-selections/" + encodeURIComponent(taskType) + "/validate-image", {})
       .then(function (body) {
         if (state.directServiceOperationId !== operationId || getSettingsWorkflowTaskType() !== taskType) return;
         var selection = body && body.data && body.data.taskModelSelection;
         if (selection) state.taskModelSelections[taskType] = selection;
-        if (statusNode) statusNode.textContent = action === "validate-image" ? "视觉能力验证成功。" : (authorized ? "已授权，请继续验证视觉能力。" : "已撤销图片外发授权。");
+        if (statusNode) statusNode.textContent = "视觉能力验证成功";
       }).catch(function (error) {
         if (state.directServiceOperationId !== operationId || getSettingsWorkflowTaskType() !== taskType) return;
-        if (statusNode) statusNode.textContent = "操作失败：" + describeFetchError(error);
+        if (statusNode) statusNode.textContent = describeFetchError(error);
       }).then(function () {
         if (state.directServiceOperationId === operationId) setWorkflowProfileMutationBusy(false);
       });
@@ -6114,7 +6135,20 @@
     state.directServiceOperationId = Number(state.directServiceOperationId || 0) + 1;
     var operationId = state.directServiceOperationId;
     var activationSaved = false;
+    var catalogConfirm = taskType === "word.format_review" && formatReviewUsesCatalogConfirm(draft, currentSvc);
     setWorkflowProfileMutationBusy(true);
+    var prelude = Promise.resolve();
+    if (catalogConfirm) {
+      prelude = request("/provider/task-model-selections/" + encodeURIComponent(taskType) + "/validate", draft)
+        .then(function () {
+          return request("/provider/task-model-selections/" + encodeURIComponent(taskType) + "/validate-image", draft)
+            .catch(function (error) {
+              var visionStatus = byId("word-task-vision-status");
+              if (visionStatus) visionStatus.textContent = describeFetchError(error);
+            });
+        });
+    }
+    return prelude.then(function () {
     return request("/provider/direct-services/" + encodeURIComponent(draft.serviceId) + "/activate", {
       taskType: taskType,
       taskModelSelection: draft
@@ -6150,6 +6184,15 @@
           if (statusNode) {
             statusNode.textContent = "已保存并设为当前。";
           }
+          if (taskType === "word.format_review" && !catalogConfirm) {
+            request("/provider/task-model-selections/" + encodeURIComponent(taskType) + "/validate", draft).catch(function () {});
+            request("/provider/task-model-selections/" + encodeURIComponent(taskType) + "/validate-image", {}).catch(function (error) {
+              var visionStatus = byId("word-task-vision-status");
+              if (visionStatus && state.directServiceOperationId === operationId) {
+                visionStatus.textContent = describeFetchError(error);
+              }
+            });
+          }
           if (taskType === "word.document_review" && typeof renderFullDocumentReviewEntry === "function") {
             renderFullDocumentReviewEntry();
           }
@@ -6168,6 +6211,11 @@
           setStatus("任务接入已保存，但刷新最新列表失败：" + describeFetchError(error));
         }
       });
+    }, function (error) {
+      if (state.directServiceOperationId !== operationId) return;
+      setWorkflowProfileMutationBusy(false);
+      if (statusNode) statusNode.textContent = describeFetchError(error);
+    });
   }
 
   function validateActiveDirectTaskSelection(taskType) {
@@ -13186,9 +13234,7 @@
         },
         taskServiceChange: handleTaskDirectServiceSelectChange,
         validateTaskSelection: validateTaskModelSelection,
-        authorizeTaskImages: function () { return performTaskImageAction("image-authorization", true); },
-        revokeTaskImages: function () { return performTaskImageAction("image-authorization", false); },
-        validateTaskImages: function () { return performTaskImageAction("validate-image"); },
+        validateTaskImages: function () { return performTaskImageAction(); },
         saveTaskSelection: saveTaskModelSelection
       }
     });
