@@ -2449,6 +2449,15 @@ class DirectServiceStore:
             "testedAt": record.get("testedAt"),
         }
 
+    def get_streaming_capability(self, service_id: str, model_name: str) -> dict:
+        clean_service_id = str(service_id or "").strip()
+        clean_model = str(model_name or "").strip()
+        with _STORE_LOCK:
+            payload, _ = self._load_with_legacy_direct_migration()
+            services = self._service_map(payload)
+            service = services.get(clean_service_id)
+            return self._evaluate_streaming_capability(payload, service, clean_model)
+
     @_serialized_store_transaction
     def record_streaming_capability(
         self,
