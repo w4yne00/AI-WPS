@@ -17,17 +17,17 @@ The default installation root is `$HOME/ai-wps`. Open WPS and configure the ente
 
 Upgrading an existing Preview installation preserves configuration, API keys, runtime data and backups. The installer stops the old Adapter, checks the candidate, switches the Adapter and all three add-ins together, then starts and checks the new Adapter. A failed switch restores the previous generation.
 
-A first Preview installation only detects `$HOME/ai-wps-phase1`; it does not import, overwrite or delete legacy data. It may stop an old Adapter holding the target port and replace the shared WPS add-in directories. Keep the legacy directory and reconfigure the new installation explicitly.
+A first Preview installation only detects `$TARGET_HOME/ai-wps-phase1`; it does not import, overwrite or delete legacy data. It may stop an old Adapter holding the target port and replace the shared WPS add-in directories. Keep the legacy directory and reconfigure the new installation explicitly.
 
 ## Included capabilities
 
 | Host | Capabilities |
 | --- | --- |
 | Word | Smart Write, Smart Imitation, on-demand writing from DOCX/DOC, document review and format review; reusable writing policies |
-| Excel | Analysis, formula assistance, Smart Fill preview/copy, and material-based ledger generation with confirmed worksheet write-back |
+| Excel | Analysis, formula assistance, Smart Fill preview/copy, and material-based ledger generation with confirmed write-back to a blank worksheet area |
 | PPT | Slide/document summary, structure review, material-based outline, template body-page generation and full-deck generation with confirmed append |
 
-Review, analysis, formula assistance and Smart Fill do not write to the document. Writing, ledger and template-generation actions require the supported preview and confirmation steps. Regeneration creates a new task; retries and recovery retain the original task identity. Results and write confirmations are isolated by document session.
+Review, analysis, formula assistance and Smart Fill do not write to the document. Writing, ledger and template-generation actions require the supported preview and confirmation steps. Regeneration creates a new task; retries and recovery retain the original task identity. Results and write confirmations are isolated by document session. PPT generation appends pages without changing existing pages. A document, outline or preview change invalidates prior confirmation; inspect and recover any partial append before continuing.
 
 Workflow-platform connections remain per task and use `/chat-messages`. Shared direct services store the URL and API key once and use OpenAI-compatible `/chat/completions`. Each task can inherit the service default or select its own model and parameters. All three hosts support adding and deleting manually entered models.
 
