@@ -1,6 +1,6 @@
 # AI-WPS 格式审查 Dify 工作流配置手册
 
-适用版本：`v0.25.1-alpha`（旧同步入口仅保留退役响应）
+适用范围：当前交付版本的工作流平台接入（旧同步入口仅保留退役响应）；模型直连见 `word-format-review-direct-validation.md`。
 
 适用任务：`word.format_review`
 
@@ -82,27 +82,15 @@ adapter 请求体只依赖 Dify 官方字段：
 
 旧版开始节点可继续引用自定义 `query` 输入变量，adapter 默认发送 `inputs.query`。新版“用户输入”节点应引用 `userinput.query`；HTTP 400 时 adapter 会自动切换为顶层 `query` 和 `files` 输入格式。
 
-## 3. 任务级 API Key
+## 3. 工作流平台模型配置
 
 在 WPS 任务窗口设置页：
 
-1. 配置统一 API URL，例如 `https://aibot.chinasatnet.com.cn/v1`。
-2. 在“任务接口”中找到“格式审查”。
-3. 保存该 Dify 格式审查应用的 API Key。
+1. 进入“格式审查”，新建工作流平台模型配置。
+2. 填写配置名称、Dify API 根地址（例如 `https://aibot.chinasatnet.com.cn/v1`）和该格式审查应用的 API Key；API Key 须输入两次。
+3. 保存并选择完整配置，按该配置的独立地址和密钥调用 `/chat-messages`。
 
-配置文件示例：
-
-```json
-{
-  "taskApiKeyRefs": {
-    "word.smart_write": "word_smart_write",
-    "word.document_review": "word_document_review",
-    "word.format_review": "word_format_review"
-  }
-}
-```
-
-保存后密钥位于 `run/provider_api_keys/word_format_review`。如果该任务级密钥不存在，adapter 会回退统一 Dify API Key；如仍未配置，格式审查会只使用本地模板规则。
+密钥正文由 Adapter 保存在 `run/provider_api_keys/`，不要手动固定密钥文件名。运行时不从统一 URL 或统一 Key 回退；未配置可用语义服务时，确定性模板规则继续执行，并记录语义降级原因。多配置管理见 `workflow-profile-management.md`。
 
 ## 4. LLM 系统提示词
 
@@ -169,7 +157,6 @@ http://127.0.0.1:18100/provider/debug-last
 ```json
 {
   "taskType": "word.format_review",
-  "provider": "enterprise-dify-chat",
   "request": {
     "bodyKeys": ["conversation_id", "files", "inputs", "query", "response_mode", "user"],
     "inputsKeys": ["query"]
@@ -177,11 +164,11 @@ http://127.0.0.1:18100/provider/debug-last
 }
 ```
 
-如果结果预览显示“识别来源：本地规则”，通常表示未配置格式审查任务级 Key、模型后台请求失败或模型后台返回内容无法解析为段落角色 JSON。此时本地模板规则仍会继续输出格式检查意见。
+如果结果预览显示“识别来源：本地规则”，通常表示未选择完整的格式审查工作流配置、模型后台请求失败或模型后台返回内容无法解析为段落角色 JSON。此时本地模板规则仍会继续输出格式检查意见。
 
 如果 Dify 后台没有调用记录，优先检查：
 
-1. 设置页是否保存了格式审查任务级 API Key；
+1. 设置页是否选择了完整的格式审查工作流配置，地址与 API Key 是否正确；
 2. `/provider/debug-last.skipReason` 是否为 `provider_not_configured`；
 3. 当前 WPS 是否成功读取到选中文本或全文段落。
 
@@ -193,6 +180,6 @@ http://127.0.0.1:18100/provider/debug-last
 
 1. `taskType` 是否为 `word.format_review`。
 2. `authSource` 或 `taskAuthSource` 是否为任务级密钥文件。
-3. `url` 是否为统一 API URL 拼接 `/chat-messages`。
+3. `modelConfigurationId` 是否为所选配置，`url` 是否为该配置的服务地址拼接 `/chat-messages`。
 4. `request.bodyKeys` 是否包含 `inputs`、`query`、`response_mode`、`user`。
 5. `response.answerLength` 是否大于 0，或是否记录了 `skipReason` / `error`。

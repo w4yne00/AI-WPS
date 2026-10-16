@@ -39,27 +39,15 @@ adapter 请求体只依赖 Dify 官方字段：
 
 说明：`v0.13.0-alpha` 之后任务窗格新增的问题处理状态、复制建议和审查记录都由 WPS 前端本地生成；Dify 工作流不要处理“已处理/已忽略/审查记录”等闭环状态，也不要执行任何正文写回动作。
 
-## 3. 任务级 API Key
+## 3. 工作流平台模型配置
 
 在 WPS 任务窗口设置页：
 
-1. 配置统一 API URL，例如 `https://aibot.chinasatnet.com.cn/v1`。
-2. 在“任务接口”中找到“文档审查”。
-3. 保存该 Dify 文档审查应用的 API Key。
+1. 进入“文档审查”，新建工作流平台模型配置。
+2. 填写配置名称、Dify API 根地址（例如 `https://aibot.chinasatnet.com.cn/v1`）和该文档审查应用的 API Key；API Key 须输入两次。
+3. 保存并选择完整配置，按该配置的独立地址和密钥调用 `/chat-messages`。
 
-配置文件示例：
-
-```json
-{
-  "taskApiKeyRefs": {
-    "word.smart_write": "word_smart_write",
-    "word.document_review": "word_document_review",
-    "word.format_review": "word_format_review"
-  }
-}
-```
-
-保存后密钥位于 `run/provider_api_keys/word_document_review`。如果该任务级密钥不存在，adapter 会回退统一 Dify API Key。
+密钥正文由 Adapter 保存在安装目录的 `state/provider_api_keys/`（独立启动包使用 `run/provider_api_keys/`），不要手动固定密钥文件名。运行时不从统一 URL 或统一 Key 回退；完整配置管理见 `workflow-profile-management.md`。模型直连接入见 `shared-direct-service.md`。
 
 ## 4. LLM 系统提示词
 
@@ -136,7 +124,6 @@ http://127.0.0.1:18100/provider/debug-last
 ```json
 {
   "taskType": "word.document_review",
-  "provider": "enterprise-dify-chat",
   "request": {
     "bodyKeys": ["conversation_id", "files", "inputs", "query", "response_mode", "user"],
     "inputsKeys": ["query"]
@@ -144,7 +131,7 @@ http://127.0.0.1:18100/provider/debug-last
 }
 ```
 
-如果 `provider=mock` 或 `skipReason=provider_not_configured`，说明统一 URL 或文档审查任务级 API Key 未形成有效配置。
+如果 `provider=mock` 或 `skipReason=provider_not_configured`，请检查当前接入方式，以及文档审查所选配置的服务地址与 API Key 是否完整。
 
 如果 Dify 后台有调用记录但 WPS 结果为空，优先检查回复节点是否绑定 LLM 输出正文，以及输出中是否包含合法 JSON 代码块。`v0.13.7-alpha` 起，文档审查 provider 等待预算为 1800 秒；前台轮询后台任务状态时最多容忍 240 次短暂查询失败、总等待 60 分钟，并在轮询阶段把 adapter 短暂不可达提示为“状态查询暂时未连上本地 adapter”，继续等待后台任务。即使 Dify 返回非标准 JSON、普通 Markdown，或文档审查 provider 超时/不可达，adapter 也会返回可读兜底信息，便于现场区分是 Dify 输出格式问题、Dify 执行超时、前端状态查询抖动，还是前端渲染问题。
 
@@ -164,6 +151,6 @@ http://127.0.0.1:18100/provider/debug-last
 
 1. `taskType` 是否为 `word.document_review`。
 2. `authSource` 或 `taskAuthSource` 是否为任务级密钥文件。
-3. `url` 是否为统一 API URL 拼接 `/chat-messages`。
+3. `modelConfigurationId` 是否为所选配置，`url` 是否为该配置的服务地址拼接 `/chat-messages`。
 4. `request.bodyKeys` 是否包含 `inputs`、`query`、`response_mode`、`user`。
 5. `response.answerLength` 是否大于 0。

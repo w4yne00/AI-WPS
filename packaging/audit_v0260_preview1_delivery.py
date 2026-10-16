@@ -39,6 +39,7 @@ EXPECTED_TASKS = frozenset(
     }
 )
 FORBIDDEN_OUTPUT_PATHS = {
+    "docs/v0240-delivery.md",
     "installer/install_phase1.sh",
     "scripts/phase1_smoke_test.sh",
     "reference-workflows/excel-smart-fill-v1.yml",

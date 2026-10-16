@@ -105,8 +105,7 @@
     {
       "type": "file",
       "source": "packaging/v0260-preview1-delivery.md",
-      "target": "README.md",
-      "replace": true
+      "target": "README-ZH.md"
     },
     {
       "type": "file",
@@ -229,6 +228,12 @@
       "type": "file",
       "source": "formal-plugin-kit/wps-ai-assistant-wpp_1.0.0/template-deck.js",
       "target": "packages/wps-ai-assistant-wpp_1.0.0/template-deck.js"
+    },
+    {
+      "type": "file",
+      "source": "packaging/v0260-preview1-delivery-en.md",
+      "target": "README.md",
+      "replace": true
     }
   ]
 }

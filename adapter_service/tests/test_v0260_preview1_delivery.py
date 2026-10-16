@@ -190,6 +190,7 @@ def test_prepare_creates_neutral_preview_identity_from_phase1_delivery_tree(tmp_
     assert not (delivery / "installer/install_phase1.sh").exists()
     assert (delivery / "scripts/ai_wps_smoke_test.sh").is_file()
     assert not (delivery / "scripts/phase1_smoke_test.sh").exists()
+    assert not (delivery / "docs/v0240-delivery.md").exists()
 
     lifecycle = (delivery / "scripts/python38_delivery_lifecycle_gate.py").read_text(
         encoding="utf-8"
@@ -1508,7 +1509,7 @@ def test_preview_audit_rejects_smart_fill_contract_violations(tmp_path):
     workflow_file.write_text(original_workflow, encoding="utf-8")
 
 
-def test_preview_acceptance_template_covers_nine_tasks_and_pending_status(tmp_path):
+def test_preview_acceptance_template_covers_current_tasks_and_pending_status(tmp_path):
     delivery = _prepare_delivery(tmp_path)
     acceptance = (delivery / "docs/v0260-preview1-target-machine-acceptance.md").read_text(encoding="utf-8")
 
@@ -1518,7 +1519,9 @@ def test_preview_acceptance_template_covers_nine_tasks_and_pending_status(tmp_pa
     assert "当前记录状态：`manual-pending`" in acceptance
     assert "当前记录状态：`target-accepted`" not in acceptance
     assert "智能填写" in acceptance
-    assert "九类任务" in acceptance or "九任务" in acceptance
+    assert "13 类模型任务" in acceptance
+    assert "资料台账" in acceptance
+    assert "模板正文页与整套生成" in acceptance
     assert "复制结果" in acceptance
     assert "不修改任何单元格" in acceptance
     assert "自动目录" in acceptance
@@ -1760,3 +1763,20 @@ def test_preview_includes_full_document_reader(tmp_path):
     delivery = _prepare_delivery(tmp_path)
     module = delivery / 'packages/adapter-start-kit/adapter_service/app/services/word/material_document.py'
     assert module.is_file(), '按需编写引用的完整文档读取模块必须进入交付目录'
+
+
+def test_preview_inventory_rejects_allowlisted_obsolete_delivery_guide(tmp_path):
+    delivery = _prepare_delivery(tmp_path)
+    obsolete = "docs/v0240-delivery.md"
+    (delivery / obsolete).write_text("Obsolete install instructions\n", encoding="utf-8")
+    (delivery / "release-file-hashes.json").write_text("{}\n", encoding="utf-8")
+    allowlist = json.loads((delivery / "release-allowlist.json").read_text(encoding="utf-8"))
+    if obsolete not in allowlist["files"]:
+        allowlist["files"].append(obsolete)
+    spec = importlib.util.spec_from_file_location(
+        "preview_inventory_audit", ROOT / "packaging/audit_v0260_preview1_delivery.py"
+    )
+    auditor = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(auditor)
+    with pytest.raises(auditor.DeliveryFailure, match="V0260_LEGACY_OUTPUT_PATH"):
+        auditor.audit_inventory(delivery, auditor.delivery_files(delivery), allowlist)

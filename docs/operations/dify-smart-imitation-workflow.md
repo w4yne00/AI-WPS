@@ -2,9 +2,9 @@
 
 适用任务：`word.smart_imitation`
 
-适用版本：`v0.14.0-alpha` 及以上
+适用范围：当前交付版本的工作流平台接入；模型直连配置见 `shared-direct-service.md`。
 
-推荐任务级 API Key 引用：`word_smart_imitation`
+在“设置 → 智能仿写”新建工作流平台模型配置，分别保存配置名称、服务地址与该 Dify 应用的 API Key，并选择完整配置。各任务配置独立，不从统一 URL 或统一 Key 回退。
 
 ## 输入约定
 
@@ -43,7 +43,7 @@ adapter 始终把完整提示词放入 Dify `/chat-messages` 顶层 `query`。�
 
 ## 前台行为
 
-智能仿写与智能编写并列展示，但首版只复用智能编写的预览、纯文本和复制能力。
+智能仿写与智能编写并列展示，提供预览、纯文本和复制能力。
 
 - 显示规范应用摘要以及非阻断的“需要核对”和“表达建议”；模板事实默认不要求保留，用户明确指定保留的模板日期、数字、责任主体等保护项除外；本地检查失败时保留模型正文。
 - 不提供对照视图。
@@ -56,8 +56,8 @@ adapter 始终把完整提示词放入 Dify `/chat-messages` 顶层 `query`。�
 在 WPS 设置页查看“最近一次任务诊断”，重点确认：
 
 - `taskType=word.smart_imitation`
-- `taskAuthSource=task-file` 或按现场配置回退到统一密钥
-- 任务级 API Key 命中 `word_smart_imitation`
-- provider URL 带 `/v1`，聊天路径为 `/chat-messages`
+- 工作流接入时 `taskAuthSource=task-file`
+- `modelConfigurationId` 对应智能仿写所选工作流配置
+- provider URL 对应该配置的服务根地址，聊天路径为 `/chat-messages`
 
-如果 WPS 提示未配置模型接口，先在设置页保存统一 API URL，再保存“智能仿写”的任务级 API Key。
+如果 WPS 提示未配置模型接口，先检查“设置 → 智能仿写”中所选配置的服务地址和 API Key 是否完整。

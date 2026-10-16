@@ -39,6 +39,7 @@ VERSION_REWRITE_EXCLUDED_PATHS = {
 }
 
 LEGACY_OUTPUT_PATHS = {
+    "docs/v0240-delivery.md",
     "installer/install_phase1.sh",
     "scripts/phase1_smoke_test.sh",
     "docs/phase1-acceptance-checklist.md",

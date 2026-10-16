@@ -149,13 +149,9 @@ POST /writing-policies/imports/apply
 
 ## 完整备份
 
-“完整备份”下载 SQLite 数据库快照，包含全部范围、条目标识及时间信息，适合整库恢复。CSV/XLSX 往返文件不能替代完整备份。数据库默认位于：
+“完整备份”下载 SQLite 数据库快照，包含全部范围、条目标识及时间信息，适合整库恢复。CSV/XLSX 往返文件不能替代完整备份。当前交付包安装后，数据库位于安装目录的 `state/writing_policies.db`；独立启动包沿用 `adapter-start-kit/run/writing_policies.db`，实际位置受运行配置影响。
 
-```text
-adapter-start-kit/run/writing_policies.db
-```
-
-覆盖安装会保存并恢复主数据库及最多 3 个已有 `writing_policies.db.backup-*` 文件，同时继续保护 API URL、统一 Key 和工作流 Key。
+覆盖安装和整状态恢复以共享 `state/` 为保护边界：保存配置 `adapter.json`（包括工作流、共享直连服务与任务选择）、`provider_api_keys/` 中的密钥、已有兼容密钥文件 `provider_api_key`、规范主数据库及全部已有 `writing_policies.db.backup-*` 文件。这里不会把已有规范备份截为 3 份；导入时的备份轮转仍按前述规则执行。当前预览版不自动迁移旧版安装状态。
 
 ## 降级与诊断
 

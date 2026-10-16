@@ -2,29 +2,22 @@
 
 适用目标：麒麟 V10 ARM，Python 3.8，已安装 `kylin-v10-arm-py38-runtime-deps` 离线依赖。
 
-## 1. 安装依赖
+## 1. 安装并进入运行目录
 
-如果目标机没有 pip，先安装 pip 引导包：
-
-```bash
-tar -xzf kylin-v10-arm-py38-pip-bootstrap-20260506.tar.gz
-cd kylin-v10-arm-py38-pip-bootstrap-20260506
-bash scripts/install_pip.sh
-```
-
-安装运行依赖：
+Preview 交付包在包根目录执行安装器，由安装器准备并校验发布私有 Python 依赖：
 
 ```bash
-tar -xzf kylin-v10-arm-py38-runtime-deps-20260506.tar.gz
-cd kylin-v10-arm-py38
-python3 -m pip install --no-index --find-links wheels -r requirements-runtime.txt
+bash installer/install_ai_wps.sh
+cd "$HOME/ai-wps/current"
 ```
+
+自定义安装根请替换上面的路径。包内离线依赖已解包在 `packages/` 下，无需寻找旧日期的独立归档，也无需向系统 Python 安装依赖。
+
+独立启动包则进入自身根目录，并先在指定的 Python 环境中准备 uvicorn、FastAPI 等运行依赖。
 
 ## 2. 一键启动 uvicorn
 
 ```bash
-tar -xzf adapter-start-kit-20260506.tar.gz
-cd adapter-start-kit-20260506
 bash scripts/start_uvicorn_adapter.sh 18100
 bash scripts/check_health.sh 18100
 ```
@@ -32,9 +25,9 @@ bash scripts/check_health.sh 18100
 若 Adapter 程序位于不可变发布目录，启动前配置共享运行状态路径：
 
 ```bash
-export AI_WPS_STATE_DIR="$HOME/ai-wps-phase1/state"
-export AI_WPS_BACKUP_DIR="$HOME/ai-wps-phase1/backups"
-export AI_WPS_VAR_DIR="$HOME/ai-wps-phase1/var"
+export AI_WPS_STATE_DIR="$HOME/ai-wps/state"
+export AI_WPS_BACKUP_DIR="$HOME/ai-wps/backups"
+export AI_WPS_VAR_DIR="$HOME/ai-wps/var"
 bash scripts/start_uvicorn_adapter.sh 18100
 ```
 
@@ -72,5 +65,5 @@ bash scripts/restart_adapter.sh 18100
 
 - `start_uvicorn_adapter.sh` 只走 uvicorn；缺依赖会直接提示安装离线依赖，并会在端口被旧 standalone 占用时自动替换旧进程。
 - `status_adapter.sh`、`show_logs.sh`、`stop_adapter.sh` 与 systemd 自启动使用同一组运行路径变量，不能混用不同路径执行管理命令。
-- `start_adapter.sh` 会优先 uvicorn，缺 uvicorn 时自动降级 standalone，也会避免被旧模式进程占用端口。
+- `start_adapter.sh` 委托同一 uvicorn 启动入口；缺依赖时直接失败，不会自动降级到 standalone。
 - WPS 插件访问地址固定为 `http://127.0.0.1:18100`，因此启动端口建议保持 `18100`。

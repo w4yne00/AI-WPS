@@ -6,10 +6,10 @@
 
 ## 安装自启动
 
-在目标机上进入已安装的 adapter 启动包目录，例如：
+Preview 安装后进入当前发布目录；自定义安装根请替换路径。独立启动包则进入自身根目录：
 
 ```bash
-cd "$HOME/ai-wps-phase1/adapter-start-kit"
+cd "$HOME/ai-wps/current"
 bash scripts/install_autostart.sh 18100
 ```
 
@@ -23,9 +23,9 @@ PYTHON_BIN=/usr/bin/python3.8 bash scripts/install_autostart.sh 18100
 路径写入 systemd 服务环境，后续启动、停止、PID 和日志位置保持一致：
 
 ```bash
-AI_WPS_STATE_DIR="$HOME/ai-wps-phase1/state" \
-AI_WPS_BACKUP_DIR="$HOME/ai-wps-phase1/backups" \
-AI_WPS_VAR_DIR="$HOME/ai-wps-phase1/var" \
+AI_WPS_STATE_DIR="$HOME/ai-wps/state" \
+AI_WPS_BACKUP_DIR="$HOME/ai-wps/backups" \
+AI_WPS_VAR_DIR="$HOME/ai-wps/var" \
 bash scripts/install_autostart.sh 18100
 ```
 

@@ -1,8 +1,8 @@
 # 共享直连服务
 
-Word、Excel、PPT 九类任务共用同一本地 Adapter 运行环境中的直连服务配置。工作流平台继续按功能独立配置，不走本页合同。
+Word、Excel、PPT 的 13 类模型任务共用同一本地 Adapter 运行环境中的直连服务配置。工作流平台继续按功能独立配置，不走本页合同。
 
-九类任务标识：`word.smart_write`、`word.smart_imitation`、`word.document_review`、`word.format_review`、`excel.analysis`、`excel.formula_assistant`、`excel.smart_fill`、`ppt.slide_assistant`、`ppt.structure_review`。
+任务标识：`word.smart_write`、`word.smart_imitation`、`word.material_composer`、`word.document_review`、`word.format_review`、`excel.analysis`、`excel.formula_assistant`、`excel.smart_fill`、`excel.material_ledger`、`ppt.slide_assistant`、`ppt.structure_review`、`ppt.material_outline`、`ppt.template_page`。模板整套生成复用正文页模型任务。
 
 ## 录入与保存
 
@@ -10,12 +10,12 @@ Word、Excel、PPT 九类任务共用同一本地 Adapter 运行环境中的直�
 2. 新建服务时填写名称和规范化服务地址；API Key 只录入一次，保存后页面只显示“已配置”，不回显明文。
 3. 同一运行环境最多五份服务。地址或 Key 任一不同都视为不同服务，不得合并。
 4. 保存或更换地址、Key 后立即读取 `<serviceBaseUrl>/models`。也可手动刷新。目录契约见 `direct-service-model-catalog.md`。
-5. 每个服务可从当前有效模型目录的下拉列表设置默认模型。尚未单独覆盖的功能继承该默认值；任务页必须显示本次实际模型。
-6. 保存服务只验证地址、认证和模型目录，不自动执行九类付费任务验证。
+5. 每个服务可从模型目录选择默认模型，也可添加手填模型。尚未单独覆盖的功能继承该默认值；任务页必须显示本次实际模型。
+6. 保存服务只验证地址、认证和模型目录，不自动执行各任务的付费验证。
 
 ## 任务选择
 
-功能设置页只选择已有共享直连服务。模型列表只辅助选择，不要求目录有效才能保存或发起任务。温度、Token 和图片参数仍可按功能覆盖。新页面不再提供自定义模型标识输入；升级前已有的自定义模型记录仅保留读取兼容，验证仍有效时不受目录刷新结果限制。工作流平台配置仍按功能独立保存，互不影响。
+功能设置页只选择已有共享直连服务。模型列表只辅助选择，不要求目录有效才能保存或发起任务。温度、Token 和图片参数仍可按功能覆盖。三宿主均可添加、删除手填模型，用于服务默认值或任务覆盖；未验证的手填模型也可保存和执行。Word 编写类和格式审查按各自规则自动验证，失败状态明确展示，详见 `direct-service-model-catalog.md` 和 `word-format-review-direct-validation.md`。工作流平台配置仍按功能独立保存，互不影响。
 
 最大输出 Token 和上下文容量只接受非负整数，不设置产品级上限；`0` 或留空表示不设置任务级限制。具体模型仍可能按自身能力拒绝超过服务能力的参数。
 
