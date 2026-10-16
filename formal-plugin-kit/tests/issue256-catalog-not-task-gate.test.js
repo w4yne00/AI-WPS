@@ -135,9 +135,11 @@ for (const [host, root] of hosts) {
         assert.match(status.textContent, /请先选择任务模型/);
       } else {
         assert.ifError(error);
-        assert.strictEqual(requests.length, 1, status.textContent);
-        assert.strictEqual(requests[0].url, "/provider/direct-services/direct_svc_new/activate");
-        assert.strictEqual(requests[0].body.taskModelSelection.modelName, "");
+        const expectedRequests = host === "word" ? 2 : 1;
+        assert.strictEqual(requests.length, expectedRequests, status.textContent);
+        const activateRequest = requests[requests.length - 1];
+        assert.strictEqual(activateRequest.url, "/provider/direct-services/direct_svc_new/activate");
+        assert.strictEqual(activateRequest.body.taskModelSelection.modelName, "");
         assert.strictEqual(state.taskModelSelections[taskType].serviceId, "direct_svc_new");
         assert.strictEqual(state.taskModelSelections[taskType].modelName, "");
       }

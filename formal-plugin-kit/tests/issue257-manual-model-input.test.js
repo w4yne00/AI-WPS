@@ -64,7 +64,8 @@ for (const host of hosts) {
   test(`${host.name} saves an untested manual task model without a validation request`, async () => {
     const p = pane();
     await p.saveTaskModelSelection();
-    assert.strictEqual(p.calls.length, 1, p.node(host.prefix + "-model-validation-status").textContent);
+    const expectedCalls = host.name === "Word" ? 2 : 1;
+    assert.strictEqual(p.calls.length, expectedCalls, p.node(host.prefix + "-model-validation-status").textContent);
     assert.strictEqual(p.calls[0].url, "/provider/direct-services/direct_svc_test/activate");
     assert.strictEqual(p.calls[0].payload.taskModelSelection.modelName, "org/model");
     assert.strictEqual(p.calls[0].payload.taskModelSelection.customModel, true);
@@ -76,9 +77,11 @@ for (const host of hosts) {
     p.state.taskModelSelections[p.taskType] = { serviceId: p.service.id, modelName: "org/model", customModel: true };
     p.node(host.prefix + "-model-select").value = "";
     await p.saveTaskModelSelection();
-    assert.strictEqual(p.calls.length, 1, p.node(host.prefix + "-model-validation-status").textContent);
-    assert.strictEqual(p.calls[0].payload.taskModelSelection.modelName, "");
-    assert.strictEqual(p.calls[0].payload.taskModelSelection.customModel, false);
+    const expectedCalls = host.name === "Word" ? 2 : 1;
+    assert.strictEqual(p.calls.length, expectedCalls, p.node(host.prefix + "-model-validation-status").textContent);
+    const activateCall = p.calls[p.calls.length - 1];
+    assert.strictEqual(activateCall.payload.taskModelSelection.modelName, "");
+    assert.strictEqual(activateCall.payload.taskModelSelection.customModel, false);
   });
 
   test(`${host.name} service switch keeps manual entry and the chosen service's saved models`, () => {

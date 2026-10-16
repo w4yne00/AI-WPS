@@ -789,12 +789,13 @@ test("task selection save atomically activates and synchronizes preflight state"
   const save = vm.runInNewContext(`(${functionSource("saveTaskModelSelection")})`, ctx);
 
   await save();
-  assert.strictEqual(requests.length, 1);
-  assert.strictEqual(requests[0].url, "/provider/direct-services/direct_svc_1/activate");
-  assert.strictEqual(requests[0].method, undefined);
-  assert.strictEqual(requests[0].payload.taskType, "word.smart_write");
+  assert.strictEqual(requests.length, 2);
+  assert.strictEqual(requests[0].url, "/provider/task-model-selections/word.smart_write/validate");
+  assert.strictEqual(requests[1].url, "/provider/direct-services/direct_svc_1/activate");
+  assert.strictEqual(requests[1].method, undefined);
+  assert.strictEqual(requests[1].payload.taskType, "word.smart_write");
   assert.deepStrictEqual(
-    JSON.parse(JSON.stringify(requests[0].payload.taskModelSelection)),
+    JSON.parse(JSON.stringify(requests[1].payload.taskModelSelection)),
     {
       serviceId: "direct_svc_1",
       modelName: "write-model",

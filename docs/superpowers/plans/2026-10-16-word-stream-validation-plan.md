@@ -42,29 +42,29 @@
 - Produces:
   - `ProviderClient.validate_task_model_selection`: 增加缓存有效记录复用与 `_in_flight_streaming_probes` 并发去重
 
-- [ ] **Step 1: 编写失败的单元测试**
+- [x] **Step 1: 编写失败的单元测试**
   在 `adapter_service/tests/test_issue262_stream_validation.py` 中编写能力复用与去重测试：
   - `test_validate_task_model_selection_reuses_valid_streaming_capability`: 验证当 `DirectServiceStore` 中已存在匹配且未失效的 `validated` 记录时，不调用 `urllib.request.urlopen`，直接返回 `taskCallPerformed=False` 与 `streamingCapability="validated"`；
   - `test_validate_task_model_selection_reuses_unsupported_capability`: 验证已记录为 `unsupported` 的有效记录同样复用，不重新发起网络请求；
   - `test_validate_task_model_selection_reprobes_when_stale_or_missing`: 验证当服务修订或 Key 指纹变更变为 `stale` 或 `not_checked` 时，重新发起真实网络探测；
   - `test_validate_task_model_selection_deduplicates_in_flight_probes`: 模拟并发调用同一配置的验证，断言实际网络请求只发出一次。
 
-- [ ] **Step 2: 运行测试验证失败**
+- [x] **Step 2: 运行测试验证失败**
   运行：`PATH="/Users/waynesmini/Documents/AI-WPS/.venv/bin:$PATH" PYTHONPATH=adapter_service /Users/waynesmini/Documents/AI-WPS/.venv/bin/pytest -v adapter_service/tests/test_issue262_stream_validation.py`
   预期：FAIL（目前总是发起网络请求，缺少复用与去重逻辑）。
 
-- [ ] **Step 3: 在 `provider_client.py` 中实现能力复用与去重**
+- [x] **Step 3: 在 `provider_client.py` 中实现能力复用与去重**
   - 在 `ProviderClient.__init__` 中初始化 `self._in_flight_streaming_probes = set()` 及 `self._streaming_probe_lock = threading.Lock()`；
   - 在 `validate_task_model_selection` 处理 `word.smart_write` / `word.smart_imitation` 前：
     - 查询现有 `streamingCapability` 判定：若存在且 `status in {"validated", "unsupported"}`，检查绑定指纹匹配，若匹配则直接返回复用结果（设置 `taskCallPerformed: False`）；
     - 若需要探测，获取探针锁并检查 `probe_key = f"{service_id}::{model_name}"` 是否已在 `_in_flight_streaming_probes` 中；
     - 执行探测并在 `finally` 中从 `_in_flight_streaming_probes` 移除该 key。
 
-- [ ] **Step 4: 运行测试验证通过**
+- [x] **Step 4: 运行测试验证通过**
   运行：`PATH="/Users/waynesmini/Documents/AI-WPS/.venv/bin:$PATH" PYTHONPATH=adapter_service /Users/waynesmini/Documents/AI-WPS/.venv/bin/pytest -v adapter_service/tests/test_issue262_stream_validation.py`
   预期：PASS。
 
-- [ ] **Step 5: 提交本任务修改**
+- [x] **Step 5: 提交本任务修改**
   ```bash
   git add adapter_service/app/services/provider_client.py adapter_service/tests/test_issue262_stream_validation.py
   git commit -m "feat(adapter): support streaming capability reuse and in-flight probe deduplication"
@@ -88,7 +88,7 @@
     - 手填模型：本地校验后立即调用 `activate` 设为当前，随后触发后台非阻塞 `validate` 探测；探测失败仅更新提示与流式状态，不撤销激活
   - 保留 `word.format_review` 与 `word.document_review` 及其他宿主的独立按钮
 
-- [ ] **Step 1: 编写失败的前端契约与行为测试**
+- [x] **Step 1: 编写失败的前端契约与行为测试**
   在 `formal-plugin-kit/tests/issue262-word-stream-validation.test.js` 中编写测试用例：
   - `test_word_smart_write_and_imitation_hides_validate_button`: 渲染 smart_write 和 smart_imitation 时，`btn-validate-task-model-selection` 必须 `hidden = true`；渲染 format_review 或 document_review 时保持 `hidden = false`；
   - `test_catalog_model_save_validates_first_and_aborts_on_failure`: 目录模型点击保存时，先请求 `/validate`；若返回 400/500 或网络错误，断言未发起 `/activate` 请求，保留当前选择和草稿，并向状态节点输出具体错误；
@@ -97,11 +97,11 @@
   - `test_manual_model_background_probe_failure_retains_saved_selection`: 后台探测失败时，已激活的配置依然保留在 `state.taskModelSelections` 中，不被回滚或撤销，并在状态节点提示将使用普通调用；
   - `test_other_hosts_and_review_tasks_unaffected`: 检查 Excel、PPT 以及 Word 审查任务的独立验证按钮和保存流程未被破坏。
 
-- [ ] **Step 2: 运行测试验证失败**
+- [x] **Step 2: 运行测试验证失败**
   运行：`PATH="/Users/waynesmini/Documents/AI-WPS/.venv/bin:$PATH" node --test formal-plugin-kit/tests/issue262-word-stream-validation.test.js`
   预期：FAIL（按钮尚未隐藏，saveTaskModelSelection 尚未拆分目录前置验证与手填后台探测）。
 
-- [ ] **Step 3: 实现 taskpane.html 与 taskpane.js 改造**
+- [x] **Step 3: 实现 taskpane.html 与 taskpane.js 改造**
   - 在 `renderTaskModelSelectionSection` 中：
     - 获取 `validateBtn = byId("word-task-validate-button")`（或 `#btn-validate-task-model-selection`）；
     - 若 `currentTask === "word.smart_write" || currentTask === "word.smart_imitation"`，设 `validateBtn.hidden = true`，更新费用提示文案明确保存会自动验证；
@@ -112,11 +112,11 @@
       - **目录模型分支**：设置 busy 状态，提示“正在验证调用并检测流式能力...”，调用 `/provider/task-model-selections/{taskType}/validate`；若失败，显示错误并解除 busy，保留现场；若成功，继续调用原激活链路并保存；
       - **手填模型分支**：本地校验后立即调用 `/activate` 激活，激活成功后提示“已保存并设为当前，正在后台探测流式能力...”，触发后台异步探测，探测完成后更新流式状态，失败绝不回滚已保存选择。
 
-- [ ] **Step 4: 运行测试验证通过**
+- [x] **Step 4: 运行测试验证通过**
   运行：`PATH="/Users/waynesmini/Documents/AI-WPS/.venv/bin:$PATH" node --test formal-plugin-kit/tests/issue262-word-stream-validation.test.js`
   预期：PASS。
 
-- [ ] **Step 5: 提交本任务修改**
+- [x] **Step 5: 提交本任务修改**
   ```bash
   git add formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane.html formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane.js formal-plugin-kit/tests/issue262-word-stream-validation.test.js
   git commit -m "feat(plugin): auto-validate catalog models and background-probe manual models in Word writing tasks"
