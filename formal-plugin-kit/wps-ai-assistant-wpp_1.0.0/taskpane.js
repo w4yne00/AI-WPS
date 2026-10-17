@@ -2534,6 +2534,7 @@
     var v = view || ctrl.getState();
     var statusEl = byId("ppt-template-deck-status");
     var previewEl = byId("ppt-template-deck-preview");
+    var generateBtn = byId("btn-ppt-generate-template-deck");
     var confirmBtn = byId("btn-ppt-confirm-template-deck");
     var appendBtn = byId("btn-ppt-append-template-deck");
     var verifyBtn = byId("btn-ppt-verify-template-deck");
@@ -2575,9 +2576,14 @@
       });
       if (v.error) lines.push("<p>" + helpers.escapeHtml(v.error.message || "") + "</p>");
     }
+    var running = v.status === "running";
+    if (generateBtn) {
+      generateBtn.disabled = running;
+      generateBtn.textContent = running ? "正在生成整套内容..." : "生成整套内容";
+    }
     if (statusEl) {
-      statusEl.hidden = !v.error;
-      statusEl.textContent = v.error ? (v.error.message || "") : "";
+      statusEl.hidden = !v.error && !running;
+      statusEl.textContent = v.error ? (v.error.message || "") : (running ? "正在生成整套内容，请稍候..." : "");
     }
     if (previewEl) {
       previewEl.hidden = !(v.pages && v.pages.length);

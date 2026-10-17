@@ -5886,12 +5886,19 @@
         if (!plan.cell) {
           throw new Error("单元格不可用：" + plan.address);
         }
+        var preserveText = typeof plan.sanitizedValue === "string" && plan.sanitizedValue !== "";
         var entry = {
           cell: plan.cell,
           address: plan.address,
-          previousValue: ""
+          previousValue: "",
+          previousNumberFormat: preserveText ? plan.cell.NumberFormat : undefined,
+          restoreNumberFormat: preserveText
         };
         writtenList.push(entry);
+        if (entry.restoreNumberFormat) {
+          // Keep identifiers and dates as text instead of letting General format coerce them.
+          plan.cell.NumberFormat = "@";
+        }
         plan.cell.Value2 = plan.sanitizedValue;
         if (!excelLedgerCellValueMatches(plan.cell, plan.sanitizedValue)) {
           throw new Error("写回后未能核对目标地址 " + plan.address + "。");
@@ -5901,10 +5908,15 @@
       var rollbackFailures = [];
       writtenList.slice().reverse().forEach(function (entry) {
         try {
-          if (excelLedgerCellValueMatches(entry.cell, "")) {
-            return;
+          if (!excelLedgerCellValueMatches(entry.cell, "")) {
+            entry.cell.Value2 = "";
           }
-          entry.cell.Value2 = "";
+          if (entry.restoreNumberFormat) {
+            entry.cell.NumberFormat = entry.previousNumberFormat;
+            if (entry.cell.NumberFormat !== entry.previousNumberFormat) {
+              throw new Error("无法恢复单元格格式：" + entry.address);
+            }
+          }
           if (!excelLedgerCellValueMatches(entry.cell, "")) {
             rollbackFailures.push(entry.address);
           }
