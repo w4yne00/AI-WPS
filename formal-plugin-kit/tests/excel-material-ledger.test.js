@@ -602,7 +602,8 @@ function createMockGridApp(config) {
         MergeCells: Boolean(cellData.MergeCells || cellData.mergeCells),
         EntireRow: { Hidden: Boolean(cellData.rowHidden) },
         EntireColumn: { Hidden: Boolean(cellData.colHidden) },
-        Locked: cellData.Locked !== undefined ? Boolean(cellData.Locked) : true
+        Locked: cellData.Locked !== undefined ? Boolean(cellData.Locked) : true,
+        NumberFormat: 'General'
       };
     }
     return cellStore[k];
@@ -1039,6 +1040,75 @@ test('ledger review reports the failed write cell when it cannot restore the cha
   assert.equal(app.getCellValue(2, 1), '');
   assert.equal(app.getCellValue(3, 1), '任务1');
 });
+
+test('ledger preserves numeric identifiers and dates as text when the host would coerce General cells', () => {
+  const app = createMockGridApp();
+  for (const [column, coerced] of [[1, 1], [2, 123], [3, 46312]]) {
+    const cell = app.ActiveSheet.Cells.Item(3, column);
+    const original = Object.getOwnPropertyDescriptor(cell, 'Value2');
+    cell.NumberFormat = 'General';
+    Object.defineProperty(cell, 'Value2', {
+      get: original.get,
+      set(value) {
+        original.set.call(cell, value !== '' && cell.NumberFormat !== '@' ? coerced : value);
+      }
+    });
+  }
+  const report = helpers.writeExcelMaterialLedger(app, {
+    headers: ['序号', '编号', '完成时间'], rows: [{ values: { '序号': '1', '编号': '00123', '完成时间': '2026-10-17' } }]
+  });
+  assert.equal(report.success, true);
+  assert.equal(app.getCellValue(3, 1), '1');
+  assert.equal(app.getCellValue(3, 2), '00123');
+  assert.equal(app.getCellValue(3, 3), '2026-10-17');
+});
+
+test('ledger restores the original cell format when a later write fails', () => {
+  const app = createMockGridApp({ cells: { '3,2': { onWrite(value) {
+    if (value !== '') throw new Error('host write failed');
+  } } } });
+  for (const row of [2, 3]) {
+    for (const column of [1, 2]) app.ActiveSheet.Cells.Item(row, column).NumberFormat = 'General';
+  }
+  assert.throws(() => helpers.writeExcelMaterialLedger(app, {
+    headers: ['编号', '完成时间'], rows: [{ values: { '编号': '00123', '完成时间': '2026-10-17' } }]
+  }), error => error.code === 'COMPENSATION_SUCCEEDED');
+  for (const row of [2, 3]) {
+    for (const column of [1, 2]) {
+      assert.ok(app.getCellValue(row, column) === '' || app.getCellValue(row, column) === null);
+      assert.equal(app.ActiveSheet.Cells.Item(row, column).NumberFormat, 'General');
+    }
+  }
+});
+
+for (const mode of ['unreadable', 'unwritable', 'unrestorable']) {
+  test(`ledger reports ${mode} text formatting without leaving written values`, () => {
+    const app = createMockGridApp({ cells: { '3,1': { onWrite(value) {
+      if (mode === 'unrestorable' && value !== '') throw new Error('host write failed');
+    } } } });
+    const cell = app.ActiveSheet.Cells.Item(3, 1);
+    let format = 'General';
+    Object.defineProperty(cell, 'NumberFormat', {
+      get() {
+        if (mode === 'unreadable') throw new Error('host format read failed');
+        return format;
+      },
+      set(value) {
+        if (mode === 'unwritable' && value === '@') throw new Error('host format write failed');
+        if (mode !== 'unrestorable' || value === '@') format = value;
+      }
+    });
+    assert.throws(() => helpers.writeExcelMaterialLedger(app, {
+      headers: ['序号'], rows: [{ values: { '序号': '1' } }]
+    }), error => {
+      assert.equal(error.code, mode === 'unrestorable' ? 'COMPENSATION_FAILED' : 'COMPENSATION_SUCCEEDED');
+      if (mode === 'unrestorable') assert.deepEqual(error.rollbackFailures, ['A3']);
+      return true;
+    });
+    assert.ok(app.getCellValue(3, 1) === '' || app.getCellValue(3, 1) === null);
+    assert.equal(app.getCellValue(2, 1), '');
+  });
+}
 
 for (const mode of ['ignored', 'converted', 'formula', 'unreadable']) {
   test(`ledger review rejects ${mode} host writes and restores the target`, () => {
