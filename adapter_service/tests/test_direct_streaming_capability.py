@@ -2,6 +2,7 @@ import json
 import os
 import unittest
 from pathlib import Path
+from io import BytesIO
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 from urllib.error import HTTPError
@@ -17,48 +18,32 @@ from app.services.direct_services import DirectServiceStore
 from app.services.provider_client import ProviderClient
 
 
-class FakeSseResponse:
+class FakeSseResponse(BytesIO):
     def __init__(self, sse_lines, headers=None):
         self.sse_lines = sse_lines
         self.headers = headers or {"Content-Type": "text/event-stream"}
+        self.body = b"".join(line.encode("utf-8") if isinstance(line, str) else line for line in sse_lines)
+        super().__init__(self.body)
 
     def __enter__(self):
+        BytesIO.__init__(self, self.body)
         return self
 
     def __exit__(self, exc_type, exc, tb):
         return False
 
-    def __iter__(self):
-        for line in self.sse_lines:
-            yield line.encode("utf-8") if isinstance(line, str) else line
-
-    def read(self):
-        out = []
-        for line in self.sse_lines:
-            out.append(line.encode("utf-8") if isinstance(line, str) else line)
-        return b"".join(out)
-
-    def close(self):
-        pass
-
-
-class FakeBlockingResponse:
+class FakeBlockingResponse(BytesIO):
     def __init__(self, body, headers=None):
         self.body = body
         self.headers = headers or {"Content-Type": "application/json"}
+        super().__init__(json.dumps(self.body, ensure_ascii=False).encode("utf-8"))
 
     def __enter__(self):
+        BytesIO.__init__(self, json.dumps(self.body, ensure_ascii=False).encode("utf-8"))
         return self
 
     def __exit__(self, exc_type, exc, tb):
         return False
-
-    def read(self):
-        return json.dumps(self.body, ensure_ascii=False).encode("utf-8")
-
-    def close(self):
-        pass
-
 
 class DirectStreamingCapabilityTests(unittest.TestCase):
     def setUp(self):
@@ -283,7 +268,7 @@ class DirectStreamingCapabilityTests(unittest.TestCase):
 
         with patch("urllib.request.urlopen", return_value=sse_resp), patch(
             "app.services.provider_client.time.monotonic",
-            side_effect=[100.0, 100.0, 706.0],
+            side_effect=[100.0, 100.0, 100.0, 100.0, 706.0],
         ):
             with self.assertRaises(ProviderTimeoutError):
                 self.client.validate_task_model_selection(

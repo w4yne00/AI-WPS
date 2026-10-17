@@ -815,3 +815,65 @@ test("outline regeneration clears active result and confirmation before request 
   assert.equal(s.result, null);
   assert.equal(s.error, "本次失败");
 });
+
+test('outline clears the reused source only after successful removal', async t => {
+  for (const outcome of ['success', 'failure', 'cancel', 'document-changed', 'document-changed-same-source', 'source-changed']) {
+    await t.test(outcome, async () => {
+      const h = createTestHarness();
+      const source = fs.readFileSync(path.join(root, 'taskpane.js'), 'utf8');
+      const nodes = Object.fromEntries(['outline-reusable-select', 'outline-material-list'].map(id => [id, {
+        value: '', listeners: {}, addEventListener(type, fn) { this.listeners[type] = fn; }
+      }]));
+      const select = nodes['outline-reusable-select'];
+      const catalog = { totalDocuments: 1, totalCharacters: 807,
+        documents: [{ materialId: 'mat_0123456789abcdef', fileName: '来源.docx' }] };
+      let currentCatalog = { totalDocuments: 0, totalCharacters: 0, documents: [] };
+      let finishDelete;
+      h.requestHandler = async (url, body, opts) => {
+        if (url === '/ppt/materials/clone-from-source') {
+          assert.equal(body.sourceSessionId, 'word-source');
+          currentCatalog = catalog;
+          return { success: true, data: currentCatalog };
+        }
+        if (opts && opts.method === 'DELETE') {
+          assert.equal(url, '/ppt/materials/mat_0123456789abcdef?documentSessionId=' + h.session);
+          return new Promise((resolve, reject) => { finishDelete = () => {
+            if (outcome === 'failure') return reject(new Error('移除失败'));
+            currentCatalog = { totalDocuments: 0, totalCharacters: 0, documents: [] };
+            resolve({ success: true, data: { catalogSummary: currentCatalog } });
+          }; });
+        }
+        return { success: true, data: url.includes('/materials/catalog') ? currentCatalog : { conflicts: [] } };
+      };
+      const start = source.lastIndexOf('    if (byId("outline-reusable-select")) {');
+      const end = source.indexOf('    if (byId("outline-conflicts")) {', start);
+      vm.runInNewContext(source.slice(start, end), {
+        byId: id => nodes[id], ensureMaterialOutline: () => h.api, setStatus() {},
+        window: { confirm: () => outcome !== 'cancel' }, beginPptOutlineMaterialUpload() {}
+      });
+      select.value = 'word-source';
+      select.listeners.change({ target: select });
+      await new Promise(setImmediate);
+      assert.equal(h.api.current().catalogSummary.totalDocuments, 1);
+      nodes['outline-material-list'].listeners.click({ target: {
+        getAttribute: key => key === 'data-outline-remove' ? 'mat_0123456789abcdef' : null
+      } });
+      assert.equal(select.value, 'word-source', 'pending or cancelled removal keeps the selection');
+      if (outcome.startsWith('document-changed')) h.session = 'sess-ppt-doc-2';
+      if (outcome === 'document-changed' || outcome === 'source-changed') select.value = 'source-B';
+      if (finishDelete) finishDelete();
+      await new Promise(setImmediate);
+      const expectedSource = outcome === 'success' ? '' :
+        (outcome === 'document-changed' || outcome === 'source-changed' ? 'source-B' : 'word-source');
+      assert.equal(select.value, expectedSource);
+      assert.equal(h.api.current().catalogSummary.totalDocuments,
+        outcome === 'failure' || outcome === 'cancel' ? 1 : 0);
+      if (outcome === 'success') {
+        select.value = 'word-source';
+        select.listeners.change({ target: select });
+        await new Promise(setImmediate);
+        assert.equal(h.api.current().catalogSummary.totalDocuments, 1);
+      }
+    });
+  }
+});

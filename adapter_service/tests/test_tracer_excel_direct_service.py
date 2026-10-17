@@ -5,8 +5,9 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from io import BytesIO
 from tempfile import TemporaryDirectory
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 from urllib.error import HTTPError, URLError
 
 HAS_API_DEPS = (
@@ -25,6 +26,17 @@ from app.services.direct_services import (
 )
 from app.services.model_configurations import ModelConfigurationStore
 from app.services.provider_client import ACCESS_DIRECT_MODEL, ACCESS_WORKFLOW_PLATFORM, ProviderClient
+
+
+def _byte_response(body):
+    class Response(BytesIO):
+        headers = {"Content-Type": "application/json"}
+
+        def __enter__(self):
+            BytesIO.__init__(self, body)
+            return self
+
+    return Response(body)
 
 
 class TracerExcelDirectServiceTests(unittest.TestCase):
@@ -86,9 +98,7 @@ class TracerExcelDirectServiceTests(unittest.TestCase):
             ]
         }).encode("utf-8")
 
-        mock_resp = MagicMock()
-        mock_resp.read.return_value = mock_models_response
-        mock_resp.__enter__.return_value = mock_resp
+        mock_resp = _byte_response(mock_models_response)
 
         with patch("urllib.request.urlopen", return_value=mock_resp):
             refreshed = self.direct_store.refresh_models(service["id"], expected_revision=2)
@@ -142,9 +152,7 @@ class TracerExcelDirectServiceTests(unittest.TestCase):
         mock_models_response = json.dumps({
             "data": [{"id": "model-a"}, {"id": "model-b"}]
         }).encode("utf-8")
-        mock_resp = MagicMock()
-        mock_resp.read.return_value = mock_models_response
-        mock_resp.__enter__.return_value = mock_resp
+        mock_resp = _byte_response(mock_models_response)
 
         with patch("urllib.request.urlopen", return_value=mock_resp):
             refreshed = self.direct_store.refresh_models(service["id"], expected_revision=2)
@@ -293,10 +301,7 @@ class TracerExcelDirectServiceTests(unittest.TestCase):
             }]
         }).encode("utf-8")
 
-        mock_resp = MagicMock()
-        mock_resp.read.return_value = mock_chat_completion
-        mock_resp.getheader.return_value = "application/json"
-        mock_resp.__enter__.return_value = mock_resp
+        mock_resp = _byte_response(mock_chat_completion)
 
         with patch("urllib.request.urlopen", return_value=mock_resp) as mock_urlopen:
             result = client.excel_analysis(req, trace_id="trace_excel_tracer_1")
@@ -332,11 +337,9 @@ class TracerExcelDirectServiceTests(unittest.TestCase):
              patch("app.api.provider.get_model_configuration_store", return_value=self.model_store):
 
             # 1. Refresh models
-            mock_models_resp = MagicMock()
-            mock_models_resp.read.return_value = json.dumps({
+            mock_models_resp = _byte_response(json.dumps({
                 "data": [{"id": "gpt-4o"}, {"id": "gpt-4o-mini"}]
-            }).encode("utf-8")
-            mock_models_resp.__enter__.return_value = mock_models_resp
+            }).encode("utf-8"))
 
             with patch("urllib.request.urlopen", return_value=mock_models_resp):
                 refreshed = refresh_direct_service_models(
@@ -353,8 +356,7 @@ class TracerExcelDirectServiceTests(unittest.TestCase):
             self.assertEqual(act_res["data"]["activeConfigurationId"], service["id"])
 
             # 3. Validate task model selection
-            mock_probe_resp = MagicMock()
-            mock_probe_resp.read.return_value = json.dumps({
+            mock_probe_resp = _byte_response(json.dumps({
                 "id": "chatcmpl-probe",
                 "choices": [{
                     "message": {
@@ -368,8 +370,7 @@ class TracerExcelDirectServiceTests(unittest.TestCase):
                     },
                     "finish_reason": "stop"
                 }]
-            }).encode("utf-8")
-            mock_probe_resp.__enter__.return_value = mock_probe_resp
+            }).encode("utf-8"))
 
             with patch("urllib.request.urlopen", return_value=mock_probe_resp):
                 val_res = validate_task_model_selection_route(
@@ -465,11 +466,9 @@ class StandaloneTracerExcelDirectServiceTests(unittest.TestCase):
         )
 
         # Refresh models
-        mock_models_resp = MagicMock()
-        mock_models_resp.read.return_value = json.dumps({
+        mock_models_resp = _byte_response(json.dumps({
             "data": [{"id": "gpt-4o"}, {"id": "gpt-4o-mini"}]
-        }).encode("utf-8")
-        mock_models_resp.__enter__.return_value = mock_models_resp
+        }).encode("utf-8"))
 
         with patch("urllib.request.urlopen", return_value=mock_models_resp):
             ref_res = self._invoke(
@@ -490,8 +489,7 @@ class StandaloneTracerExcelDirectServiceTests(unittest.TestCase):
         self.assertEqual(act_res["body"]["data"]["activeConfigurationId"], service_id)
 
         # Validate task model selection
-        mock_probe_resp = MagicMock()
-        mock_probe_resp.read.return_value = json.dumps({
+        mock_probe_resp = _byte_response(json.dumps({
             "id": "chatcmpl-probe-2",
             "choices": [{
                 "message": {
@@ -505,8 +503,7 @@ class StandaloneTracerExcelDirectServiceTests(unittest.TestCase):
                 },
                 "finish_reason": "stop"
             }]
-        }).encode("utf-8")
-        mock_probe_resp.__enter__.return_value = mock_probe_resp
+        }).encode("utf-8"))
 
         with patch("urllib.request.urlopen", return_value=mock_probe_resp):
             val_res = self._invoke(

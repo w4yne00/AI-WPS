@@ -587,11 +587,10 @@
   function request(path, payload, options) {
     var settings = options || {};
     var controller = typeof AbortController !== "undefined" ? new AbortController() : null;
-    var timer = setTimeout(function () {
-      if (controller) {
-        controller.abort();
-      }
-    }, settings.timeoutMs || 15000);
+    var isValidation = path.indexOf("/provider/") === 0 && /\/validate(?:-image)?$/.test(path);
+    // Format semantics may require three 60-second attempts.
+    var timeoutMs = settings.timeoutMs || (isValidation ? 185000 : 15000);
+    var timer;
     var fetchOptions = {
       method: settings.method || (payload === null || typeof payload === "undefined" ? "GET" : "POST"),
       headers: { "Content-Type": "application/json" }
@@ -624,7 +623,7 @@
     if (payload !== null && typeof payload !== "undefined") {
       fetchOptions.body = JSON.stringify(payload);
     }
-    return fetch(ADAPTER_BASE_URL + path, fetchOptions).then(function (response) {
+    var responsePromise = fetch(ADAPTER_BASE_URL + path, fetchOptions).then(function (response) {
       return response.json().catch(function () { return {}; }).then(function (body) {
         var error;
         if (!response.ok || body.success === false) {
@@ -645,7 +644,15 @@
         }
         return body;
       });
-    }).finally(function () {
+    });
+    return Promise.race([responsePromise, new Promise(function (resolve, reject) {
+      timer = setTimeout(function () {
+        var error = new Error(isValidation ? "模型能力验证超时，请稍后重试。" : "请求超过等待时限。");
+        error.name = "AbortError";
+        reject(error);
+        if (controller) controller.abort();
+      }, timeoutMs);
+    })]).finally(function () {
       clearTimeout(timer);
     });
   }
@@ -6229,7 +6236,14 @@
         if (removeId && window.confirm("移除这份资料？")) {
           var ctrl = ensureMaterialOutline();
           if (ctrl) {
-            ctrl.deleteMaterial(removeId).catch(function (error) {
+            var removalSessionId = ctrl.current().documentSessionId;
+            var reusableSelect = byId("outline-reusable-select");
+            var reusableSourceId = reusableSelect.value;
+            ctrl.deleteMaterial(removeId).then(function () {
+              if (ctrl.current().documentSessionId === removalSessionId && reusableSelect.value === reusableSourceId) {
+                reusableSelect.value = "";
+              }
+            }).catch(function (error) {
               setStatus((error && error.message) || "移除资料失败");
             });
           }

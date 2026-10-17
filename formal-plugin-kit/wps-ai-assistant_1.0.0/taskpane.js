@@ -3001,7 +3001,9 @@
   }
 
   function request(path, payload, requestOptions) {
-    var timeoutMs = requestOptions && requestOptions.timeoutMs;
+    var isValidation = path.indexOf("/provider/") === 0 && /\/validate(?:-image)?$/.test(path);
+    // Format semantics may require three 60-second attempts.
+    var timeoutMs = (requestOptions && requestOptions.timeoutMs) || (isValidation ? 185000 : 0);
     var requestMethod = requestOptions && requestOptions.method;
     var controller = null;
     var timeoutId = null;
@@ -3052,20 +3054,14 @@
     if (timeoutMs && typeof AbortController !== "undefined") {
       controller = new AbortController();
       options.signal = controller.signal;
-      timeoutId = setTimeout(function () {
-        controller.abort();
-      }, timeoutMs);
     }
 
-    return fetch(ADAPTER_BASE_URL + path, {
+    var responsePromise = fetch(ADAPTER_BASE_URL + path, {
       method: options.method,
       headers: options.headers,
       body: options.body,
       signal: options.signal
     }).then(function (response) {
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-      }
       return response.json().then(function (body) {
         if (!response.ok) {
           var validation = body.data && body.data.validation;
@@ -3087,10 +3083,22 @@
         }
         return body;
       });
+    });
+    if (timeoutMs) {
+      responsePromise = Promise.race([responsePromise, new Promise(function (resolve, reject) {
+        timeoutId = setTimeout(function () {
+          var error = new Error(isValidation ? "模型能力验证超时，请稍后重试。" : "请求超过等待时限。");
+          error.name = "AbortError";
+          reject(error);
+          if (controller) controller.abort();
+        }, timeoutMs);
+      })]);
+    }
+    return responsePromise.then(function (body) {
+      if (timeoutId) clearTimeout(timeoutId);
+      return body;
     }, function (error) {
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-      }
+      if (timeoutId) clearTimeout(timeoutId);
       throw error;
     });
   }
@@ -6250,6 +6258,11 @@
     var operationId = state.directServiceOperationId;
     var catalogConfirm = taskType === "word.format_review" && formatReviewUsesCatalogConfirm(draft, currentSvc);
 
+    function abandonSave() {
+      if (state.directServiceOperationId === operationId) setWorkflowProfileMutationBusy(false);
+      return { superseded: true };
+    }
+
     function executeActivation(successNotice, onComplete) {
       var activationSaved = false;
       setWorkflowProfileMutationBusy(true);
@@ -6257,9 +6270,7 @@
         taskType: taskType,
         taskModelSelection: draft
       }).then(function (body) {
-          if (state.directServiceOperationId !== operationId || getSettingsWorkflowTaskType() !== taskType) {
-            return { superseded: true };
-          }
+          if (state.directServiceOperationId !== operationId) return abandonSave();
           activationSaved = true;
           state.workflowProfileSelections[taskType] = draft.serviceId;
           if (body && body.data && body.data.taskModelSelection) {
@@ -6274,12 +6285,13 @@
             configured: true,
             taskKeyConfigured: true
           });
+          if (getSettingsWorkflowTaskType() !== taskType) return abandonSave();
           return Promise.all([
             loadWorkflowProfiles(taskType),
             loadDirectServices(undefined, undefined, operationId)
           ]).then(function () {
             if (state.directServiceOperationId !== operationId || getSettingsWorkflowTaskType() !== taskType) {
-              return { superseded: true };
+              return abandonSave();
             }
             setWorkflowProfileMutationBusy(false);
             var taskDefinition = TASK_API_KEY_DEFS.find(function (item) { return item.taskType === taskType; });
@@ -6334,7 +6346,7 @@
           });
         }).catch(function (error) {
           if (state.directServiceOperationId !== operationId || getSettingsWorkflowTaskType() !== taskType) {
-            return { superseded: true };
+            return abandonSave();
           }
           setWorkflowProfileMutationBusy(false);
           if (statusNode) {
@@ -6356,13 +6368,13 @@
       return helpers.validateWordWritingCatalogSelection(taskType, draft, currentSvc, request)
         .then(function () {
           if (state.directServiceOperationId !== operationId || getSettingsWorkflowTaskType() !== taskType) {
-            return { superseded: true };
+            return abandonSave();
           }
           return executeActivation("已验证流式能力并设为当前。");
         })
         .catch(function (error) {
           if (state.directServiceOperationId !== operationId || getSettingsWorkflowTaskType() !== taskType) {
-            return { superseded: true };
+            return abandonSave();
           }
           setWorkflowProfileMutationBusy(false);
           if (statusNode) {
@@ -6405,20 +6417,26 @@
 
     if (catalogConfirm) {
       setWorkflowProfileMutationBusy(true);
+      if (statusNode) statusNode.textContent = "正在验证格式语义（会真实请求模型，可能产生费用）...";
       var prelude = request("/provider/task-model-selections/" + encodeURIComponent(taskType) + "/validate", draft)
         .then(function () {
+          if (state.directServiceOperationId !== operationId || getSettingsWorkflowTaskType() !== taskType) return abandonSave();
+          var visionStatus = byId("word-task-vision-status");
+          if (visionStatus) visionStatus.textContent = "正在验证视觉能力…";
           return request("/provider/task-model-selections/" + encodeURIComponent(taskType) + "/validate-image", draft)
             .catch(function (error) {
+              if (state.directServiceOperationId !== operationId || getSettingsWorkflowTaskType() !== taskType) return abandonSave();
               var visionStatus = byId("word-task-vision-status");
               if (visionStatus) visionStatus.textContent = describeFetchError(error);
             });
         });
       return prelude.then(function () {
+        if (state.directServiceOperationId !== operationId || getSettingsWorkflowTaskType() !== taskType) return abandonSave();
         return executeActivation("已保存并设为当前。");
       }, function (error) {
-        if (state.directServiceOperationId !== operationId) return;
+        if (state.directServiceOperationId !== operationId || getSettingsWorkflowTaskType() !== taskType) return abandonSave();
         setWorkflowProfileMutationBusy(false);
-        if (statusNode) statusNode.textContent = describeFetchError(error);
+        if (statusNode) statusNode.textContent = "验证失败，未保存配置：" + describeFetchError(error);
       });
     }
 

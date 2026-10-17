@@ -26,8 +26,10 @@ export AI_WPS_VAR_DIR="$HOME/ai-wps-phase1/var"
 `backups/` is reserved for whole-state snapshots. `var/` stores logs, the PID,
 and transaction records, so none of those files enter a state snapshot. If only
 `AI_WPS_STATE_DIR` is set, the start kit derives sibling `backups/` and `var/`
-directories. If no path variables are set, existing `config/`, `run/`, and
-`logs/` locations remain in use for legacy installations.
+directories. A standard Preview installation automatically resolves these paths from
+`$HOME/ai-wps/current` to the shared `state/`, `backups/` and `var/` directories.
+Standalone legacy layouts without path variables retain their existing
+`config/`, `run/` and `logs/` locations.
 
 Configured runtime directories must use absolute paths and must not contain
 control characters. Paths containing spaces are supported. Use `$HOME` rather
@@ -67,4 +69,5 @@ before printing `/provider/status`, `/provider/route-diagnostics`, and
 `/provider/debug-last`. Recovery mode fails the business-readiness check while
 keeping liveness visible. A log line with
 `provider=mock` means the adapter did not forward that task to enterprise Dify;
-confirm the unified API URL and Dify API Key are both configured.
+check the active task connection: a workflow URL and key per task, or a shared
+direct service with its URL, key and selected model.

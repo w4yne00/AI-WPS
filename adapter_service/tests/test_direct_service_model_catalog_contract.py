@@ -3,8 +3,9 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from io import BytesIO
 from urllib.error import HTTPError, URLError
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from app.core.errors import AdapterError
 from app.services.direct_services import DirectServiceError, DirectServiceStore
@@ -26,11 +27,17 @@ class DirectServiceModelCatalogContractTests(unittest.TestCase):
         self.temp_dir.cleanup()
 
     @staticmethod
-    def _response(payload: dict) -> MagicMock:
-        response = MagicMock()
-        response.read.return_value = json.dumps(payload).encode("utf-8")
-        response.__enter__.return_value = response
-        return response
+    def _response(payload: dict):
+        body = json.dumps(payload).encode("utf-8")
+
+        class Response(BytesIO):
+            headers = {"Content-Type": "application/json"}
+
+            def __enter__(self):
+                BytesIO.__init__(self, body)
+                return self
+
+        return Response(body)
 
     def _service(self, name: str = "目录合同服务") -> dict:
         return self.store.create_service(
@@ -262,22 +269,26 @@ class DirectServiceModelCatalogContractTests(unittest.TestCase):
             ensure_ascii=False,
         )
 
-        class RotatingStreamingResponse:
+        class RotatingStreamingResponse(BytesIO):
             headers = {"Content-Type": "text/event-stream"}
 
             def __enter__(inner_self):
+                BytesIO.__init__(inner_self, ("data: " + event + "\n\n").encode("utf-8"))
+                inner_self.rotated = False
                 return inner_self
 
             def __exit__(inner_self, exc_type, exc, tb):
                 return False
 
-            def __iter__(inner_self):
-                self.store.replace_api_key(
-                    service["id"],
-                    "sk-rotated-during-validation",
-                    expected_revision=1,
-                )
-                yield ("data: " + event + "\n\n").encode("utf-8")
+            def read1(inner_self, size=-1):
+                if not inner_self.rotated:
+                    inner_self.rotated = True
+                    self.store.replace_api_key(
+                        service["id"],
+                        "sk-rotated-during-validation",
+                        expected_revision=1,
+                    )
+                return super().read1(size)
 
         with patch(
             "urllib.request.urlopen", return_value=RotatingStreamingResponse()

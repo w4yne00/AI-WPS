@@ -288,6 +288,7 @@ def seed_upgrade_persistent_data(environment: Dict[str, str]):
         history,
         backup,
     )
+    paths += tuple((state_root / "provider_api_keys").iterdir())
     for path in paths:
         require(path.is_file(), "UPGRADE_PERSISTENT_FILE_MISSING {0}".format(path))
     return {path: path.read_bytes() for path in paths}
@@ -408,7 +409,23 @@ def run_preview_upgrade(delivery_root: Path, temp_root: Path, reserve_port) -> N
     replacement_sentinels = seed_upgrade_replacement_sentinels(environment)
     state_root = Path(environment["AI_WPS_INSTALL_ROOT"]) / "state"
     adapter_path = state_root / "adapter.json"
-    adapter_content = b'{"previewSentinel":"preserve-me"}\n'
+    DirectServiceStore, unused_provider = _load_direct_store(
+        Path(environment["AI_WPS_INSTALL_ROOT"]) / "current/adapter_service"
+    )
+    store = DirectServiceStore(adapter_path, state_root / "provider_api_keys")
+    service = store.create_service(
+        name="升级保留共享模型", service_base_url="https://upgrade.example/v1",
+        default_model="upgrade-shared-model",
+    )
+    store.replace_api_key(service["id"], "upgrade-shared-key", expected_revision=1)
+    for task in ("word.smart_write", "excel.material_ledger", "ppt.material_outline"):
+        store.activate_direct_service(service["id"], task, {
+            "serviceId": service["id"], "modelName": "",
+            "maxOutputTokens": 80000, "contextWindowTokens": 512000,
+        })
+    payload = json.loads(adapter_path.read_text(encoding="utf-8"))
+    payload["previewSentinel"] = "preserve-me"
+    adapter_content = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     adapter_path.write_bytes(adapter_content)
     key_path = state_root / "provider_api_key"
     key_content = b"preview-key-ref\n"

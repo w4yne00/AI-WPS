@@ -1,5 +1,6 @@
 import importlib.util
 import json
+from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import threading
@@ -506,16 +507,10 @@ class WordDocumentReviewDirectServiceTest(unittest.TestCase):
 
         called = {}
 
-        class StreamingResponse:
+        class StreamingResponse(BytesIO):
             headers = {"Content-Type": "text/event-stream"}
 
             def __enter__(self):
-                return self
-
-            def __exit__(self, exc_type, exc, tb):
-                return False
-
-            def __iter__(self):
                 content = '{"summary":"审查完成","issues":[]}'
                 event = json.dumps(
                     {
@@ -528,7 +523,8 @@ class WordDocumentReviewDirectServiceTest(unittest.TestCase):
                     },
                     ensure_ascii=False,
                 )
-                yield ("data: " + event + "\n\n").encode("utf-8")
+                BytesIO.__init__(self, ("data: " + event + "\n\n").encode("utf-8"))
+                return self
 
         def streaming_response(request, timeout=None):
             payload = json.loads(request.data.decode("utf-8"))

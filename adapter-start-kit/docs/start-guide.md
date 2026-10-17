@@ -32,15 +32,19 @@ bash scripts/enable_exec_permissions.sh sudo
 
 ## 启动
 
+Preview 交付包请先从包根目录运行 `bash installer/install_ai_wps.sh`，由安装器准备私有依赖并完成安装。安装后进入 `"$HOME/ai-wps/current"`，再执行下面的管理命令。自定义安装根请替换该路径。
+
+独立启动包则进入自身根目录，并事先准备 Python 运行依赖。
+
 ```bash
 bash scripts/start_adapter.sh 18100
 ```
 
 说明：
 
-- 如果目标机已安装 `uvicorn`，脚本优先使用 `uvicorn`
-- 如果目标机没有 `uvicorn`，脚本会自动降级到 `standalone` 模式
-- `standalone` 模式只依赖系统自带 `python3`，适合先打通目标机联调
+- `start_adapter.sh` 委托 `start_uvicorn_adapter.sh`，只启动 uvicorn/FastAPI 服务。
+- Preview 安装使用发布私有依赖目录；依赖缺失或导入失败时明确退出，不会自动降级到 `standalone`。
+- 独立启动包未要求私有运行时时，可使用已准备好的 Python 环境；指定解释器时使用 `PYTHON_BIN=/绝对路径/python3`。
 
 ## 状态
 

@@ -1,6 +1,6 @@
 # AI-WPS 智能编写 Dify 工作流配置手册
 
-适用版本：`v0.13.7-alpha` 及以上
+适用范围：当前交付版本的工作流平台接入；模型直连配置见 `shared-direct-service.md`。
 
 适用任务：`word.smart_write`
 
@@ -39,11 +39,11 @@ taskType = word.smart_write
 
 任务窗口设置页配置方式：
 
-1. `大模型 API URL` 填写 Dify API 根地址，例如 `https://aibot.chinasatnet.com.cn/v1`。
-2. 在“任务级 API Key”中为“智能编写”保存该 Dify 应用的 API Key。
-3. 智能编写未配置独立 Key 时，会回退使用统一 Dify Chat API Key。
+1. 打开“设置 → 智能编写”，新建工作流平台模型配置。
+2. 填写配置名称、Dify API 根地址（例如 `https://aibot.chinasatnet.com.cn/v1`）和该应用的 API Key；API Key 须输入两次。
+3. 保存并选择完整配置；智能编写按所选配置的独立地址和密钥调用 `/chat-messages`，不从统一 URL 或统一 Key 回退。
 
-当前版本的任务级 API Key 只用于选择不同 Dify 应用的认证密钥；智能编写、文档审查和格式审查仍统一调用 `/chat-messages` 路径。
+每个任务可保存多个工作流配置，选择后对新提交任务生效。完整操作见 `workflow-profile-management.md`。
 
 ## 3. 开始节点配置
 
@@ -174,13 +174,9 @@ adapter 请求体形态如下：
 
 ## 7. WPS 任务窗口验证
 
-使用 `v0.13.7-alpha` 时，先完全退出并重新启动 WPS，避免旧页面缓存影响结果。
+安装新版后，先完全退出并重新启动 WPS，避免旧页面缓存影响结果。
 
-1. 打开“设置”，确认诊断区显示：
-
-```text
-前端版本：0.13.7-alpha
-```
+1. 打开“设置”，确认诊断区的前端版本与当前交付包一致，并选择完整的智能编写工作流配置。
 
 2. 进入“智能编写”，默认菜单应为“技术方案正式 / 保持信息完整 / 保持篇幅”，也可按材料场景切换为“条理化说明”“汇报材料风格”“结论与风险”“措施与计划”或“验收与闭环”。
 3. 输入一段包含多个事项的原文。
@@ -221,7 +217,7 @@ http://127.0.0.1:18100/provider/debug-last
 
 - `containsMarkdown=false` 且 `answerLength>0`：适合普通段落场景，任务窗格会按朴素文本保留换行回显。
 - `containsMarkdown=true`：适合原文或用户要求中存在标题、列表、序号、表格、加粗等结构的场景，任务窗格会自动使用结构化回显并尽量格式化写回。
-- `provider=mock`：adapter 未真实调用 Dify，请检查 API URL 与智能编写任务级 API Key。
+- `provider=mock`：adapter 未真实调用 Dify，请检查当前接入方式以及智能编写所选工作流配置的地址和 API Key。
 
 ## 9. 现场诊断
 
@@ -231,7 +227,7 @@ http://127.0.0.1:18100/provider/debug-last
 
 1. `taskType` 是否为 `word.smart_write`。
 2. `authSource` 或 `taskAuthSource` 是否为任务级密钥文件。
-3. `url` 是否为统一 API URL 拼接 `/chat-messages`。
+3. `modelConfigurationId` 是否为所选配置，`url` 是否为该配置的服务地址拼接 `/chat-messages`。
 4. `request.bodyKeys` 是否包含 `inputs`、`query`、`response_mode`、`user`。
 5. `response.answerLength` 是否大于 0。
 

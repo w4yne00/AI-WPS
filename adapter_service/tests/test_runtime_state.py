@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import shutil
 import sqlite3
 import stat
 import subprocess
@@ -675,6 +676,180 @@ class RuntimeStateManagerTests(unittest.TestCase):
             self.assertEqual(audit_entries[-1]["action"], "restore")
             self.assertEqual(audit_entries[-1]["status"], "recovery")
             self.assertNotIn("sensitive local path", json.dumps(audit_entries))
+
+
+class SharedDirectRuntimeStateTests(unittest.TestCase):
+    def _shared_state(self, root, catalog=False, mixed=False):
+        from app.services.direct_services import DirectServiceStore
+        state = root / "state"
+        manager = RuntimeStateManager(state, root / "backups", "0.26.0-preview.1")
+        if mixed:
+            _write_legacy_state(root / "legacy")
+            manager.migrate_legacy_state(root / "legacy")
+        else:
+            state.mkdir()
+            (state / "adapter.json").write_text("{}\n", encoding="utf-8")
+            WritingPolicyStore(state / "writing_policies.db")
+        store = DirectServiceStore(state / "adapter.json", state / "provider_api_keys")
+        service = store.create_service(
+            name="共享直连", service_base_url="https://direct.example/v1",
+            default_model="" if catalog else "manual-model", api_key="synthetic-direct-secret")
+        if catalog:
+            store.update_model_list(service["id"], ["catalog-model"], expected_revision=1)
+            store.update_service(service["id"], "共享直连", store.get_service(service["id"])["revision"],
+                                 service_base_url="https://direct.example/v1", default_model="catalog-model")
+        for task in ("word.smart_write", "ppt.material_outline", "excel.material_ledger"):
+            store.activate_direct_service(service["id"], task, {
+                "serviceId": service["id"], "modelName": "", "temperature": 0,
+                "maxOutputTokens": 80000, "contextWindowTokens": 512000,
+            })
+        return manager, service["id"]
+
+    def _transaction_snapshot(self, manager, snapshot_id):
+        import importlib.util
+        script = Path(__file__).resolve().parents[2] / "phase1-delivery-kit/installer/release_transaction.py"
+        spec = importlib.util.spec_from_file_location("shared_snapshot_transaction", script)
+        transaction = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(transaction)
+        return transaction._load_snapshot(manager.backup_dir, snapshot_id, "0.26.0-preview.1", allow_degraded=True)
+
+    def test_shared_direct_snapshot_and_transaction_accept_inherited_models_without_writes(self):
+        from app.services.direct_services import DirectServiceStore
+        for catalog in (False, True):
+            with self.subTest(catalog=catalog), tempfile.TemporaryDirectory() as tmp:
+                manager, service_id = self._shared_state(Path(tmp), catalog=catalog)
+                config = manager.state_dir / "adapter.json"
+                before = config.read_bytes()
+                with mock.patch.object(DirectServiceStore, "__init__", side_effect=AssertionError("snapshot must be read-only")):
+                    result = manager.create_snapshot("candidate_release")
+                self.assertEqual(result["status"], "ready")
+                self.assertTrue(result["valid"])
+                manifest = self._transaction_snapshot(manager, result["snapshotId"])
+                self.assertEqual(manifest["inventory"]["directServices"]["totalCount"], 1)
+                self.assertEqual(len(manifest["inventory"]["taskModelSelections"]), 3)
+                self.assertEqual(len(manifest["inventory"]["activeRelationships"]), 3)
+                self.assertEqual(manifest["inventory"]["apiKeys"][0]["ref"], "direct_service_" + service_id)
+                self.assertNotIn("synthetic-direct-secret", json.dumps(manifest))
+                self.assertEqual(config.read_bytes(), before)
+
+    def test_shared_direct_snapshot_keeps_mixed_workflows_and_task_parameters_in_comparison(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            manager, service_id = self._shared_state(Path(tmp), mixed=True)
+            core, comparison = manager._inspect_core(manager.state_dir)
+            self.assertEqual(core["status"], "ready")
+            self.assertEqual(core["modelConfigurations"]["totalCount"], len(SUPPORTED_WORKFLOW_TASKS))
+            self.assertEqual(len(core["apiKeys"]), len(SUPPORTED_WORKFLOW_TASKS) + 1)
+            self.assertEqual(comparison["directServices"][service_id]["defaultModel"], "manual-model")
+            selection = comparison["taskModelSelections"]["ppt.material_outline"]
+            self.assertEqual(selection["maxOutputTokens"], 80000)
+            self.assertEqual(selection["contextWindowTokens"], 512000)
+            self.assertEqual(comparison["active"]["ppt.material_outline"], service_id)
+            result = manager.create_snapshot("candidate_release")
+            self.assertTrue(self._transaction_snapshot(manager, result["snapshotId"])["valid"])
+
+    def test_shared_direct_snapshot_rejects_corrupt_bindings_models_parameters_and_keys(self):
+        cases = ("missing_service", "service_shape", "service_identity", "selection_shape", "selection_task",
+                 "missing_selection", "selection_service", "model_control", "model_length", "missing_model",
+                 "temperature", "output", "context", "budget", "image_mode", "missing_key", "empty_key")
+        for problem in cases:
+            with self.subTest(problem=problem), tempfile.TemporaryDirectory() as tmp:
+                manager, service_id = self._shared_state(Path(tmp))
+                config = manager.state_dir / "adapter.json"
+                payload = json.loads(config.read_text(encoding="utf-8"))
+                selection = payload["taskModelSelections"]["ppt.material_outline"]
+                service = payload["directServices"][service_id]
+                if problem == "missing_service": payload["directServices"].clear()
+                elif problem == "service_shape": payload["directServices"][service_id] = []
+                elif problem == "service_identity": service["id"] = "different-service"
+                elif problem == "selection_shape": payload["taskModelSelections"]["ppt.material_outline"] = []
+                elif problem == "selection_task": payload["taskModelSelections"]["unknown.task"] = selection
+                elif problem == "missing_selection": payload["taskModelSelections"].pop("ppt.material_outline")
+                elif problem == "selection_service": selection["serviceId"] = "missing-service"
+                elif problem == "model_control": selection["modelName"] = "model\ninvalid"
+                elif problem == "model_length": service["defaultModel"] = "x" * 161
+                elif problem == "missing_model": service["defaultModel"] = ""
+                elif problem == "temperature": selection["temperature"] = float("nan")
+                elif problem == "output": selection["maxOutputTokens"] = -1
+                elif problem == "context": selection["contextWindowTokens"] = "invalid"
+                elif problem == "budget": selection["contextWindowTokens"] = 1000
+                elif problem == "image_mode": selection["imageInputMode"] = "invalid"
+                key = manager.state_dir / "provider_api_keys" / ("direct_service_" + service_id)
+                if problem == "missing_key": key.unlink()
+                elif problem == "empty_key": key.write_text("\n", encoding="utf-8")
+                config.write_text(json.dumps(payload), encoding="utf-8")
+                before = config.read_bytes()
+                result = manager.create_snapshot("candidate_release")
+                self.assertEqual(result["status"], "recovery")
+                self.assertFalse(result["valid"])
+                with self.assertRaisesRegex(Exception, "candidate_snapshot_manifest_invalid"):
+                    self._transaction_snapshot(manager, result["snapshotId"])
+                self.assertEqual(config.read_bytes(), before)
+
+    def _seed_materials(self, state):
+        files = {}
+        for name in ("word_materials", "excel_materials", "ppt_materials"):
+            directory = state / name / "document"
+            (directory / "files").mkdir(parents=True)
+            (directory / "empty-cache").mkdir()
+            for relative, content in (("manifest.json", b'{"materialId":"example"}'),
+                                      ("files/source.docx", b"original document bytes")):
+                (directory / relative).write_bytes(content)
+                files[name + "/document/" + relative] = content
+        return files
+
+    def test_materials_for_all_hosts_survive_snapshot_and_whole_state_restore(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            manager, service_id = self._shared_state(Path(tmp))
+            expected = self._seed_materials(manager.state_dir)
+            (manager.state_dir / "unknown-data").mkdir()
+            (manager.state_dir / "unknown-data/private.txt").write_text("not included")
+            snapshot = manager.create_snapshot("candidate_release")
+            manifest = self._transaction_snapshot(manager, snapshot["snapshotId"])
+            inventory = {item["path"] for item in manifest["files"]}
+            self.assertTrue(set(expected).issubset(inventory))
+            self.assertFalse(any(path.startswith("unknown-data/") for path in inventory))
+            for name in ("word_materials", "excel_materials", "ppt_materials"):
+                shutil.rmtree(str(manager.state_dir / name))
+            manager.restore_snapshot(snapshot["snapshotId"], confirmed=True)
+            for relative, content in expected.items():
+                self.assertEqual((manager.state_dir / relative).read_bytes(), content)
+            self.assertTrue((manager.state_dir / "ppt_materials/document/empty-cache").is_dir())
+
+    def test_material_snapshot_rejects_directory_and_file_symlinks(self):
+        for kind in ("root", "directory", "file"):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as tmp:
+                manager, service_id = self._shared_state(Path(tmp))
+                outside = Path(tmp) / "outside"
+                outside.mkdir()
+                (outside / "private.txt").write_text("do not follow")
+                materials = manager.state_dir / "ppt_materials"
+                if kind == "root": materials.symlink_to(outside)
+                else:
+                    materials.mkdir()
+                    (materials / "link").symlink_to(outside if kind == "directory" else outside / "private.txt")
+                with self.assertRaisesRegex(RuntimeStateError, "STATE_SYMLINK_REJECTED"):
+                    manager.create_snapshot("candidate_release")
+                self.assertEqual((outside / "private.txt").read_text(), "do not follow")
+
+    def test_material_source_change_retries_the_consistent_copy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            manager, service_id = self._shared_state(Path(tmp))
+            self._seed_materials(manager.state_dir)
+            original_copy = manager._copy_state_once
+            source = manager.state_dir / "ppt_materials/document/files/source.docx"
+            attempts = []
+
+            def copying(*args, **kwargs):
+                original_copy(*args, **kwargs)
+                attempts.append(True)
+                if len(attempts) == 1:
+                    source.write_bytes(b"updated original")
+
+            with mock.patch.object(manager, "_copy_state_once", side_effect=copying):
+                result = manager.create_snapshot("candidate_release")
+            self.assertEqual(len(attempts), 2)
+            saved = manager.backup_dir / result["snapshotId"] / "state/ppt_materials/document/files/source.docx"
+            self.assertEqual(saved.read_bytes(), b"updated original")
 
 
 if __name__ == "__main__":
