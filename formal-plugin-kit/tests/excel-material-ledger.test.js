@@ -1425,3 +1425,65 @@ test('ledger refuses ambiguous headers without changing existing selection', () 
   h.mockApp.Selection.Rows.Count = 2;
   assert.throws(()=>h.api.readSelectionHeaders(h.mockApp), /单行/);
 });
+
+test('ledger clears the reused source only after successful removal', async t => {
+  for (const outcome of ['success', 'failure', 'cancel', 'document-changed', 'document-changed-same-source', 'source-changed']) {
+    await t.test(outcome, async () => {
+      const h = createTestHarness();
+      const source = fs.readFileSync(path.join(root, 'taskpane.js'), 'utf8');
+      const nodes = Object.fromEntries(['ledger-reusable-select', 'ledger-material-list'].map(id => [id, {
+        value: '', listeners: {}, addEventListener(type, fn) { this.listeners[type] = fn; }
+      }]));
+      const select = nodes['ledger-reusable-select'];
+      const catalog = { totalDocuments: 1, totalCharacters: 807,
+        documents: [{ materialId: 'mat_0123456789abcdef', fileName: '来源.docx' }] };
+      let currentCatalog = { totalDocuments: 0, totalCharacters: 0, documents: [] };
+      let finishDelete;
+      h.requestHandler = async (url, body, opts) => {
+        if (url === '/excel/materials/clone-from-source') {
+          assert.equal(body.sourceSessionId, 'word-source');
+          currentCatalog = catalog;
+          return { success: true, data: currentCatalog };
+        }
+        if (opts && opts.method === 'DELETE') {
+          assert.equal(url, '/excel/materials/mat_0123456789abcdef?documentSessionId=' + h.session);
+          return new Promise((resolve, reject) => { finishDelete = () => {
+            if (outcome === 'failure') return reject(new Error('移除失败'));
+            currentCatalog = { totalDocuments: 0, totalCharacters: 0, documents: [] };
+            resolve({ success: true, data: { catalogSummary: currentCatalog } });
+          }; });
+        }
+        return { success: true, data: url.includes('/materials/catalog') ? currentCatalog : { conflicts: [] } };
+      };
+      const start = source.lastIndexOf('    if (byId("ledger-reusable-select")) {');
+      const end = source.indexOf('    if (byId("ledger-conflicts")) {', start);
+      vm.runInNewContext(source.slice(start, end), {
+        byId: id => nodes[id], ensureMaterialLedger: () => h.api,
+        window: { confirm: () => outcome !== 'cancel' }, beginLedgerMaterialUpload() {}
+      });
+      select.value = 'word-source';
+      select.listeners.change({ target: select });
+      await new Promise(setImmediate);
+      assert.equal(h.api.getState().catalogSummary.totalDocuments, 1);
+      nodes['ledger-material-list'].listeners.click({ target: {
+        getAttribute: key => key === 'data-ledger-remove' ? 'mat_0123456789abcdef' : null
+      } });
+      assert.equal(select.value, 'word-source', 'pending or cancelled removal keeps the selection');
+      if (outcome.startsWith('document-changed')) h.session = 'sess-excel-doc-2';
+      if (outcome === 'document-changed' || outcome === 'source-changed') select.value = 'source-B';
+      if (finishDelete) finishDelete();
+      await new Promise(setImmediate);
+      const expectedSource = outcome === 'success' ? '' :
+        (outcome === 'document-changed' || outcome === 'source-changed' ? 'source-B' : 'word-source');
+      assert.equal(select.value, expectedSource);
+      assert.equal(h.api.getState().catalogSummary.totalDocuments,
+        outcome === 'failure' || outcome === 'cancel' ? 1 : 0);
+      if (outcome === 'success') {
+        select.value = 'word-source';
+        select.listeners.change({ target: select });
+        await new Promise(setImmediate);
+        assert.equal(h.api.getState().catalogSummary.totalDocuments, 1);
+      }
+    });
+  }
+});

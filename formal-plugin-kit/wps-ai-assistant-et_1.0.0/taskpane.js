@@ -8841,7 +8841,16 @@
         if (updateId) beginLedgerMaterialUpload(updateId);
         if (removeId && window.confirm("移除这份资料？")) {
           var ctrl = ensureMaterialLedger();
-          if (ctrl) ctrl.deleteMaterial(removeId).catch(function () {});
+          if (ctrl) {
+            var removalSessionId = ctrl.getState().documentSessionId;
+            var reusableSelect = byId("ledger-reusable-select");
+            var reusableSourceId = reusableSelect.value;
+            ctrl.deleteMaterial(removeId).then(function () {
+              if (ctrl.getState().documentSessionId === removalSessionId && reusableSelect.value === reusableSourceId) {
+                reusableSelect.value = "";
+              }
+            }).catch(function () {});
+          }
         }
       });
     }

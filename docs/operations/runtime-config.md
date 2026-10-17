@@ -47,7 +47,7 @@ over `AI_WPS_STATE_DIR` for the writing-policy database only.
 - `taskRoutes`: phase-1 task route map. Each key is an adapter task type and each value can contain `taskId`, `path`, `apiKeyRef`, `payloadStyle`, `responseMode`, `outputKey`, and `enabled`.
 - `logPath`: legacy-layout adapter log file path; the shared-state layout writes to `AI_WPS_VAR_DIR/logs/adapter.log`
 - `templateRoot`: template directory root
-- `timeoutSeconds`: HTTP timeout for Dify requests
+- `timeoutSeconds`: Default model HTTP timeout. Word material composition, Excel material ledger, PPT material outline, and PPT template-page/deck generation allow at least 600 seconds; a longer configured timeout is preserved.
 
 ## Notes
 

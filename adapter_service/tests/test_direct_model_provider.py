@@ -1,4 +1,5 @@
 import json
+import socket
 import unittest
 from http.client import IncompleteRead
 from io import BytesIO
@@ -61,6 +62,33 @@ class RecordingControl:
 
 
 class DirectModelProviderTests(unittest.TestCase):
+    def test_material_generation_waits_for_slow_model_without_shortening_custom_budget(self):
+        for task_type in ("excel.material_ledger", "ppt.template_page"):
+            for configured, model_seconds in ((75, 80), (900, 700)):
+                with self.subTest(task_type=task_type, configured=configured):
+                    clock = [100.0]
+
+                    def slow_model(request, timeout):
+                        if timeout < model_seconds:
+                            clock[0] += timeout
+                            raise socket.timeout("synthetic slow model")
+                        clock[0] += model_seconds
+                        return FakeResponse({"choices": [{"message": {"content": "生成完成"}}]})
+
+                    provider = ProviderClient(AppSettings(timeout_seconds=configured))
+                    with patch("app.services.provider_client.time.monotonic", side_effect=lambda: clock[0]), \
+                         patch("urllib.request.urlopen", side_effect=slow_model):
+                        result = provider.post_task(
+                            task_type, "slow-material-generation", {}, "完整资料",
+                            task_auth={
+                                "accessMethod": "direct_model",
+                                "providerBaseUrl": "https://model.example.invalid/v1",
+                                "apiKey": "synthetic-key",
+                                "modelName": "synthetic-model",
+                            },
+                        )
+                    self.assertEqual(result["answer"], "生成完成")
+
     def test_direct_json_read_rejects_response_after_total_deadline(self):
         clock = [100.0]
 

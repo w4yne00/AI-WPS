@@ -14,6 +14,7 @@ from app.services.long_task_coordinator import (
     PRIORITY_INTERACTIVE,
 )
 from app.services.model_configurations import (
+    ACCESS_WORKFLOW_PLATFORM,
     direct_model_input_budget,
     DEFAULT_CONTEXT_WINDOW_TOKENS,
     DEFAULT_RESERVED_OUTPUT_TOKENS,
@@ -30,6 +31,7 @@ from app.services.word.material_composer import (
 )
 
 TASK_TYPE = "ppt.template_page"
+MODEL_TASK_TYPE = "ppt.material_outline"
 CLIENT_JOB_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
 MAX_REQUEST_BYTES = 64 * 1024
 MAX_KEY_POINTS = 4
@@ -131,10 +133,12 @@ class PptTemplatePageCoordinator:
             return existing
         with self.store._lock:
             catalog = deepcopy(self.store.get_catalog(session_id))
+        prompt_asset = SystemPromptStore().load(TASK_TYPE)
         snapshot = {
             "catalog": catalog,
-            "systemPrompt": SystemPromptStore().load(TASK_TYPE)["content"],
-            "taskAuth": deepcopy(self.provider.resolve_task_auth(TASK_TYPE)),
+            "systemPrompt": prompt_asset["content"],
+            "systemPromptAsset": deepcopy(prompt_asset),
+            "taskAuth": deepcopy(self.provider.resolve_task_auth(MODEL_TASK_TYPE)),
             "traceId": trace_id or client_job_id,
             "pageIndex": page_index,
             "pageRole": page_role,
@@ -185,17 +189,21 @@ class PptTemplatePageCoordinator:
         task_auth=None,
         trace_id: str = "",
         progress=None,
+        prompt_asset=None,
     ) -> str:
-        auth = task_auth if task_auth is not None else self.provider.resolve_task_auth(TASK_TYPE)
+        auth = task_auth if task_auth is not None else self.provider.resolve_task_auth(MODEL_TASK_TYPE)
         if not auth.get("providerBaseUrl") or not auth.get("apiKey"):
-            raise AdapterError("MODEL_CONFIG_INCOMPLETE", "模板正文页任务尚未配置模型，请前往设置。", status_code=400)
+            raise AdapterError("MODEL_CONFIG_INCOMPLETE", "模板页与整套生成共用资料大纲模型，请前往设置配置资料大纲。", status_code=400)
+        query = (system_prompt + "\n\n" + user_content
+                 if auth.get("accessMethod") == ACCESS_WORKFLOW_PLATFORM else user_content)
         body = self.provider.post_task(
             task_type=TASK_TYPE,
-            system_prompt=system_prompt,
-            user_content=user_content,
+            input_data={},
+            query=query,
             trace_id=trace_id,
-            progress=progress,
+            progress_callback=progress,
             task_auth=auth,
+            prompt_asset=prompt_asset or SystemPromptStore().load(TASK_TYPE),
         )
         return extract_answer(body)
 
@@ -243,11 +251,14 @@ class PptTemplatePageCoordinator:
             int(auth.get("contextWindowTokens") or DEFAULT_CONTEXT_WINDOW_TOKENS),
             int(auth.get("maxOutputTokens") or DEFAULT_RESERVED_OUTPUT_TOKENS),
         )
-        if _estimate_direct_tokens(system_prompt, system_prompt + "\n" + user_content) > budget:
+        if _estimate_direct_tokens(system_prompt, user_content) > budget:
             raise AdapterError("MODEL_INPUT_OVER_BUDGET", "资料超过单次模型预算，请缩小资料范围；未截断资料。", status_code=413)
         check_cancel()
         progress("provider_processing")
-        raw_answer = self._call_provider_model(system_prompt, user_content, task_auth=auth, trace_id=snapshot["traceId"], progress=progress)
+        raw_answer = self._call_provider_model(
+            system_prompt, user_content, task_auth=auth, trace_id=snapshot["traceId"],
+            progress=progress, prompt_asset=snapshot.get("systemPromptAsset"),
+        )
         check_cancel()
 
         progress("parsing")

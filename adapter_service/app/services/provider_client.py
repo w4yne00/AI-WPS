@@ -3872,7 +3872,7 @@ class ProviderClient:
     ) -> Dict:
         resolved_task_auth = task_auth if task_auth is not None else self.resolve_task_auth(task_type)
         timeout = timeout_seconds or self.settings.timeout_seconds
-        if task_type in ("word.material_composer", "ppt.material_outline"):
+        if task_type in ("word.material_composer", "excel.material_ledger", "ppt.material_outline", "ppt.template_page"):
             timeout = max(timeout, INTERACTIVE_WRITING_TIMEOUT_SECONDS)
         if str(resolved_task_auth.get("accessMethod", "")) == ACCESS_DIRECT_MODEL:
             if files:

@@ -6236,7 +6236,14 @@
         if (removeId && window.confirm("移除这份资料？")) {
           var ctrl = ensureMaterialOutline();
           if (ctrl) {
-            ctrl.deleteMaterial(removeId).catch(function (error) {
+            var removalSessionId = ctrl.current().documentSessionId;
+            var reusableSelect = byId("outline-reusable-select");
+            var reusableSourceId = reusableSelect.value;
+            ctrl.deleteMaterial(removeId).then(function () {
+              if (ctrl.current().documentSessionId === removalSessionId && reusableSelect.value === reusableSourceId) {
+                reusableSelect.value = "";
+              }
+            }).catch(function (error) {
               setStatus((error && error.message) || "移除资料失败");
             });
           }
