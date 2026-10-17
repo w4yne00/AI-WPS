@@ -15,6 +15,8 @@ bash scripts/ai_wps_smoke_test.sh
 
 The default installation root is `$HOME/ai-wps`. Open WPS and configure the enterprise model connection in the task pane. The package contains no local credentials or production configuration.
 
+A successful installation creates “重启 AI-WPS 后台服务” on the target user's desktop. This shortcut restarts and checks the current installed Adapter, preserving its Python interpreter, port, state and backup directories, and custom system-service settings. Reinstallation updates the same shortcut. If the desktop cannot mark it as trusted automatically, right-click it and choose “Allow Launching” or “Allow Executing” before first use. The installer checks that WPS has exited; it does not close your documents.
+
 Upgrading an existing Preview installation preserves configuration, API keys, runtime data and backups. The installer stops the old Adapter, checks the candidate, switches the Adapter and all three add-ins together, then starts and checks the new Adapter. A failed switch restores the previous generation.
 
 A first Preview installation only detects `$TARGET_HOME/ai-wps-phase1`; it does not import, overwrite or delete legacy data. It may stop an old Adapter holding the target port and replace the shared WPS add-in directories. Keep the legacy directory and reconfigure the new installation explicitly.

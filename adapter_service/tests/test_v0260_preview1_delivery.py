@@ -161,6 +161,146 @@ def _prepare_delivery(tmp_path, source_commit="e94c561"):
     return delivery
 
 
+def _run_desktop_shortcut_install(tmp_path, desktop=None, install_name="ai-wps"):
+    delivery = _prepare_delivery(tmp_path)
+    target_home = tmp_path / "目标用户"
+    target_home.mkdir()
+    target_root = target_home / install_name
+    tools = tmp_path / "desktop-tools"
+    tools.mkdir()
+    xdg = tools / "xdg-user-dir"
+    xdg.write_text(
+        '#!/bin/bash\nprintf "%s\\n" "$HOME" "$XDG_CONFIG_HOME" > "$DESKTOP_HOME_LOG"\n'
+        'printf "%s\\n" "$DESKTOP_TEST_DIR"\n', encoding="utf-8")
+    xdg.chmod(0o755)
+    gio = tools / "gio"
+    gio.write_text("#!/bin/bash\nexit 1\n", encoding="utf-8")
+    gio.chmod(0o755)
+    installer = (delivery / "installer/install_ai_wps.sh").read_text(encoding="utf-8")
+    harness = tmp_path / "desktop-harness.sh"
+    harness.write_text(
+        installer.split('\nparse_arguments "$@"\n', 1)[0]
+        + '\nTARGET_HOME="$DESKTOP_TARGET_HOME"\nCURRENT_UID="$(id -u)"\nTARGET_UID="$CURRENT_UID"\nINSTALL_ROOT="$DESKTOP_INSTALL_ROOT"\n'
+        + 'STATE_DIR="$DESKTOP_STATE_DIR"\nBACKUP_DIR="$DESKTOP_BACKUP_DIR"\nVAR_DIR="$DESKTOP_VAR_DIR"\n'
+        + 'install_desktop_restart_shortcut\ninstall_desktop_restart_shortcut\n', encoding="utf-8")
+    environment = dict(os.environ, HOME=str(tmp_path / "root-home"),
+                       PATH=str(tools) + os.pathsep + os.environ["PATH"],
+                       DESKTOP_TARGET_HOME=str(target_home), DESKTOP_INSTALL_ROOT=str(target_root),
+                       DESKTOP_TEST_DIR=str(desktop or ""), DESKTOP_HOME_LOG=str(tmp_path / "xdg-home"),
+                       XDG_CONFIG_HOME=str(tmp_path / "another-user-config"),
+                       DESKTOP_STATE_DIR=str(target_home / '自定义 配置 100% "状态"'),
+                       DESKTOP_BACKUP_DIR=str(target_home / "自定义 备份 100%"),
+                       DESKTOP_VAR_DIR=str(target_home / "自定义 运行 100%"),
+                       PYTHON_BIN=sys.executable, PORT="28371", SERVICE_NAME='自定义 100% "后台".service',
+                       AI_WPS_SYSTEMD_SERVICE_FILE=str(target_home / '服务 100% "后台".service'))
+    return target_home, target_root, environment, harness
+
+
+@pytest.mark.parametrize("layout", ["chinese", "english", "missing", "xdg", "disabled"])
+def test_preview_desktop_shortcut_uses_target_user_desktop_and_is_idempotent(tmp_path, layout):
+    desktop = tmp_path / "自定义 桌面" if layout == "xdg" else None
+    home, root, env, harness = _run_desktop_shortcut_install(tmp_path, desktop)
+    if layout in ("chinese", "english"):
+        (home / ("桌面" if layout == "chinese" else "Desktop")).mkdir()
+    if layout == "disabled":
+        env["DESKTOP_TEST_DIR"] = str(home)
+    result = subprocess.run(["bash", str(harness)], env=env, text=True, capture_output=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    expected_dir = desktop or home / ("桌面" if layout == "chinese" else "Desktop")
+    shortcut = expected_dir / "重启 AI-WPS 后台服务.desktop"
+    assert shortcut.is_file()
+    assert list(expected_dir.glob("*.desktop")) == [shortcut]
+    assert shortcut.stat().st_mode & 0o777 == 0o755
+    assert "Terminal=true\n" in shortcut.read_text(encoding="utf-8")
+    assert not (tmp_path / "root-home").exists()
+    assert (tmp_path / "xdg-home").read_text().splitlines() == [str(home), str(home / ".config")]
+    assert "desktop_shortcut_trust=manual" in result.stdout
+
+
+def test_preview_desktop_exec_preserves_literal_paths_port_and_custom_service(tmp_path):
+    home, root, env, harness = _run_desktop_shortcut_install(
+        tmp_path, tmp_path / "桌面", 'AI WPS 100% "引号" \\ $HOME `literal`')
+    result = subprocess.run(["bash", str(harness)], env=env, text=True, capture_output=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    shortcut = tmp_path / "桌面/重启 AI-WPS 后台服务.desktop"
+    content = shortcut.read_text(encoding="utf-8")
+    exec_value = next(line[5:] for line in content.splitlines() if line.startswith("Exec="))
+    assert "100%%" in exec_value
+    assert str(root / "releases") not in exec_value
+    restart = root / "current/scripts/restart_adapter.sh"
+    restart.parent.mkdir(parents=True)
+    restart.write_text(
+        '#!/bin/bash\n"$PYTHON_BIN" - "$@" <<\'PY\'\n'
+        'import json, os, sys\n'
+        'with open(os.environ["DESKTOP_ARGV_LOG"], "w") as out:\n'
+        '    json.dump([sys.argv[1:]] + [os.environ.get(key) for key in ["SERVICE_NAME", "AI_WPS_SYSTEMD_SERVICE_FILE", "PYTHON_BIN", "AI_WPS_STATE_DIR", "AI_WPS_BACKUP_DIR", "AI_WPS_VAR_DIR", "AI_WPS_DESKTOP_LAUNCH"]], out)\n'
+        'PY\n', encoding="utf-8")
+    # Decode the Desktop Entry string layer and literal percent field, then let
+    # Bash independently exercise the specified double-quoted argument rules.
+    decoded = exec_value.replace("\\\\", "\\").replace("%%", "%")
+    env["DESKTOP_ARGV_LOG"] = str(tmp_path / "desktop-argv.json")
+    env.update(PYTHON_BIN="/usr/bin/false", AI_WPS_STATE_DIR="/wrong-state",
+               AI_WPS_BACKUP_DIR="/wrong-backups", AI_WPS_VAR_DIR="/wrong-var")
+    launched = subprocess.run(["bash", "-c", decoded], env=env, text=True, capture_output=True)
+    assert launched.returncode == 0, launched.stdout + launched.stderr
+    assert json.loads(Path(env["DESKTOP_ARGV_LOG"]).read_text()) == [
+        ["28371"], '自定义 100% "后台".service', str(home / '服务 100% "后台".service'),
+        sys.executable, str(home / '自定义 配置 100% "状态"'),
+        str(home / "自定义 备份 100%"), str(home / "自定义 运行 100%"), "1"]
+
+
+def test_preview_desktop_shortcut_write_failure_is_reported(tmp_path):
+    blocked = tmp_path / "desktop-is-file"
+    blocked.write_text("keep me", encoding="utf-8")
+    home, root, env, harness = _run_desktop_shortcut_install(tmp_path, blocked)
+    result = subprocess.run(["bash", str(harness)], env=env, text=True, capture_output=True)
+    assert result.returncode != 0
+    assert "install_failed=target_path_parent_not_directory name=desktop_dir" in result.stdout
+    assert "desktop_shortcut=installed" not in result.stdout
+    assert blocked.read_text() == "keep me"
+
+
+def test_preview_deferred_desktop_failure_rolls_back_before_parent_handoff(tmp_path):
+    from tests.test_release_transaction import ReleaseTransactionTests
+    blocked = tmp_path / "desktop-is-file"
+    blocked.write_text("keep me", encoding="utf-8")
+    home, root, env, harness = _run_desktop_shortcut_install(tmp_path, blocked)
+    fixture = ReleaseTransactionTests()
+    paths = fixture._prepare_generation(tmp_path / "generations")
+    paths["current"].symlink_to(paths["release_target"])
+    transaction = fixture._prepare_transaction(paths, "desktop-failure")
+    installer = (tmp_path / "delivery/installer/install_ai_wps.sh").read_text(encoding="utf-8")
+    cleanup = "cleanup_installation_candidate() {" + installer.split(
+        "cleanup_installation_candidate() {", 1)[1].split('EARLY_FAILURE_GUARD_ACTIVE="0"', 1)[0]
+    # Execute the generated main's real transition calls, with real transaction
+    # and EXIT cleanup; substitute only process startup/port inspection.
+    transitions = installer.split('\nRELEASE_SWITCHED="1"\n', 1)[1].split(
+        '\ncleanup_installation_candidate\n', 1)[0]
+    harness.write_text(
+        harness.read_text().split('\ninstall_desktop_restart_shortcut\n', 1)[0]
+        + '\nTRANSACTION_TOOL="$TEST_TRANSACTION_TOOL"\nTRANSACTION_LOG="$TEST_TRANSACTION_LOG"\n'
+        + 'CURRENT_LINK="$TEST_CURRENT_LINK"\nLEGACY_ADAPTER_TARGET="$CURRENT_LINK"\n'
+        + 'RELEASE_VERSION="$TEST_RELEASE_VERSION"\nRELEASE_SWITCHED=1\n'
+        + 'STATE_DIR="$TEST_STATE_DIR"\nBACKUP_DIR="$TEST_BACKUP_DIR"\nVAR_DIR="$TEST_VAR_DIR"\n'
+        + 'SYSTEMD_HANDOFF_FILE="$VAR_DIR/run/handoff.json"\n'
+        + 'start_and_check_adapter() { return 0; }\nadapter_port_is_listening() { return 1; }\n'
+        + 'restart_previous_adapter() { echo previous_adapter_restarted; }\n'
+        + cleanup + '\ntrap cleanup_installation_candidate EXIT\n' + transitions,
+        encoding="utf-8")
+    env.update(AI_WPS_DEFER_RELEASE_COMMIT="1", AI_WPS_SYSTEMD_MANAGED_BY_PARENT="1",
+               TEST_TRANSACTION_TOOL=str(ROOT / "phase1-delivery-kit/installer/release_transaction.py"),
+               TEST_TRANSACTION_LOG=str(transaction), TEST_CURRENT_LINK=str(paths["current"]),
+               TEST_RELEASE_VERSION=paths["release_version"], TEST_STATE_DIR=str(paths["state"]),
+               TEST_BACKUP_DIR=str(paths["backups"]), TEST_VAR_DIR=str(paths["transactions"].parent))
+    result = subprocess.run(["bash", str(harness)], env=env, text=True, capture_output=True)
+    assert result.returncode != 0
+    assert "name=desktop_dir" in result.stdout
+    assert json.loads(transaction.read_text())["status"] == "rolled_back"
+    assert (paths["current"] / "version.txt").read_text() == "old"
+    assert (paths["state"] / "version.txt").read_text() == "old"
+    assert not (paths["transactions"].parent / "run/handoff.json").exists()
+
+
 def test_prepare_creates_neutral_preview_identity_from_phase1_delivery_tree(tmp_path):
     delivery = _prepare_delivery(tmp_path)
 

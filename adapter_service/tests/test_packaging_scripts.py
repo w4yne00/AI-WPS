@@ -925,6 +925,187 @@ exit 0
         self.assertIn("provider=mock", scripts["show_logs.sh"])
         self.assertIn("stop_port_listener", scripts["stop_adapter.sh"])
 
+    def _run_restart_adapter(self, managed=False, stop_status=0, systemctl_status=0,
+                             real_stop=False, listener_pid="", owns_listener=False,
+                             process_identity="adapter", desktop_launch=False, use_tty=False,
+                             stale_pid=False):
+        with tempfile.TemporaryDirectory(prefix="restart-adapter-") as directory:
+            root = Path(directory).resolve()
+            scripts = root / "scripts"
+            scripts.mkdir()
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            trace = root / "calls"
+            trace.write_text("", encoding="utf-8")
+            shutil.copy2(ROOT / "adapter-start-kit/scripts/restart_adapter.sh", scripts)
+            shutil.copy2(ROOT / "adapter-start-kit/scripts/runtime_paths.sh", scripts)
+            (root / "adapter_service").mkdir()
+            for name, step, status in [
+                ("stop_adapter.sh", "stop", stop_status),
+                ("start_uvicorn_adapter.sh", "start", 0),
+                ("check_health.sh", "check", 0),
+            ]:
+                (scripts / name).write_text(
+                    '#!/usr/bin/env bash\nprintf "%s %s\\n" "{0}" "$1" >> "$RESTART_TRACE"\nexit {1}\n'.format(step, status),
+                    encoding="utf-8",
+                )
+            if real_stop:
+                for name in ("stop_adapter.sh", "runtime_paths.sh"):
+                    shutil.copy2(ROOT / "adapter-start-kit/scripts" / name, scripts)
+            lsof = bin_dir / "lsof"
+            lsof.write_text('#!/usr/bin/env bash\nprintf "%s" "$RESTART_LISTENER_PID"\n', encoding="utf-8")
+            lsof.chmod(0o755)
+            if owns_listener:
+                run_dir = root / "var/run"
+                run_dir.mkdir(parents=True)
+                (run_dir / "adapter.pid").write_text(listener_pid, encoding="utf-8")
+                for name in ("readlink", "ps"):
+                    command = bin_dir / name
+                    command.write_text('#!/usr/bin/env bash\nprintf "%s\\n" "$' +
+                                       ("RESTART_APP_ROOT" if name == "readlink" else "RESTART_PROCESS_COMMAND") + '"\n', encoding="utf-8")
+                    command.chmod(0o755)
+            if stale_pid:
+                run_dir = root / "var/run"
+                run_dir.mkdir(parents=True, exist_ok=True)
+                (run_dir / "adapter.pid").write_text(str(os.getpid()), encoding="utf-8")
+            systemctl = bin_dir / "systemctl"
+            systemctl.write_text(
+                '#!/usr/bin/env bash\nprintf "systemctl %s\\n" "$*" >> "$RESTART_TRACE"\nexit {0}\n'.format(systemctl_status),
+                encoding="utf-8",
+            )
+            systemctl.chmod(0o755)
+            service = root / "ai-wps-adapter.service"
+            if managed:
+                service.write_text("[Service]\n", encoding="utf-8")
+            environment = os.environ.copy()
+            environment.update({
+                "PATH": str(bin_dir) + os.pathsep + environment.get("PATH", ""),
+                "RESTART_TRACE": str(trace),
+                "AI_WPS_SYSTEMD_SERVICE_FILE": str(service),
+                "AI_WPS_STATE_DIR": str(root / "state"),
+                "AI_WPS_BACKUP_DIR": str(root / "backups"),
+                "AI_WPS_VAR_DIR": str(root / "var"),
+                "RESTART_LISTENER_PID": listener_pid,
+                "RESTART_APP_ROOT": str(root / "adapter_service"),
+                "RESTART_PROCESS_COMMAND": "python3 -s -m uvicorn app.main:app --host 127.0.0.1 --port 19123",
+                "AI_WPS_DESKTOP_LAUNCH": "1" if desktop_launch else "0",
+            })
+            if process_identity == "foreign-root":
+                environment["RESTART_APP_ROOT"] = "/another-installation/adapter_service"
+            elif process_identity == "foreign-command":
+                environment["RESTART_PROCESS_COMMAND"] = "python3 unrelated_service.py"
+            master_fd = None
+            input_fd = subprocess.DEVNULL
+            expect_pause = use_tty and desktop_launch and stop_status != 0
+            if use_tty:
+                import pty
+                master_fd, input_fd = pty.openpty()
+                if not expect_pause:
+                    os.write(master_fd, b"\n")
+            try:
+                command = ["bash", str(scripts / "restart_adapter.sh"), "19123"]
+                if expect_pause:
+                    import select
+                    with subprocess.Popen(command, env=environment, text=True, stdin=input_fd,
+                                          stdout=subprocess.PIPE, stderr=subprocess.PIPE) as process:
+                        ready, _, _ = select.select([process.stderr], [], [], 5)
+                        first_error = process.stderr.readline() if ready else ""
+                        try:
+                            process.wait(timeout=0.1)
+                            waiting = False
+                        except subprocess.TimeoutExpired:
+                            waiting = True
+                        os.write(master_fd, b"\n")
+                        stdout, stderr = process.communicate(timeout=10)
+                        self.assertTrue(waiting, "desktop failure must wait until Enter is pressed")
+                        completed = subprocess.CompletedProcess(command, process.returncode, stdout, first_error + stderr)
+                else:
+                    completed = subprocess.run(command, env=environment, text=True, capture_output=True,
+                                               check=False, stdin=input_fd, timeout=10)
+            finally:
+                if master_fd is not None:
+                    os.close(master_fd)
+                    os.close(input_fd)
+            if stale_pid and completed.returncode == 0:
+                self.assertFalse((root / "var/run/adapter.pid").exists())
+            return completed, trace.read_text(encoding="utf-8").splitlines()
+
+    def test_restart_adapter_manual_stops_starts_and_checks(self):
+        completed, calls = self._run_restart_adapter()
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        self.assertEqual(calls, ["stop 19123", "start 19123", "check 19123"])
+
+    def test_restart_adapter_stop_failure_prevents_start(self):
+        completed, calls = self._run_restart_adapter(stop_status=7)
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertEqual(calls, ["stop 19123"])
+
+    def test_restart_adapter_desktop_failure_waits_only_with_tty_and_preserves_exit_code(self):
+        for desktop, tty, status, summary in [
+            (True, True, 7, True),
+            (True, False, 7, False),
+            (False, True, 7, False),
+            (True, True, 0, False),
+        ]:
+            with self.subTest(desktop=desktop, tty=tty, status=status):
+                completed, _ = self._run_restart_adapter(
+                    desktop_launch=desktop, use_tty=tty, stop_status=status,
+                )
+                self.assertEqual(completed.returncode, status)
+                self.assertEqual("后台服务重启失败" in completed.stdout + completed.stderr, summary)
+
+    def test_restart_adapter_missing_pid_and_free_port_starts_normally(self):
+        completed, calls = self._run_restart_adapter(real_stop=True)
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        self.assertIn("adapter_pid_file=missing", completed.stdout)
+        self.assertEqual(calls, ["start 19123", "check 19123"])
+
+    def test_restart_adapter_reused_stale_pid_is_not_killed_when_port_is_free(self):
+        completed, calls = self._run_restart_adapter(stale_pid=True)
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        self.assertEqual(calls, ["start 19123", "check 19123"])
+
+    def test_restart_adapter_unidentified_listener_is_left_untouched(self):
+        completed, calls = self._run_restart_adapter(listener_pid="77777")
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertEqual(calls, [])
+        self.assertIn("restart_failed=unrecognized_port_listener", completed.stdout + completed.stderr)
+
+    def test_restart_adapter_owned_listener_can_restart(self):
+        completed, calls = self._run_restart_adapter(listener_pid="77777", owns_listener=True)
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        self.assertEqual(calls, ["stop 19123", "start 19123", "check 19123"])
+
+    def test_restart_adapter_pid_file_alone_does_not_prove_process_ownership(self):
+        for identity in ("foreign-root", "foreign-command"):
+            with self.subTest(identity=identity):
+                completed, calls = self._run_restart_adapter(
+                    listener_pid="77777", owns_listener=True, process_identity=identity,
+                )
+                self.assertNotEqual(completed.returncode, 0)
+                self.assertEqual(calls, [])
+
+    def test_restart_adapter_systemd_uses_service_manager(self):
+        for listener in ("", "77777"):
+            with self.subTest(listener=listener):
+                completed, calls = self._run_restart_adapter(
+                    managed=True, listener_pid=listener, owns_listener=bool(listener),
+                )
+                self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+                self.assertEqual(calls, ["systemctl restart ai-wps-adapter.service", "check 19123"])
+
+    def test_restart_adapter_systemd_refuses_foreign_listener_before_restart(self):
+        completed, calls = self._run_restart_adapter(managed=True, listener_pid="77777")
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertEqual(calls, [])
+        self.assertIn("restart_failed=unrecognized_port_listener", completed.stdout + completed.stderr)
+
+    def test_restart_adapter_systemd_failure_does_not_fall_back_to_manual_kill(self):
+        completed, calls = self._run_restart_adapter(managed=True, systemctl_status=5)
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertEqual(calls, ["systemctl restart ai-wps-adapter.service"])
+        self.assertIn("restart_failed=systemd", completed.stdout + completed.stderr)
+
     def test_health_script_rejects_recovery_from_ready_http_status(self) -> None:
         script = ROOT / "adapter-start-kit/scripts/check_health.sh"
         with tempfile.TemporaryDirectory() as temp_dir:

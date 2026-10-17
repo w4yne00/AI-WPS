@@ -626,6 +626,69 @@ PY
 }
 """,
     )
+    desktop_function = r'''
+install_desktop_restart_shortcut() {
+  local desktop_dir="" desktop_file
+  if command -v xdg-user-dir >/dev/null 2>&1; then
+    desktop_dir="$(HOME="$TARGET_HOME" XDG_CONFIG_HOME="$TARGET_HOME/.config" xdg-user-dir DESKTOP)" || log "desktop_directory_query=unavailable"
+  fi
+  if [ -z "$desktop_dir" ] || [ "$desktop_dir" = "$TARGET_HOME" ]; then
+    if [ -d "$TARGET_HOME/桌面" ]; then
+      desktop_dir="$TARGET_HOME/桌面"
+    else
+      desktop_dir="$TARGET_HOME/Desktop"
+    fi
+  fi
+  validate_target_path "desktop_dir" "$desktop_dir"
+  mkdir -p "$desktop_dir" || fail "desktop_shortcut_directory_failed path=$desktop_dir"
+  desktop_file="$desktop_dir/重启 AI-WPS 后台服务.desktop"
+  [ ! -L "$desktop_file" ] || fail "desktop_shortcut_symlink path=$desktop_file"
+  "$PYTHON_BIN" - "$desktop_file" "PYTHON_BIN=$PYTHON_BIN" \
+    "AI_WPS_STATE_DIR=$STATE_DIR" "AI_WPS_BACKUP_DIR=$BACKUP_DIR" "AI_WPS_VAR_DIR=$VAR_DIR" \
+    "SERVICE_NAME=$SYSTEMD_SERVICE_NAME" "AI_WPS_SYSTEMD_SERVICE_FILE=$SYSTEMD_SERVICE_FILE" \
+    "AI_WPS_DESKTOP_LAUNCH=1" /bin/bash "$INSTALL_ROOT/current/scripts/restart_adapter.sh" "$PORT" \
+    <<'PY' || fail "desktop_shortcut_write_failed path=$desktop_file"
+import os
+from pathlib import Path
+import sys
+
+def quote(value):
+    value = value.replace("%", "%%")
+    value = '"' + ''.join('\\' + char if char in '\\"`$' else char for char in value) + '"'
+    return value.replace('\\', '\\\\').replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t')
+
+arguments = ['/usr/bin/env'] + sys.argv[2:]
+content = '[Desktop Entry]\nType=Application\nName=重启 AI-WPS 后台服务\n'
+content += 'Comment=重启并检查本机 AI-WPS 后台服务\nTerminal=true\nIcon=system-reboot\n'
+content += 'Exec=' + ' '.join(quote(value) for value in arguments) + '\n'
+Path(sys.argv[1]).write_text(content, encoding='utf-8')
+os.chmod(sys.argv[1], 0o755)
+PY
+  log "desktop_shortcut=installed path=$desktop_file"
+  if command -v gio >/dev/null 2>&1 && HOME="$TARGET_HOME" XDG_CONFIG_HOME="$TARGET_HOME/.config" gio set "$desktop_file" metadata::trusted true >/dev/null 2>&1; then
+    log "desktop_shortcut_trust=enabled"
+  else
+    log "desktop_shortcut_trust=manual 首次使用时请在桌面右键选择允许启动或允许执行。"
+  fi
+}
+'''
+    main_marker = '\nparse_arguments "$@"\n'
+    if main_marker not in content:
+        raise ValueError("V0260_INSTALLER_MAIN_MISSING")
+    content = content.replace(main_marker, desktop_function + main_marker, 1)
+    transition_marker = "switch_release_generation\nfinalize_release_generation\n"
+    if transition_marker not in content:
+        raise ValueError("V0260_INSTALLER_SWITCH_SEQUENCE_MISSING")
+    content = content.replace(transition_marker, "switch_release_generation\ninstall_desktop_restart_shortcut\nfinalize_release_generation\n", 1)
+    handoff_marker = '      AI_WPS_SYSTEMD_UNIT_BACKUP="$SYSTEMD_UNIT_BACKUP" \\\n'
+    if handoff_marker not in content:
+        raise ValueError("V0260_INSTALLER_SERVICE_HANDOFF_MISSING")
+    content = content.replace(
+        handoff_marker,
+        handoff_marker + '      SERVICE_NAME="$SYSTEMD_SERVICE_NAME" \\\n'
+        + '      AI_WPS_SYSTEMD_SERVICE_FILE="$SYSTEMD_SERVICE_FILE" \\\n',
+        1,
+    )
     path.write_text(content, encoding="utf-8")
     path.chmod(0o755)
 
