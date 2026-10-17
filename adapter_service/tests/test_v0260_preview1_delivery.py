@@ -1213,6 +1213,12 @@ def test_preview_upgrade_allows_runtime_migration_fields_while_preserving_user_c
         calls.append(len(calls) + 1)
         if len(calls) == 2:
             payload = json.loads((state_root / "adapter.json").read_text(encoding="utf-8"))
+            for task in ("word.smart_write", "excel.material_ledger", "ppt.material_outline"):
+                selection = payload["taskModelSelections"][task]
+                service_id = selection["serviceId"]
+                assert payload["activeModelConfigurations"][task] == service_id
+                assert payload["directServices"][service_id]["defaultModel"] == "upgrade-shared-model"
+                assert (state_root / "provider_api_keys" / ("direct_service_" + service_id)).read_text().strip() == "upgrade-shared-key"
             payload["migrationState"] = {"workflowProfilesVersion": 1}
             (state_root / "adapter.json").write_text(
                 json.dumps(payload, ensure_ascii=False, indent=2) + "\n",

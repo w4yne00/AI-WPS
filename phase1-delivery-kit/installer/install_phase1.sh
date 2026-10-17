@@ -30,6 +30,7 @@ RELEASE_VERSION="0.23.1-alpha"
 PREVIOUS_RELEASE_VERSION="legacy"
 PREVIOUS_SNAPSHOT_ID=""
 CANDIDATE_SNAPSHOT_ID=""
+CANDIDATE_SNAPSHOT_STATUS=""
 TRANSACTION_LOG=""
 SYSTEMD_SERVICE_PRESENT="0"
 SYSTEMD_WAS_ACTIVE="0"
@@ -719,6 +720,7 @@ create_candidate_state_snapshot() {
     ready) log "candidate_state_snapshot_status=ready" ;;
     *) fail "candidate_state_snapshot_status=invalid value=$status" ;;
   esac
+  CANDIDATE_SNAPSHOT_STATUS="$status"
 }
 
 synchronize_candidate_state_with_snapshot() {
@@ -810,6 +812,10 @@ run_candidate_preflight() {
     ready|degraded|recovery) ;;
     *) fail "candidate_preflight_status_missing" ;;
   esac
+  if [ "$CANDIDATE_SNAPSHOT_STATUS" = "recovery" ] \
+    && [ "$CANDIDATE_HEALTH_STATUS" != "recovery" ]; then
+    fail "candidate_snapshot_preflight_mismatch snapshot=$CANDIDATE_SNAPSHOT_STATUS preflight=$CANDIDATE_HEALTH_STATUS"
+  fi
   CANDIDATE_RECOVERY_SUMMARY="$(
     printf '%s\n' "$result" \
       | sed -n 's/^candidate_recovery_fault_summary=\(.*\)$/\1/p' \
@@ -1220,10 +1226,6 @@ cleanup_installation_candidate() {
       rm -rf "$candidate_path"
     fi
   done
-  if [ "$PRESERVE_RECOVERY_CANDIDATE" = "1" ] \
-    && [ "${AI_WPS_SYSTEMD_MANAGED_BY_PARENT:-0}" != "1" ]; then
-    restart_previous_adapter
-  fi
 }
 EARLY_FAILURE_GUARD_ACTIVE="0"
 trap cleanup_installation_candidate EXIT

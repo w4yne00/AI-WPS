@@ -555,7 +555,8 @@ else:
     source=Path(a.state_dir); target=Path(a.backup_dir)/snapshot_id; target.mkdir(parents=True)
     shutil.copytree(str(source), str(target/'state'))
     degraded=(source/'writing_policies.db').exists() and (source/'writing_policies.db').read_bytes() == b'existing-policy'
-    status=os.environ.get('FAKE_RUNTIME_STATUS') or ('degraded' if degraded else 'ready')
+    candidate_status=os.environ.get('FAKE_CANDIDATE_SNAPSHOT_STATUS') if a.reason == 'candidate_release' else None
+    status=candidate_status or os.environ.get('FAKE_RUNTIME_STATUS') or ('degraded' if degraded else 'ready')
     files=[{'path':p.relative_to(source).as_posix(),'sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'size':p.stat().st_size} for p in sorted(source.rglob('*')) if p.is_file()]
     core_status='recovery' if status == 'recovery' else 'ready'
     policy_status='degraded' if status == 'degraded' else 'ready'
@@ -569,7 +570,7 @@ else:
 
             for script_name, body in {
                 "install_private_runtime.sh": "#!/usr/bin/env bash\nmkdir -p \"$4\"\n",
-                "preflight_candidate.sh": "#!/usr/bin/env bash\nprintf '%s\\n' \"candidate_preflight=${FAKE_RUNTIME_STATUS:-ready}\"\nif [ \"${FAKE_RUNTIME_STATUS:-ready}\" = recovery ]; then printf '%s\\n' 'candidate_recovery_fault_summary=modelConfigurations:recovery:MODEL_CONFIGURATION_DATA_UNAVAILABLE:load_model_configurations'; fi\nexit 0\n",
+                "preflight_candidate.sh": "#!/usr/bin/env bash\nstatus=\"${FAKE_PREFLIGHT_STATUS:-${FAKE_RUNTIME_STATUS:-ready}}\"\nprintf '%s\\n' \"candidate_preflight=$status\"\nif [ \"$status\" = recovery ]; then printf '%s\\n' 'candidate_recovery_fault_summary=modelConfigurations:recovery:MODEL_CONFIGURATION_DATA_UNAVAILABLE:load_model_configurations'; fi\nexit 0\n",
             }.items():
                 script = installer_dir / script_name
                 script.write_text(body, encoding="utf-8")
@@ -704,6 +705,58 @@ exit 22
                     "current_pointer",
                 ],
             )
+
+            start_log = root / "adapter-start.log"
+            original_start_log = start_log.read_bytes()
+            unchanged_files = {
+                path: path.read_bytes()
+                for directory in (state_dir, jsaddons, release, install_root / "backups")
+                for path in directory.rglob("*") if path.is_file()
+            }
+            original_current = os.readlink(str(current))
+            for was_running in (False, True):
+                with self.subTest(snapshot_preflight_mismatch=True, was_running=was_running):
+                    before_starts = start_log.read_text(encoding="utf-8").splitlines()
+                    mismatch_environment = dict(environment)
+                    mismatch_environment.update({
+                        "FAKE_CANDIDATE_SNAPSHOT_STATUS": "recovery",
+                        "FAKE_CURRENT_READY": "1" if was_running else "0",
+                    })
+                    mismatch = subprocess.run(
+                        ["bash", str(installer_dir / "install_phase1.sh")],
+                        env=mismatch_environment, check=False, capture_output=True, text=True,
+                    )
+                    self.assertNotEqual(mismatch.returncode, 0)
+                    self.assertEqual(start_log.read_text(encoding="utf-8").splitlines(),
+                                     before_starts + (["generation-one"] if was_running else []))
+                    self.assertEqual(os.readlink(str(current)), original_current)
+                    for path, content in unchanged_files.items():
+                        self.assertEqual(path.read_bytes(), content, str(path))
+                    self.assertEqual(len(list((install_root / "var/transactions").glob("*.json"))), 1)
+                    self.assertIn("candidate_state_snapshot_status=recovery", mismatch.stdout)
+                    self.assertIn("candidate_preflight=ready", mismatch.stdout)
+                    self.assertIn("candidate_snapshot_preflight_mismatch", mismatch.stdout)
+            for was_running in (False, True):
+                with self.subTest(recovery_blocked=True, was_running=was_running):
+                    before_starts = start_log.read_text(encoding="utf-8").splitlines()
+                    blocked_environment = dict(environment)
+                    blocked_environment.update({
+                        "FAKE_CANDIDATE_SNAPSHOT_STATUS": "recovery",
+                        "FAKE_PREFLIGHT_STATUS": "recovery",
+                        "FAKE_CURRENT_READY": "1" if was_running else "0",
+                    })
+                    blocked = subprocess.run(
+                        ["bash", str(installer_dir / "install_phase1.sh")],
+                        env=blocked_environment, check=False, capture_output=True, text=True,
+                    )
+                    self.assertEqual(blocked.returncode, 2, blocked.stderr or blocked.stdout)
+                    self.assertIn("candidate_recovery_requires_explicit_activation", blocked.stdout)
+                    self.assertEqual(start_log.read_text(encoding="utf-8").splitlines(),
+                                     before_starts + (["generation-one"] if was_running else []))
+                    self.assertEqual(os.readlink(str(current)), original_current)
+                    for path, content in unchanged_files.items():
+                        self.assertEqual(path.read_bytes(), content, str(path))
+            start_log.write_bytes(original_start_log)
 
             preflight_script = installer_dir / "preflight_candidate.sh"
             ready_preflight = preflight_script.read_text(encoding="utf-8")

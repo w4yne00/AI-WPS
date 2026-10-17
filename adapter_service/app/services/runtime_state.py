@@ -15,8 +15,10 @@ from typing import Dict, List, Optional, Tuple
 from app.services.model_configurations import (
     ModelConfigurationStore,
     WORKFLOW_PROFILE_MIGRATION_VERSION,
+    direct_model_input_budget,
     normalize_service_base_url,
 )
+from app.services.direct_services import DirectServiceStore
 from app.services.workflow_profiles import SUPPORTED_WORKFLOW_TASKS
 from app.services.writing_policy.store import WritingPolicyStore
 
@@ -26,6 +28,7 @@ MIN_VALID_SNAPSHOTS = 3
 _SAFE_REF = re.compile(r"^[A-Za-z0-9_.-]+$")
 _SAFE_REASON = re.compile(r"^[a-z][a-z0-9_.-]{0,63}$")
 _STATE_FILES = ("adapter.json", "provider_api_key", "writing_policies.db")
+_MATERIAL_DIRS = ("word_materials", "excel_materials", "ppt_materials")
 _CONSISTENT_COPY_ATTEMPTS = 3
 _POLICY_TABLE_COLUMNS = {
     "writing_policy_terms": {
@@ -417,6 +420,8 @@ class RuntimeStateManager:
                 "inventory": {
                     "modelConfigurations": core["modelConfigurations"],
                     "activeRelationships": core["activeRelationships"],
+                    "directServices": core["directServices"],
+                    "taskModelSelections": core["taskModelSelections"],
                     "taskKeyReferenceCount": core["taskKeyReferenceCount"],
                     "apiKeys": core["apiKeys"],
                     "writingPolicies": policy,
@@ -470,6 +475,23 @@ class RuntimeStateManager:
         if target.exists():
             shutil.rmtree(str(target))
 
+    @staticmethod
+    def _material_entries(root: Path):
+        for name in _MATERIAL_DIRS:
+            directory = root / name
+            if directory.is_symlink():
+                raise RuntimeStateError("STATE_SYMLINK_REJECTED", "recovery")
+            if not directory.exists():
+                continue
+            if not directory.is_dir():
+                raise RuntimeStateError("STATE_FILE_INVALID", "recovery")
+            for path in [directory] + sorted(directory.rglob("*")):
+                if path.is_symlink():
+                    raise RuntimeStateError("STATE_SYMLINK_REJECTED", "recovery")
+                if not path.is_dir() and not path.is_file():
+                    raise RuntimeStateError("STATE_FILE_INVALID", "recovery")
+                yield path.relative_to(root).as_posix(), path
+
     def _state_signature(self, source: Path, legacy_layout: bool) -> tuple:
         if source.is_symlink():
             raise RuntimeStateError("STATE_SYMLINK_REJECTED", "recovery")
@@ -506,6 +528,12 @@ class RuntimeStateManager:
             for path in sorted(policy_parent.glob("writing_policies.db.backup-*"))
         )
         signatures = []
+        for relative, path in self._material_entries(policy_parent):
+            if path.is_dir():
+                info = path.stat()
+                signatures.append((relative, (info.st_dev, info.st_ino, info.st_mtime_ns, info.st_ctime_ns), "directory"))
+            else:
+                candidates.append((relative, path))
         for relative, path in candidates:
             if not path.exists():
                 continue
@@ -573,6 +601,14 @@ class RuntimeStateManager:
                 shutil.copyfile(str(key_path), str(target_keys / key_path.name))
                 (target_keys / key_path.name).chmod(0o600)
 
+        for relative, source_path in self._material_entries(policy_parent):
+            target_path = target / relative
+            if source_path.is_dir():
+                target_path.mkdir(mode=0o700)
+            else:
+                shutil.copyfile(str(source_path), str(target_path))
+                target_path.chmod(0o600)
+
         for backup in sorted(policy_parent.glob("writing_policies.db.backup-*")):
             if backup.is_symlink() or not backup.is_file():
                 continue
@@ -608,7 +644,8 @@ class RuntimeStateManager:
 
         try:
             configurations = self._logical_configurations(payload)
-            active = self._logical_active_relationships(payload, configurations)
+            services, selections = self._logical_direct_configurations(payload)
+            active = self._logical_active_relationships(payload, configurations, services, selections)
             task_refs = self._task_key_references(payload)
             referenced_keys = {
                 str(item["apiKeyRef"])
@@ -616,6 +653,11 @@ class RuntimeStateManager:
                 if item.get("apiKeyRef")
             }
             referenced_keys.update(task_refs.values())
+            direct_key_refs = {"direct_service_" + service_id for service_id in services}
+            for service_id in services:
+                ref = "direct_service_" + service_id
+                if service_id in active.values() or self._key_path(state, ref) is not None:
+                    referenced_keys.add(ref)
             routes = payload.get("taskRoutes", {})
             if routes is None:
                 routes = {}
@@ -641,6 +683,8 @@ class RuntimeStateManager:
                 key_path = self._key_path(state, ref)
                 if key_path is None or not key_path.is_file():
                     raise ValueError("missing key")
+                if ref in direct_key_refs and not key_path.read_text(encoding="utf-8").strip():
+                    raise ValueError("empty direct service key")
                 fingerprint = _sha256_file(key_path)
                 key_inventory.append(
                     {"ref": ref, "sha256": fingerprint, "present": True}
@@ -681,11 +725,25 @@ class RuntimeStateManager:
                     {"taskType": task, "configurationId": active[task]}
                     for task in sorted(active)
                 ],
+                "directServices": {
+                    "totalCount": len(services),
+                    "items": [{"serviceId": service_id, "defaultModel": services[service_id]["defaultModel"],
+                               "apiKeyRef": "direct_service_" + service_id}
+                              for service_id in sorted(services)],
+                },
+                "taskModelSelections": [dict(
+                    taskType=task,
+                    **{field: selections[task].get(field) for field in (
+                        "serviceId", "modelName", "temperature", "maxOutputTokens", "contextWindowTokens",
+                        "imageInputMode", "customModel")},
+                ) for task in sorted(selections)],
                 "taskKeyReferenceCount": len(task_refs),
                 "apiKeys": key_inventory,
             }
             comparison = {
                 "configurations": comparison_configurations,
+                "directServices": services,
+                "taskModelSelections": selections,
                 "active": active,
                 "taskKeyRefs": task_refs,
                 "routes": route_comparison,
@@ -708,6 +766,8 @@ class RuntimeStateManager:
                 "items": [],
             },
             "activeRelationships": [],
+            "directServices": {"totalCount": 0, "items": []},
+            "taskModelSelections": [],
             "taskKeyReferenceCount": 0,
             "apiKeys": [],
         }
@@ -773,9 +833,53 @@ class RuntimeStateManager:
         }
 
     @staticmethod
+    def _logical_direct_configurations(payload: dict) -> Tuple[dict, dict]:
+        services = payload.get("directServices", {})
+        selections = payload.get("taskModelSelections", {})
+        if services is None:
+            services = {}
+        if selections is None:
+            selections = {}
+        if not isinstance(services, dict) or not isinstance(selections, dict):
+            raise ValueError("invalid direct model configurations")
+        normalized_services = {}
+        for service_id, item in services.items():
+            RuntimeStateManager._validate_ref(service_id)
+            if not isinstance(item, dict) or str(item.get("id", service_id)).strip() != service_id:
+                raise ValueError("invalid direct service identity")
+            url = str(item.get("serviceBaseUrl", "")).strip()
+            normalized_services[service_id] = dict(
+                item, id=service_id,
+                serviceBaseUrl=normalize_service_base_url(url) if url else "",
+                defaultModel=DirectServiceStore._validate_model_name(item.get("defaultModel", "")),
+            )
+        normalized_selections = {}
+        for task, item in selections.items():
+            if task not in SUPPORTED_WORKFLOW_TASKS or not isinstance(item, dict):
+                raise ValueError("invalid task model selection")
+            service_id = str(item.get("serviceId", "")).strip()
+            if service_id and service_id not in normalized_services:
+                raise ValueError("invalid task model service reference")
+            model = DirectServiceStore._validate_model_name(item.get("modelName", ""))
+            if type(item.get("customModel", False)) is not bool or (item.get("customModel") and not model):
+                raise ValueError("invalid custom model selection")
+            temperature = DirectServiceStore._validate_temperature(item.get("temperature"))
+            output = DirectServiceStore._validate_optional_token_limit(item.get("maxOutputTokens"), "最大输出 Token")
+            context = DirectServiceStore._validate_optional_token_limit(item.get("contextWindowTokens"), "上下文容量")
+            if output is not None and context is not None and direct_model_input_budget(context, output)[0] <= 0:
+                raise ValueError("invalid direct model token budget")
+            DirectServiceStore._validate_image_input_mode(task, item.get("imageInputMode"))
+            normalized_selections[task] = dict(item, serviceId=service_id, modelName=model,
+                                               temperature=temperature, maxOutputTokens=output,
+                                               contextWindowTokens=context)
+        return normalized_services, normalized_selections
+
+    @staticmethod
     def _logical_active_relationships(
-        payload: dict, configurations: Dict[str, dict]
+        payload: dict, configurations: Dict[str, dict], services=None, selections=None,
     ) -> Dict[str, str]:
+        if services is None or selections is None:
+            services, selections = RuntimeStateManager._logical_direct_configurations(payload)
         current = payload.get("activeModelConfigurations", {})
         legacy = (
             payload.get("activeWorkflowProfiles", {})
@@ -794,7 +898,13 @@ class RuntimeStateManager:
         for task, item_id in result.items():
             if task not in SUPPORTED_WORKFLOW_TASKS:
                 raise ValueError("invalid active task")
-            if item_id not in configurations or configurations[item_id]["taskType"] != task:
+            if item_id in configurations and configurations[item_id]["taskType"] == task:
+                continue
+            service = services.get(item_id, {})
+            selection = selections.get(task, {})
+            if (not service or selection.get("serviceId") != item_id
+                    or not service.get("serviceBaseUrl")
+                    or not (selection.get("modelName") or service.get("defaultModel"))):
                 raise ValueError("invalid active target")
         return result
 
