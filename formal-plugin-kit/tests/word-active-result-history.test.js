@@ -1044,6 +1044,49 @@ runAll().catch((err) => {
 });
 
 const test = require('node:test');
+
+for (const taskType of ['word.smart_write', 'word.smart_imitation']) {
+  test(taskType + ' streams and completes in an unsaved document across fresh host proxies', () => {
+    const mode = taskType === 'word.smart_write' ? 'smartWrite' : 'smartImitation';
+    const freshDocument = () => Object.freeze({
+      Name: '文档1', FullName: '文档1',
+      Windows: () => ({ Item: () => ({ Hwnd: () => 910001 }) })
+    });
+    const session = helpers.getDocumentSessionId(freshDocument());
+    const previewKey = [taskType, session, 'unsaved-stream'].join('::');
+    const h = createBaseContext({
+      state: {
+        currentMode: mode, documentSessionId: session, writingJobId: 'unsaved-stream',
+        writingJobPreviews: { [previewKey]: {
+          jobId: 'unsaved-stream', taskType, documentSessionId: session, mode, text: '本轮增量正文'
+        } }
+      },
+      ctx: { getActiveDocument: freshDocument, helpers }
+    });
+    h.byId('result-output').textContent = '正在生成增量文本预览';
+    const renderPreview = vm.runInNewContext(`(${functionSource('renderWritingJobPreview')}\n)`, h.ctx);
+    renderPreview(previewKey);
+    const streamedText = h.byId('result-output').textContent;
+    h.ctx.completeWritingJob({ rewrittenText: '本轮完整正文' }, 'trace-unsaved', taskType,
+      false, mode, 'unsaved-stream', session);
+    assert.equal(h.byId('result-output').textContent, '本轮完整正文');
+    assert.equal(streamedText, '本轮增量正文');
+    assert.equal(h.state.historyUnreadCount, 0);
+    assert.equal(h.ctx.getActiveResultRecord(taskType, session).result.rewrittenText, '本轮完整正文');
+  });
+}
+
+test('unsaved documents with the same name in different windows remain isolated', () => {
+  const documentInWindow = handle => Object.freeze({
+    Name: '文档1', FullName: '文档1', Windows: { Item: () => ({ HWND: handle }) }
+  });
+  const first = helpers.getDocumentSessionId(documentInWindow(910002));
+  assert.equal(helpers.getDocumentSessionId(documentInWindow(910002)), first);
+  assert.notEqual(helpers.getDocumentSessionId(documentInWindow(910003)), first);
+  assert.notEqual(helpers.getDocumentSessionId(documentInWindow(0)),
+    helpers.getDocumentSessionId(documentInWindow(0)));
+});
+
 function writingSubmissionHarness(taskType = 'word.smart_write') {
   const pending = [];
   const timers = [];

@@ -4229,6 +4229,10 @@
     if (btnNewWorkflowProfile) {
       btnNewWorkflowProfile.disabled = state.workflowProfileMutationBusy;
     }
+    var btnNewDirectService = byId("btn-new-direct-service");
+    if (btnNewDirectService) {
+      btnNewDirectService.disabled = state.workflowProfileMutationBusy || (state.directServices || []).length >= 5;
+    }
   }
 
   function setWorkflowProfileMutationBusy(busy) {
@@ -4609,9 +4613,9 @@
       return Promise.resolve();
     }
     var isDirectService = String(profileId || "").startsWith("direct_svc_");
-    var autoValidate = isDirectService && (taskType === "word.smart_write" || taskType === "word.smart_imitation");
+    var writingDirectService = isDirectService && (taskType === "word.smart_write" || taskType === "word.smart_imitation");
     state.taskModelConfigStatusByTask[taskType] = "";
-    if (!autoValidate) state.workflowProfileSelections[taskType] = profileId;
+    if (!writingDirectService) state.workflowProfileSelections[taskType] = profileId;
     if (typeof invalidateWorkflowProfileRequests === "function") {
       invalidateWorkflowProfileRequests(taskType);
     }
@@ -4620,38 +4624,28 @@
       serviceId: profileId, modelName: "", customModel: false,
       temperature: null, maxOutputTokens: null, contextWindowTokens: null
     };
-    var service = autoValidate ? findDirectService(profileId) : null;
-    var manualModel = autoValidate && helpers.isManualTaskModelSelection(selection, service);
     var originatingTask = getCurrentWorkflowTaskType();
     var operationId;
-    var probeNotice = "";
-    if (autoValidate) {
+    if (writingDirectService) {
       state.directServiceOperationId = Number(state.directServiceOperationId || 0) + 1;
       operationId = state.directServiceOperationId;
-      if (!manualModel) setStatus("正在验证目录模型的流式能力（会真实请求模型，可能产生费用）...");
     }
     function isCurrentActivation() {
-      return !autoValidate || (state.directServiceOperationId === operationId && getCurrentWorkflowTaskType() === originatingTask);
+      return !writingDirectService || (state.directServiceOperationId === operationId && getCurrentWorkflowTaskType() === originatingTask);
     }
     function abandonActivation() {
-      if (autoValidate && state.directServiceOperationId === operationId) setWorkflowProfileMutationBusy(false);
+      if (writingDirectService && state.directServiceOperationId === operationId) setWorkflowProfileMutationBusy(false);
       return { superseded: true };
     }
-    function activate() {
-      if (!isCurrentActivation()) {
-        return Promise.resolve(abandonActivation());
-      }
-      return isDirectService ? request("/provider/direct-services/" + encodeURIComponent(profileId) + "/activate", {
-        taskType: taskType,
-        taskModelSelection: selection
-      }) : request("/provider/model-configurations/" + encodeURIComponent(profileId) + "/activate", {});
-    }
-    var activationPromise = autoValidate
-      ? helpers.validateWordWritingCatalogSelection(taskType, selection, service, request).then(activate)
-      : activate();
+    var activationPromise = isDirectService ? request("/provider/direct-services/" + encodeURIComponent(profileId) + "/activate", {
+      taskType: taskType,
+      taskModelSelection: selection
+    }, { timeoutMs: SETTINGS_REFRESH_REQUEST_TIMEOUT_MS }) : request("/provider/model-configurations/" + encodeURIComponent(profileId) + "/activate", {}, {
+      timeoutMs: SETTINGS_REFRESH_REQUEST_TIMEOUT_MS
+    });
     return activationPromise
       .then(function (body) {
-        if ((body && body.superseded) || (autoValidate && state.directServiceOperationId !== operationId)) return abandonActivation();
+        if ((body && body.superseded) || (writingDirectService && state.directServiceOperationId !== operationId)) return abandonActivation();
         if (isDirectService) {
           state.workflowProfileSelections[taskType] = profileId;
           state.taskModelConfigStatusByTask[taskType] = "";
@@ -4667,24 +4661,6 @@
             configured: true,
             taskKeyConfigured: true
           });
-          if (manualModel) {
-            probeNotice = "模型配置已切换，正在后台探测流式能力...";
-            request("/provider/task-model-selections/" + encodeURIComponent(taskType) + "/validate", selection)
-              .then(function (probeBody) {
-                var result = probeBody && probeBody.data && (probeBody.data.validation || probeBody.data);
-                return result && result.streamingCapability === "validated";
-              }, function () { return false; })
-              .then(function (validated) {
-                if (!isCurrentActivation()) return;
-                var active = state.taskModelSelections[taskType];
-                if (!active || active.serviceId !== profileId || (active.modelName || "") !== "") return;
-                probeNotice = validated ? "模型配置已切换（流式能力已确认）。" : "模型配置已切换（流式探测未通过，将使用普通调用）。";
-                var draft = typeof getTaskModelSelectionDraft === "function" ? getTaskModelSelectionDraft() : selection;
-                if (!state.workflowProfileMutationBusy && draft.serviceId === selection.serviceId && (draft.modelName || "") === "") {
-                  setStatus(probeNotice);
-                }
-              });
-          }
         } else {
           var nextData = normalizeWorkflowProfileData(body && body.data || {}, taskType);
           if (typeof invalidateWorkflowProfileRequests === "function") {
@@ -4704,13 +4680,14 @@
           });
         }
         if (!isCurrentActivation()) return abandonActivation();
-        var dsRefresh = typeof loadDirectServices === "function" ? loadDirectServices() : Promise.resolve();
+        var refreshOptions = { timeoutMs: SETTINGS_REFRESH_REQUEST_TIMEOUT_MS };
+        var dsRefresh = typeof loadDirectServices === "function" ? loadDirectServices(undefined, refreshOptions) : Promise.resolve();
         return Promise.all([
-          loadWorkflowProfiles(taskType),
+          loadWorkflowProfiles(taskType, undefined, refreshOptions),
           dsRefresh
         ]).then(function () {
           if (!isCurrentActivation()) return abandonActivation();
-          state.workflowProfileMutationBusy = false;
+          setWorkflowProfileMutationBusy(false);
           renderWorkflowProfileStrip();
           renderWorkflowTaskTabs();
           if (typeof renderTaskModelSelectionSection === "function") {
@@ -4720,10 +4697,12 @@
             renderFullDocumentReviewEntry();
           }
           renderModelInterfaceState(state.modelInterfaceDetectable);
-          setStatus(probeNotice || "模型配置已切换，从下一次任务开始生效。");
+          var loadError = state.workflowProfiles[taskType] && state.workflowProfiles[taskType].loadError;
+          setStatus(loadError ? "模型配置已激活，但刷新最新列表失败：" + loadError :
+            "模型配置已切换，从下一次任务开始生效。");
         }).catch(function (refreshError) {
           if (!isCurrentActivation()) return abandonActivation();
-          state.workflowProfileMutationBusy = false;
+          setWorkflowProfileMutationBusy(false);
           renderWorkflowProfileStrip();
           renderWorkflowTaskTabs();
           renderWorkflowProfileManager();
@@ -4758,7 +4737,7 @@
             restoreFocus: true
           };
         var stillOnOriginatingTask = getCurrentWorkflowTaskType() === taskType;
-        state.workflowProfileMutationBusy = false;
+        setWorkflowProfileMutationBusy(false);
         state.workflowProfileSelections[taskType] = rolled.selectionId;
         state.taskModelConfigStatusByTask[taskType] = "error";
         renderWorkflowProfileStrip();
@@ -4767,8 +4746,10 @@
         if (!stillOnOriginatingTask) {
           return;
         }
-        setStatus("切换模型配置失败：" + describeFetchError(error));
-        setNodeTextIfChanged(byId("workflow-switch-feedback"), rolled.statusText);
+        var timedOut = error && error.name === "AbortError";
+        setStatus(timedOut ? "切换请求超时，请刷新设置确认当前生效配置后重试。" :
+          "切换模型配置失败：" + describeFetchError(error));
+        setNodeTextIfChanged(byId("workflow-switch-feedback"), timedOut ? "切换结果待确认" : rolled.statusText);
         if (rolled.restoreFocus) {
           focusTaskModelConfigTrigger();
         }

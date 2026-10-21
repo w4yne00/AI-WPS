@@ -6766,8 +6766,12 @@
     setWorkflowMutationBusy(true);
     var isDirectService = String(profileId || "").startsWith("direct_svc_");
     var activationPromise = isDirectService
-      ? request("/provider/direct-services/" + encodeURIComponent(profileId) + "/activate", { taskType: targetTask })
-      : request("/provider/model-configurations/" + encodeURIComponent(profileId) + "/activate", {});
+      ? request("/provider/direct-services/" + encodeURIComponent(profileId) + "/activate", { taskType: targetTask }, {
+        timeoutMs: SETTINGS_REFRESH_REQUEST_TIMEOUT_MS
+      })
+      : request("/provider/model-configurations/" + encodeURIComponent(profileId) + "/activate", {}, {
+        timeoutMs: SETTINGS_REFRESH_REQUEST_TIMEOUT_MS
+      });
     return activationPromise
       .then(function (body) {
         var activatedData;
@@ -6783,17 +6787,21 @@
           state.workflowProfileSelections[targetTask] = activatedData.activeProfileId || profileId;
           state.taskModelConfigStatusByTask[targetTask] = "";
         }
-        var dsRefresh = typeof loadDirectServices === "function" ? loadDirectServices() : Promise.resolve();
+        var refreshOptions = { timeoutMs: SETTINGS_REFRESH_REQUEST_TIMEOUT_MS };
+        var dsRefresh = typeof loadDirectServices === "function" ? loadDirectServices(undefined, refreshOptions) : Promise.resolve();
         return Promise.all([
-          loadWorkflowProfileForTask(targetTask),
+          loadWorkflowProfileForTask(targetTask, undefined, refreshOptions),
           dsRefresh
         ]).then(function (refreshResults) {
           var refreshResult = refreshResults[0];
+          var directResult = refreshResults[1];
           setWorkflowMutationBusy(false);
           if (typeof renderModelInterfaceState === "function") {
             renderModelInterfaceState(state.modelInterfaceDetectable);
           }
-          if (refreshResult && refreshResult.failed) {
+          if (directResult && directResult.failed) {
+            setStatus("模型配置已激活，但刷新最新列表失败：" + describeFetchError(directResult.error));
+          } else if (refreshResult && refreshResult.failed) {
             setStatus("模型配置已激活，但刷新最新列表失败：" + (state.workflowProfilesByTask[targetTask].loadError || "网络异常"));
           } else {
             setStatus("模型配置已切换，从下一次任务开始生效。");
@@ -6824,8 +6832,10 @@
         state.workflowProfileSelections[targetTask] = rolled.selectionId;
         state.taskModelConfigStatusByTask[targetTask] = "error";
         setWorkflowMutationBusy(false);
-        setStatus("切换模型配置失败：" + describeFetchError(error));
-        setNodeTextIfChanged(byId("workflow-switch-feedback"), rolled.statusText);
+        var timedOut = error && error.name === "AbortError";
+        setStatus(timedOut ? "切换请求超时，请刷新设置确认当前生效配置后重试。" :
+          "切换模型配置失败：" + describeFetchError(error));
+        setNodeTextIfChanged(byId("workflow-switch-feedback"), timedOut ? "切换结果待确认" : rolled.statusText);
         renderWorkflowProfileStrip();
         if (rolled.restoreFocus) {
           focusTaskModelConfigTrigger();

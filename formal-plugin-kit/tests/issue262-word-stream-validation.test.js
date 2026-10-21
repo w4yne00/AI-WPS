@@ -299,18 +299,21 @@ function confirmationPane(taskType, manual = false) {
   const saved = { serviceId: "direct_svc_old", modelName: "old-model" };
   const draft = { serviceId: service.id, modelName: "", customModel: false };
   const state = { taskModelSelections: { [taskType]: saved }, taskApiKeys: {},
-    workflowProfileSelections: { [taskType]: saved.serviceId }, taskModelConfigStatusByTask: {} };
+    workflowProfiles: {}, workflowProfileSelections: { [taskType]: saved.serviceId }, taskModelConfigStatusByTask: {} };
   const status = { textContent: "" };
+  const switchFeedback = { textContent: "" };
   const probe = deferred();
   const calls = [];
   let currentTask = taskType;
   const ctx = {
     state, helpers: require(path.join(wordRoot, "taskpane-helpers.js")), TASK_API_KEY_DEFS: [],
+    SETTINGS_REFRESH_REQUEST_TIMEOUT_MS: 8000,
     getTaskModelSelectionDraft: () => ({ ...draft }),
     getSettingsWorkflowTaskType: () => currentTask, getCurrentWorkflowTaskType: () => currentTask,
     findDirectService: () => service, getWorkflowProfileData: () => ({ activeProfileId: saved.serviceId }),
     getWorkflowProfileById: () => ({ complete: true }), isWorkflowInteractionBlocked: () => false,
-    byId: id => id.endsWith("-model-select") ? { value: draft.modelName } : status,
+    byId: id => id.endsWith("-model-select") ? { value: draft.modelName } :
+      id === "workflow-switch-feedback" ? switchFeedback : status,
     setWorkflowProfileMutationBusy: busy => { state.workflowProfileMutationBusy = busy; },
     loadWorkflowProfiles: async () => {}, loadDirectServices: async () => {},
     renderWorkflowProfileStrip() {}, renderWorkflowTaskTabs() {}, renderWorkflowProfileManager() {},
@@ -384,46 +387,51 @@ for (const taskType of ["word.smart_write", "word.smart_imitation"]) {
     assert.match(p.status.textContent, /不支持流式|未通过流式/);
   });
 
-  test(`${taskType} compact catalog switch validates once before activation`, async () => {
+  test(`${taskType} compact catalog switch saves once without validating the model`, async () => {
     const p = confirmationPane(taskType);
     const pending = p.activateWorkflowProfile(p.service.id, taskType, p.saved.serviceId);
     await p.activateWorkflowProfile(p.service.id, taskType, p.saved.serviceId);
-    assert.deepStrictEqual(p.calls, [`/provider/task-model-selections/${taskType}/validate`]);
-    p.probe.resolve({ data: { streamingCapability: "validated" } });
     await pending;
-    assert.strictEqual(p.calls[1], `/provider/direct-services/${p.service.id}/activate`);
+    assert.deepStrictEqual(p.calls, [`/provider/direct-services/${p.service.id}/activate`]);
+    assert.strictEqual(p.state.workflowProfileMutationBusy, false);
   });
 
-  test(`${taskType} compact unsupported switch preserves previous activation`, async () => {
+  test(`${taskType} compact local activation failure preserves the previous selection`, async () => {
     const p = confirmationPane(taskType);
-    p.probe.resolve({ data: { streamingCapability: "unsupported" } });
+    p.context.request = async url => {
+      p.calls.push(url);
+      throw new Error("本地保存失败");
+    };
     await p.activateWorkflowProfile(p.service.id, taskType, p.saved.serviceId);
-    assert.strictEqual(p.calls.length, 1);
-    assert.ok(p.calls[0].endsWith("/validate"));
+    assert.deepStrictEqual(p.calls, [`/provider/direct-services/${p.service.id}/activate`]);
     assert.strictEqual(p.state.workflowProfileSelections[taskType], p.saved.serviceId);
     assert.strictEqual(p.state.taskModelSelections[taskType], p.saved);
+    assert.strictEqual(p.state.workflowProfileMutationBusy, false);
+    assert.match(p.status.textContent, /本地保存失败/);
   });
 
-  test(`${taskType} compact inherited manual model activates without awaiting probe`, async () => {
+  test(`${taskType} compact inherited manual model activates without starting a probe`, async () => {
     const p = confirmationPane(taskType, true);
     await p.activateWorkflowProfile(p.service.id, taskType, p.saved.serviceId);
-    assert.deepStrictEqual(p.calls, [`/provider/direct-services/${p.service.id}/activate`,
-      `/provider/task-model-selections/${taskType}/validate`]);
+    assert.deepStrictEqual(p.calls, [`/provider/direct-services/${p.service.id}/activate`]);
     assert.strictEqual(p.state.workflowProfileMutationBusy, false);
-    p.probe.reject(new Error("探测失败"));
-    await new Promise(resolve => setImmediate(resolve));
     assert.strictEqual(p.state.taskModelSelections[taskType].serviceId, p.service.id);
   });
 
-  test(`${taskType} compact validation cannot activate after switching tasks`, async () => {
+  test(`${taskType} compact switch retains the cached capability returned by local activation`, async () => {
     const p = confirmationPane(taskType);
-    const pending = p.activateWorkflowProfile(p.service.id, taskType, p.saved.serviceId);
-    p.switchTask("word.document_review");
-    p.probe.resolve({ data: { streamingCapability: "validated" } });
-    await pending;
-    assert.strictEqual(p.calls.length, 1);
-    assert.strictEqual(p.state.workflowProfileSelections[taskType], p.saved.serviceId);
-    assert.strictEqual(p.state.workflowProfileMutationBusy, false);
+    const capability = {
+      status: "validated", serviceId: p.service.id, serviceRevision: 1,
+      serviceBaseUrl: "https://model.test/v1", apiKeyFingerprint: "test-fingerprint",
+      modelName: "catalog-model", testedAt: "2026-10-21T12:00:00Z"
+    };
+    p.context.request = async (url, body) => {
+      p.calls.push(url);
+      return { data: { taskModelSelection: { ...body.taskModelSelection, streamingCapability: capability } } };
+    };
+    await p.activateWorkflowProfile(p.service.id, taskType, p.saved.serviceId);
+    assert.deepStrictEqual(p.calls, [`/provider/direct-services/${p.service.id}/activate`]);
+    assert.strictEqual(p.state.taskModelSelections[taskType].streamingCapability, capability);
   });
 
   for (const stage of ["activation", "refresh"]) {
@@ -436,7 +444,6 @@ for (const taskType of ["word.smart_write", "word.smart_imitation"]) {
       } else {
         p.context.loadWorkflowProfiles = () => response.promise;
       }
-      p.probe.resolve({ data: { streamingCapability: "validated" } });
       const pending = p.activateWorkflowProfile(p.service.id, taskType, p.saved.serviceId);
       await new Promise(resolve => setImmediate(resolve));
       p.switchTask("word.document_review");

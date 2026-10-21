@@ -670,6 +670,7 @@ async function assertBehavioralDomContracts() {
   const baseContext = {
     state: testState,
     helpers: helpers,
+    SETTINGS_REFRESH_REQUEST_TIMEOUT_MS: 8000,
     byId: byId,
     setNodeTextIfChanged: setNodeTextIfChanged,
     escaped: escaped,
@@ -996,6 +997,7 @@ async function assertWordBehavioralDomContracts() {
   const baseContext = {
     state: testState,
     helpers: wordHelpers,
+    SETTINGS_REFRESH_REQUEST_TIMEOUT_MS: 8000,
     byId: byId,
     setNodeTextIfChanged: setNodeTextIfChanged,
     escaped: escaped,
