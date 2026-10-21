@@ -6937,15 +6937,32 @@
   function getStableDocumentSessionId(document) {
     var fullName = "";
     var identity;
+    var windows;
+    var windowObject;
+    var handle;
     try {
       fullName = document.FullName || document.fullName || "";
     } catch (e) {}
     identity = String(fullName || "").trim().replace(/\\/g, "/");
-    // An unsaved host document may report its temporary name as FullName.
-    if (!/^(?:\/|[A-Za-z]:\/|[A-Za-z][A-Za-z0-9+.-]*:\/\/)/.test(identity)) {
-      return "";
+    if (/^(?:\/|[A-Za-z]:\/|[A-Za-z][A-Za-z0-9+.-]*:\/\/)/.test(identity)) {
+      identity = "full:" + identity;
+    } else {
+      // Unsaved documents need a host window identity across fresh COM proxies.
+      windows = safeRead(document, "Windows") || safeRead(document, "windows");
+      if (typeof windows === "function") {
+        windows = safeCall(windows, document);
+      }
+      windowObject = getCollectionItem(windows, 1);
+      handle = firstDefined(safeRead(windowObject, "Hwnd"), safeRead(windowObject, "HWND"));
+      if (typeof handle === "function") {
+        handle = safeCall(handle, windowObject);
+      }
+      handle = String(handle === undefined || handle === null ? "" : handle).trim();
+      if (!handle || handle === "0") {
+        return "";
+      }
+      identity = "window:" + handle + ":" + String(safeRead(document, "Name") || safeRead(document, "name") || fullName || "").trim();
     }
-    identity = "full:" + identity;
     return "doc_session_v2_" +
       hashDocumentIdentity(identity, 2166136261) +
       hashDocumentIdentity(identity, 2246822507) +

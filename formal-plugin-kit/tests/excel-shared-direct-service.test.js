@@ -259,6 +259,7 @@ test("Direct services behavior: max 5 limit, single key contract, and activation
   const ctx = {
     state,
     helpers,
+    SETTINGS_REFRESH_REQUEST_TIMEOUT_MS: 8000,
     byId(id) { return mockNodes[id] || null; },
     escaped(s) { return s || ""; },
     setStatus(s) { statusText = s; },

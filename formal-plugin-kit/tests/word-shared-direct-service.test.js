@@ -275,6 +275,7 @@ test("Word direct services behavior: max 5 limit, single key, and activation rol
   const ctx = {
     state,
     helpers,
+    SETTINGS_REFRESH_REQUEST_TIMEOUT_MS: 8000,
     byId(id) { return mockNodes[id] || null; },
     escapeWorkflowText(s) { return s || ""; },
     setStatus(s) { statusText = s; },
