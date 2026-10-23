@@ -467,6 +467,7 @@
     async function generate() {
       var s = current();
       if (s.busy) return;
+      var displayName = opts.getDocumentDisplayName ? opts.getDocumentDisplayName() : "工作簿.xlsx";
       var payload = s.pendingRequest;
       var selectedHeaders = s.headers.filter(function (h) { return s.uncheckedHeaders.indexOf(h) < 0; });
       if (!payload && !selectedHeaders.length) { s.error = "至少选择一列台账表头。"; notify(s); return; }
@@ -486,6 +487,7 @@
         }
         payload = clone({
           documentSessionId: s.documentSessionId,
+          documentDisplayName: displayName,
           clientJobId: "job_" + Math.random().toString(36).slice(2, 10),
           headers: selectedHeaders,
           instruction: s.instruction,
@@ -564,14 +566,17 @@
     async function cancel() {
       var s = current();
       if (!s.jobId) return;
+      var jobId = s.jobId;
       try {
-        var res = await request("/excel/material-ledger/jobs/" + encodeURIComponent(s.jobId) + "/cancel", {
+        var res = await request("/excel/material-ledger/jobs/" + encodeURIComponent(jobId) + "/cancel", {
           documentSessionId: s.documentSessionId
         }, { method: "POST" });
+        if (s.jobId !== jobId) return;
         if (!res || !res.data) throw new Error("取消响应无效");
         finishJob(s, res.data);
         if (s.busy) pollJob(s.jobId, s.documentSessionId);
       } catch (err) {
+        if (s.jobId !== jobId) return;
         s.error = "取消失败：" + ((err && err.message) || "请稍后重试");
         notify(s);
       }

@@ -1115,6 +1115,106 @@ function writingSubmissionHarness(taskType = 'word.smart_write') {
 }
 const flushWritingPromises = () => new Promise(resolve => setImmediate(resolve));
 
+function useRealWritingPreview(h) {
+  Object.assign(h.ctx, {
+    updateResultViewButtons() {}, setResultViewSwitchVisible() {},
+    renderWritingPolicyUsage() {}, renderWritingPolicyAudit() {}
+  });
+  for (const name of ['getLatestOriginalText', 'shouldUseStructuredSmartWriteResult',
+    'normalizeSmartWriteResult', 'renderSmartWritePreviewMode', 'setSmartWriteResult', 'setResultViewMode']) {
+    h.ctx[name] = vm.runInNewContext(`(${functionSource(name)}\n)`, h.ctx);
+  }
+}
+
+test('a history read started before clearing cannot restore deleted Word history', async () => {
+  const h = writingSubmissionHarness();
+  const loading = h.ctx.loadAndRenderWritingHistory();
+  const clearing = h.ctx.handleClearWritingHistory();
+  h.pending[1].resolve({success: true});
+  await clearing;
+  h.pending[0].resolve({data: {items: [{id: 'deleted', result: {rewrittenText: '旧结果'}}]}});
+  await loading;
+  assert.equal(h.state.historyItems.length, 0);
+  assert.ok(!h.byId('word-history-content').innerHTML.includes('旧结果'));
+});
+
+test('clearing one Word feature cannot empty another feature history after a switch', async () => {
+  const h = writingSubmissionHarness();
+  h.state.historyTaskType = 'word.smart_write';
+  const clearing = h.ctx.handleClearWritingHistory();
+  h.state.historyTaskType = 'word.smart_imitation';
+  h.state.historyItems = [{id: 'imitation-record'}];
+  h.byId('word-history-content').innerHTML = '仿写历史';
+  h.pending[0].resolve({success: true});
+  await clearing;
+  assert.equal(h.state.historyItems[0].id, 'imitation-record');
+  assert.equal(h.byId('word-history-content').innerHTML, '仿写历史');
+});
+
+test('a Word history read started during deletion cannot restore the deleted item', async () => {
+  const h = writingSubmissionHarness();
+  h.state.historyItems = [{id: 'deleted'}];
+  const deleting = h.ctx.handleWritingHistoryDeleteItem('deleted');
+  const loading = h.ctx.loadAndRenderWritingHistory();
+  h.pending[0].resolve({success: true});
+  await deleting;
+  h.pending[1].resolve({data: {items: [{id: 'deleted', result: {rewrittenText: '已删除旧结果'}}]}});
+  await loading;
+  assert.equal(h.state.historyItems.length, 0);
+  assert.ok(!h.byId('word-history-content').innerHTML.includes('已删除旧结果'));
+});
+
+for (const operation of ['handleClearWritingHistory', 'handleWritingHistoryDeleteItem']) {
+  for (const outcome of ['success', 'failure']) {
+    test(operation + ' late ' + outcome + ' leaves the settings page untouched', async () => {
+      const h = writingSubmissionHarness();
+      h.state.historyItems = [{id: 'old'}];
+      const deleting = h.ctx[operation]('old');
+      h.state.currentMode = 'settings';
+      h.byId('status-line').textContent = '设置页面';
+      h.byId('word-history-content').innerHTML = '保留历史';
+      if (outcome === 'success') h.pending[0].resolve({success: true});
+      else h.pending[0].reject(Error('旧删除错误'));
+      await deleting;
+      assert.equal(h.byId('status-line').textContent, '设置页面');
+      assert.equal(h.byId('word-history-content').innerHTML, '保留历史');
+    });
+  }
+}
+
+for (const taskType of ['word.smart_write', 'word.smart_imitation']) {
+  test(taskType + ' renders the newest completed text through the real preview renderer', async () => {
+    const h = writingSubmissionHarness(taskType);
+    useRealWritingPreview(h);
+    const results = ['第一轮的独立结果', '第二轮的新目标结果', '第三轮的新目标结果'];
+    for (let round = 0; round < results.length; round += 1) {
+      h.ctx.extractDocument = () => ({selectionMode: 'selection', content: {plainText: '目标段落' + round}});
+      h.byId('imitation-template-text').value = '模板段落' + round;
+      h.start();
+      if (h.timers.length) h.timers.shift()();
+      const call = h.pending.filter(item => item.payload && item.payload.clientJobId)[round];
+      call.resolve({data: {jobId: call.payload.clientJobId, status: 'completed', result: {rewrittenText: results[round]}}});
+      await flushWritingPromises();
+      assert.equal(h.byId('result-output').textContent, results[round]);
+      assert.equal(h.state.rewriteResult.rewrittenText, results[round]);
+      h.ctx.setResultViewMode('plain');
+      assert.equal(h.byId('result-output').textContent, results[round]);
+      h.ctx.switchWordHistoryView(true);
+      h.ctx.switchWordHistoryView(false);
+      assert.equal(h.byId('result-output').textContent, results[round]);
+    }
+  });
+
+  test(taskType + ' starts a new submission from history in the visible active result panel', () => {
+    const h = writingSubmissionHarness(taskType);
+    h.ctx.switchWordHistoryView(true);
+    h.start();
+    assert.equal(h.state.historyOpen, false);
+    assert.equal(h.byId('word-result-section').hidden, false);
+    assert.equal(h.byId('word-history-view').hidden, true);
+  });
+}
+
 for (const taskType of ['word.smart_write', 'word.smart_imitation']) {
   test(taskType + ' identical inputs execute new submissions, hide old results, and reject rapid clicks', async () => {
     const h = writingSubmissionHarness(taskType);

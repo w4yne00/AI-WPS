@@ -1661,6 +1661,7 @@
 
   function setSmartWriteResult(result, taskType) {
     var normalized = normalizeSmartWriteResult(result);
+    state.rewriteResult = normalized;
     var text = normalized.rewrittenText || "";
     var previewSource = {};
     var key;
@@ -9387,10 +9388,17 @@
 
   function handleClearWritingHistory() {
     var taskType = state.historyTaskType || getCurrentWorkflowTaskType();
+    var requestedMode = state.currentMode;
+    var requestSequence = (state.historyLoadSequence || 0) + 1;
+    state.historyLoadSequence = requestSequence;
     return request("/history?taskType=" + encodeURIComponent(taskType), null, {
       method: "DELETE",
       timeoutMs: 8000
     }).then(function () {
+      if (state.currentMode !== requestedMode || state.historyTaskType && state.historyTaskType !== taskType) {
+        return;
+      }
+      state.historyLoadSequence = (state.historyLoadSequence || 0) + 1;
       state.historyItems = [];
       var contentEl = byId("word-history-content");
       if (contentEl) {
@@ -9398,6 +9406,9 @@
       }
       setStatus("历史记录已清空。");
     }).catch(function (error) {
+      if (state.currentMode !== requestedMode || state.historyLoadSequence !== requestSequence || state.historyTaskType && state.historyTaskType !== taskType) {
+        return;
+      }
       setStatus("清空历史记录失败：" + error.message);
     });
   }
@@ -9598,10 +9609,18 @@
     if (!id) {
       return Promise.resolve();
     }
+    var taskType = state.historyTaskType || getCurrentWorkflowTaskType();
+    var requestedMode = state.currentMode;
+    var requestSequence = (state.historyLoadSequence || 0) + 1;
+    state.historyLoadSequence = requestSequence;
     return request("/history/" + encodeURIComponent(id), null, {
       method: "DELETE",
       timeoutMs: 8000
     }).then(function () {
+      if (state.currentMode !== requestedMode || state.historyTaskType && state.historyTaskType !== taskType) {
+        return;
+      }
+      state.historyLoadSequence = (state.historyLoadSequence || 0) + 1;
       state.historyItems = (state.historyItems || []).filter(function (it) {
         return it.id !== id;
       });
@@ -9611,6 +9630,9 @@
       }
       setStatus("已删除该条历史记录。");
     }).catch(function (error) {
+      if (state.currentMode !== requestedMode || state.historyLoadSequence !== requestSequence || state.historyTaskType && state.historyTaskType !== taskType) {
+        return;
+      }
       setStatus("删除历史记录失败：" + error.message);
     });
   }
@@ -11479,6 +11501,8 @@
     }
     setActiveResultRecord("word.document_review", currentDoc, null);
 
+    state.viewingHistoryReport = null;
+    switchWordHistoryView(false);
     setModelTaskBusy(true);
     state.fullDocumentReviewPreparing = true;
     state.fullDocumentReviewCancelRequested = false;
@@ -11815,6 +11839,8 @@
     clearDocumentReviewActiveJob(null, currentDoc);
     setActiveResultRecord("word.document_review", currentDoc, null);
 
+    state.viewingHistoryReport = null;
+    switchWordHistoryView(false);
     state.documentReviewPreparing = true;
     setModelTaskBusy(true);
     setStatus("正在读取文档审查范围...");
@@ -12921,6 +12947,8 @@
     }
     scope.documentSessionId = currentDoc;
     setActiveResultRecord("word.format_review", currentDoc, null);
+    state.viewingHistoryReport = null;
+    switchWordHistoryView(false);
     clearDeterministicFormatReviewPresentation();
     clearDeterministicFormatReviewActiveJob(null, currentDoc);
     if (helpers.claimTaskSlot) {
@@ -13169,6 +13197,7 @@
     state.latestWritingJobIds = state.latestWritingJobIds || {};
     state.latestWritingJobIds[getWritingDocTaskKey("word.smart_write", docSession)] = "";
     setActiveResultRecord("word.smart_write", docSession, null);
+    switchWordHistoryView(false);
     setPlainResult("正在读取选中文本，请稍候。");
     setApplyEnabled(false);
 
@@ -13239,6 +13268,7 @@
     state.latestWritingJobIds = state.latestWritingJobIds || {};
     state.latestWritingJobIds[getWritingDocTaskKey("word.smart_imitation", docSession)] = "";
     setActiveResultRecord("word.smart_imitation", docSession, null);
+    switchWordHistoryView(false);
 
     paragraphs = helpers.collectParagraphsFromText
       ? helpers.collectParagraphsFromText(templateText, SMART_WRITE_EXTRACTION_OPTIONS)

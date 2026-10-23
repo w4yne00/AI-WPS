@@ -27,6 +27,7 @@ from app.services.provider_client import (
     validate_composer_multimodal_input,
 )
 from app.services.system_prompts import SystemPromptStore
+from app.services.task_history import TaskHistoryError, get_task_history_store
 from app.services.word.material_composer import (
     detect_material_conflicts,
     parse_user_facts,
@@ -144,6 +145,7 @@ class ExcelMaterialLedgerCoordinator:
 
             snapshot = {
                 "request": request_repr,
+                "documentDisplayName": str(payload.get("documentDisplayName") or "工作簿.xlsx"),
                 "catalog": deepcopy(catalog),
                 "systemPrompt": system_prompt,
                 "headers": headers,
@@ -180,7 +182,33 @@ class ExcelMaterialLedgerCoordinator:
                 },
                 priority_class=PRIORITY_INTERACTIVE,
                 allow_running_cancel=True,
+                success_committer=self._commit_success,
             )
+
+    @staticmethod
+    def _commit_success(snapshot: dict, result: dict) -> None:
+        try:
+            auth = snapshot.get("taskAuth") or {}
+            # Keep generated cells only; source excerpts and request data stay out of history.
+            archived = {
+                "columns": list(result.get("headers") or []),
+                "rows": [{key: row[key] for key in ("values", "missingFields", "isDuplicate", "duplicateReason") if key in row}
+                         for row in result.get("rows") or []],
+                "generatedAt": result.get("generatedAt", ""),
+            }
+            get_task_history_store().record_success(
+                task_type=TASK_TYPE,
+                job_id=str(snapshot["request"]["clientJobId"]),
+                result=archived,
+                document_display_name=str(snapshot.get("documentDisplayName") or "工作簿.xlsx"),
+                service_name=str(auth.get("serviceName") or ""),
+                model_name=str(auth.get("modelName") or ""),
+            )
+        except TaskHistoryError as exc:
+            result["historyNotice"] = ("任务结果超过 5 MiB，未写入历史记录。" if exc.code == "HISTORY_ENTRY_TOO_LARGE"
+                                       else "历史记录写入失败，未保存至历史列表。")
+        except Exception:
+            result["historyNotice"] = "历史记录写入失败，未保存至历史列表。"
 
     def _complete_catalog(self, session_id, catalog, auth):
         catalog = deepcopy(catalog)

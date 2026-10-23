@@ -35,6 +35,7 @@ function harness() {
     failStructureJob: (id, message) => { state.jobId = ""; state.output = message; },
     describeStructureProgress: () => ({ status: "running", detail: "progress" })
   };
+  ctx.isPptTaskDocumentActive = load("isPptTaskDocumentActive", ctx);
   return { ctx, state, pending, requests, elements };
 }
 for (const name of ["submitPptSlideJob", "submitStructureReviewJob"]) {
