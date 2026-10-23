@@ -2925,6 +2925,9 @@
   }
 
   function renderCurrentTaskHistoryList(items) {
+    if (state.currentMode === "excelLedger") {
+      return helpers.renderExcelLedgerHistoryList(items);
+    }
     if (state.currentMode === "excelFormulaAssistant") {
       return helpers.renderExcelFormulaHistoryList
         ? helpers.renderExcelFormulaHistoryList(items)
@@ -2973,6 +2976,7 @@
 
   function handleClearSmartFillHistory() {
     var currentTaskType = getCurrentWorkflowTaskType();
+    var requestedMode = state.currentMode;
     state.historyRequestId = (state.historyRequestId || 0) + 1;
     var thisRequestId = state.historyRequestId;
     var requestedTaskType = currentTaskType;
@@ -2980,9 +2984,10 @@
       method: "DELETE",
       timeoutMs: 8000
     }).then(function () {
-      if (thisRequestId !== state.historyRequestId || getCurrentWorkflowTaskType() !== requestedTaskType) {
+      if (state.currentMode !== requestedMode || getCurrentWorkflowTaskType() !== requestedTaskType) {
         return;
       }
+      state.historyRequestId = (state.historyRequestId || 0) + 1;
       state.historyItems = [];
       var contentEl = byId("excel-history-content");
       if (contentEl) {
@@ -2990,7 +2995,7 @@
       }
       setStatus("历史记录已清空。");
     }).catch(function (error) {
-      if (thisRequestId !== state.historyRequestId || getCurrentWorkflowTaskType() !== requestedTaskType) {
+      if (state.currentMode !== requestedMode || thisRequestId !== state.historyRequestId || getCurrentWorkflowTaskType() !== requestedTaskType) {
         return;
       }
       setStatus("清空历史记录失败：" + error.message);
@@ -3061,7 +3066,9 @@
     var taskType = item.taskType || getCurrentWorkflowTaskType();
     var html = "";
 
-    if (taskType === "excel.formula_assistant") {
+    if (taskType === "excel.material_ledger") {
+      html = '<div style="white-space:pre-wrap;">' + helpers.escapeHtml(helpers.buildExcelLedgerHistoryText(result)) + '</div>';
+    } else if (taskType === "excel.formula_assistant") {
       html += '<div style="margin-bottom:6px;"><strong>推荐公式：</strong><code>' + (helpers.escapeHtml ? helpers.escapeHtml(result.primaryFormula || "") : (result.primaryFormula || "")) + '</code></div>';
       if (result.alternativeFormula) {
         html += '<div style="margin-bottom:6px;"><strong>备选公式：</strong><code>' + (helpers.escapeHtml ? helpers.escapeHtml(result.alternativeFormula || "") : (result.alternativeFormula || "")) + '</code></div>';
@@ -3163,7 +3170,9 @@
     var taskType = item.taskType || getCurrentWorkflowTaskType();
     var copyStr = "";
 
-    if (taskType === "excel.formula_assistant") {
+    if (taskType === "excel.material_ledger") {
+      copyStr = helpers.buildExcelLedgerHistoryText(res);
+    } else if (taskType === "excel.formula_assistant") {
       copyStr = String(res.copyText || res.primaryFormula || "").trim();
       if (!copyStr && res.alternativeFormula) {
         copyStr = String(res.alternativeFormula).trim();
@@ -3206,13 +3215,15 @@
       return;
     }
     var requestedTaskType = getCurrentWorkflowTaskType();
+    var requestedMode = state.currentMode;
     state.historyRequestId = (state.historyRequestId || 0) + 1;
     var thisRequestId = state.historyRequestId;
     request("/history/" + encodeURIComponent(id), null, {
       method: "DELETE",
       timeoutMs: 8000
     }).then(function () {
-      if (thisRequestId !== state.historyRequestId || getCurrentWorkflowTaskType() !== requestedTaskType) { return; }
+      if (state.currentMode !== requestedMode || getCurrentWorkflowTaskType() !== requestedTaskType) { return; }
+      state.historyRequestId = (state.historyRequestId || 0) + 1;
       state.historyItems = state.historyItems.filter(function (it) {
         return it.id !== id;
       });
@@ -3222,7 +3233,7 @@
       }
       setStatus("已删除该条历史记录。");
     }).catch(function (error) {
-      if (thisRequestId !== state.historyRequestId || getCurrentWorkflowTaskType() !== requestedTaskType) { return; }
+      if (state.currentMode !== requestedMode || thisRequestId !== state.historyRequestId || getCurrentWorkflowTaskType() !== requestedTaskType) { return; }
       setStatus("删除历史记录失败：" + error.message);
     });
   }
@@ -3310,6 +3321,9 @@
         helpers: helpers,
         storage: window.localStorage,
         getSessionId: getCurrentExcelDocumentSession,
+        getDocumentDisplayName: function () {
+          return helpers.getDocumentDisplayName(getActiveWorkbook(getEtApplication()));
+        },
         getApp: function () {
           return typeof getEtApplication === "function" ? getEtApplication() : (window.Application || null);
         },
@@ -3457,7 +3471,7 @@
 
       var metaSpan = byId("ledger-result-meta");
       if (metaSpan) {
-        metaSpan.textContent = "共生成 " + view.result.rows.length + " 项任务台账";
+        metaSpan.textContent = "共生成 " + view.result.rows.length + " 项任务台账" + (view.result.historyNotice ? "；" + view.result.historyNotice : "");
       }
 
       var coverage = byId("ledger-result-coverage");
@@ -3619,6 +3633,8 @@
           markdownOutput.textContent = view.error;
         } else if (isRunning || view.busy || view.phaseLabel) {
           markdownOutput.textContent = view.phaseLabel || "正在提取任务台账，请稍候。";
+        } else {
+          markdownOutput.textContent = "尚未生成任务台账。请先添加资料，再点击“生成任务台账”。";
         }
       }
       var writeSectionEl = byId("ledger-write-section");
@@ -3635,6 +3651,7 @@
   function runExcelLedgerAction() {
     var ctrl = ensureMaterialLedger();
     if (ctrl) {
+      if (typeof switchHistoryView === "function") switchHistoryView(false);
       ctrl.generate();
     }
   }
@@ -4120,6 +4137,7 @@
       helpers.claimTaskSlot(state.activeTaskSlots, "et", "excel.analysis", docSessionId, clientJobId);
     }
     setExcelTaskBusy(true, docSessionId, "excel.analysis");
+    if (typeof switchHistoryView === "function") switchHistoryView(false);
     setStatus("正在校验智能分析选区...");
     setPlainResult("正在读取 Excel 表格范围，请稍候。");
     var feedbackTimestamp = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
@@ -4688,6 +4706,7 @@
       helpers.claimTaskSlot(state.activeTaskSlots, "et", "excel.formula_assistant", docSessionId, clientJobId);
     }
     setExcelTaskBusy(true, docSessionId, "excel.formula_assistant");
+    if (typeof switchHistoryView === "function") switchHistoryView(false);
     setStatus("正在校验公式上下文...");
     setPlainResult("公式助手正在读取明确选区，不会读取工作表已用范围。");
     var feedbackTimestamp = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
@@ -5317,6 +5336,7 @@
       setSmartFillInterruptedRetryVisible(false);
       setExcelSmartFillCancelVisible(false);
       setExcelTaskBusy(true, docSessionId, "excel.smart_fill");
+      if (typeof switchHistoryView === "function") switchHistoryView(false);
       if (!state.smartFillRetryItemId) {
         state.smartFillResult = null;
         state.smartFillPreview = null;
@@ -5454,6 +5474,7 @@
     }
 
     // 杜绝静默点击与白屏等待：在读取任何单元格属性前先更新 busy、状态栏和结果卡
+    if (typeof switchHistoryView === "function") switchHistoryView(false);
     setStatus(state.smartFillRetryItemId ? "正在准备智能填写重试请求..." : "正在准备智能填写数据...");
     setPlainResult(state.smartFillRetryItemId ? "正在提交失败项重试，请稍候。" : "正在读取智能填写选区与样本，请稍候。");
     setExcelTaskBusy(true, docSessionId, "excel.smart_fill");
@@ -5747,6 +5768,11 @@
   }
 
   function copyResult() {
+    if (state.currentMode === "excelLedger") {
+      var ledger = ensureMaterialLedger();
+      if (!ledger || !ledger.copyTsv()) setStatus("暂无可复制的结果。");
+      return;
+    }
     var text = state.copyText || byId("result-output").textContent || "";
     if (!text.trim()) {
       setStatus("暂无可复制的结果。");
@@ -8623,6 +8649,9 @@
     byId("excel-smart-fill-options").hidden = settingsMode || !smartFillMode;
     if (byId("excel-ledger-options")) {
       byId("excel-ledger-options").hidden = settingsMode || !ledgerMode;
+    }
+    if (!ledgerMode && byId("excel-ledger-result")) {
+      byId("excel-ledger-result").hidden = true;
     }
     byId("btn-run-primary").textContent = formulaMode
       ? getFormulaModeUi(state.formulaMode).actionLabel

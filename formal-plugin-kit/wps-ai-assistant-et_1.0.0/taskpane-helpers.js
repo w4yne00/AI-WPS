@@ -5499,6 +5499,34 @@
     return html;
   }
 
+  function buildExcelLedgerHistoryText(result) {
+    var columns = result.columns || [];
+    var lines = [columns.join("\t")];
+    (result.rows || []).forEach(function (row) {
+      lines.push(columns.map(function (column) {
+        var value = (row.values || {})[column];
+        return String(value == null ? "" : value).replace(/[\r\n\t]/g, " ");
+      }).join("\t"));
+    });
+    return lines.join("\n");
+  }
+
+  function renderExcelLedgerHistoryList(items) {
+    if (!items || !items.length) return '<div class="excel-history-empty">暂无成功历史记录。</div>';
+    return '<div class="excel-history-list">' + items.map(function (item) {
+      var id = escapeHtml(item.id || "");
+      return '<div class="excel-history-card" data-history-id="' + id + '">' +
+        '<div class="excel-history-card-header"><span class="excel-history-doc-name">' + escapeHtml(item.documentDisplayName || "未命名工作簿") + '</span>' +
+        '<span class="excel-history-time">' + escapeHtml(item.completedAt ? new Date(item.completedAt).toLocaleString("zh-CN") : "刚刚") + '</span></div>' +
+        '<div class="excel-history-card-title">任务台账成果</div>' +
+        '<div class="field-hint">' + escapeHtml([item.jobId, item.serviceName, item.modelName].filter(Boolean).join(" · ")) + '</div>' +
+        '<div class="excel-history-card-snippet">已生成 ' + ((item.result || {}).rows || []).length + ' 项任务台账</div>' +
+        '<div class="excel-history-card-actions">' + [ ["view", "查看"], ["copy", "复制"], ["delete", "删除"] ].map(function (action) {
+          return '<button type="button" class="btn btn-secondary btn-sm btn-history-' + action[0] + '" data-history-id="' + id + '">' + action[1] + '</button>';
+        }).join("") + '</div></div>';
+    }).join("") + '</div>';
+  }
+
   function renderExcelAnalysisHistoryList(items) {
     var list = Array.isArray(items) ? items : [];
     if (!list.length) {
@@ -6056,6 +6084,8 @@
     claimTaskSlot: claimTaskSlot,
     releaseTaskSlot: releaseTaskSlot,
     renderSmartFillHistoryList: renderSmartFillHistoryList,
+    buildExcelLedgerHistoryText: buildExcelLedgerHistoryText,
+    renderExcelLedgerHistoryList: renderExcelLedgerHistoryList,
     renderExcelAnalysisHistoryList: renderExcelAnalysisHistoryList,
     renderExcelFormulaHistoryList: renderExcelFormulaHistoryList
   };

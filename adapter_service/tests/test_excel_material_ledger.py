@@ -12,6 +12,7 @@ from app.core.errors import AdapterError
 from app.services.excel.material_store import ExcelMaterialStore
 from app.services.excel.material_ledger import ExcelMaterialLedgerCoordinator
 from app.services.long_task_coordinator import get_long_task_coordinator
+from app.services.task_history import TaskHistoryError, TaskHistoryStore
 
 
 CONTENT_TYPES_XML = b"""<?xml version="1.0" encoding="UTF-8"?>
@@ -55,7 +56,9 @@ def ledger_setup():
         content_base64=base64.b64encode(raw_bytes).decode("ascii"),
     )
 
-    yield store, coordinator
+    with patch("app.services.excel.material_ledger.get_task_history_store",
+               return_value=TaskHistoryStore(history_dir=temp_dir / "history")):
+        yield store, coordinator
     shutil.rmtree(temp_dir, ignore_errors=True)
 
 
@@ -371,3 +374,78 @@ def test_truncated_model_output_never_becomes_completed(ledger_setup):
         coordinator.submit_job({'documentSessionId':'excel_test_sess','clientJobId':'truncated','headers':['工作事项']})
         job = coordinator.wait_job('truncated','excel_test_sess')
     assert job['status'] == 'failed'
+
+
+def test_ledger_successful_generations_archive_once_without_request_or_source(ledger_setup, tmp_path):
+    _, coordinator = ledger_setup
+    history = TaskHistoryStore(history_dir=tmp_path / "history")
+    auth = {"accessMethod": "direct_model", "serviceName": "台账服务", "modelName": "ledger-model", "apiKey": "private-key"}
+    payload = {"documentSessionId": "excel_test_sess", "documentDisplayName": "/private/台账.xlsx",
+               "headers": ["工作事项"], "instruction": "私密输入要求"}
+    with patch("app.services.excel.material_ledger.get_task_history_store", return_value=history), \
+            patch.object(coordinator.provider, "resolve_task_auth", return_value=auth), \
+            patch.object(coordinator, "_call_provider_model") as model:
+        for index in range(2):
+            model.return_value = json.dumps({"schemaVersion": "excel.material_ledger.v1", "rows": [
+                {"values": {"工作事项": "生成任务%d" % index}, "fragmentIds": [1]}]})
+            request = dict(payload, clientJobId="history-ledger-%d" % index)
+            coordinator.submit_job(request)
+            assert coordinator.wait_job(request["clientJobId"], "excel_test_sess")["status"] == "completed"
+            coordinator.submit_job(request)
+    entries = history.list_history("excel.material_ledger")
+    assert len(entries) == 2
+    assert {entry["result"]["rows"][0]["values"]["工作事项"] for entry in entries} == {"生成任务0", "生成任务1"}
+    for entry in entries:
+        assert entry["result"]["columns"] == ["工作事项"]
+        assert entry["documentDisplayName"] == "台账.xlsx"
+        assert entry["serviceName"] == "台账服务"
+        assert entry["modelName"] == "ledger-model"
+        encoded = json.dumps(entry, ensure_ascii=False)
+        assert "private-key" not in encoded
+        assert "私密输入要求" not in encoded
+        assert "信息化部负责" not in encoded
+        assert "fragmentIds" not in encoded
+        assert "sources" not in encoded
+    assert history.list_history("excel.analysis") == []
+
+
+@pytest.mark.parametrize("code", ["HISTORY_ENTRY_TOO_LARGE", "HISTORY_WRITE_FAILED"])
+def test_ledger_history_failure_keeps_current_completed_result(ledger_setup, code):
+    _, coordinator = ledger_setup
+    history = MagicMock()
+    history.record_success.side_effect = TaskHistoryError(code, "保存失败")
+    response = json.dumps({"schemaVersion": "excel.material_ledger.v1", "rows": [
+        {"values": {"工作事项": "保留当前任务"}, "fragmentIds": [1]}]})
+    with patch("app.services.excel.material_ledger.get_task_history_store", return_value=history), \
+            patch.object(coordinator, "_call_provider_model", return_value=response):
+        coordinator.submit_job({"documentSessionId": "excel_test_sess", "clientJobId": "history-fail-" + code, "headers": ["工作事项"]})
+        job = coordinator.wait_job("history-fail-" + code, "excel_test_sess")
+    assert job["status"] == "completed"
+    assert job["result"]["rows"][0]["values"]["工作事项"] == "保留当前任务"
+    assert "未" in job["result"]["historyNotice"]
+
+
+def test_ledger_cancelled_and_failed_tasks_do_not_archive(ledger_setup, tmp_path):
+    import threading
+    _, coordinator = ledger_setup
+    history = TaskHistoryStore(history_dir=tmp_path / "history")
+    started, release = threading.Event(), threading.Event()
+
+    def blocked_model(*args, **kwargs):
+        started.set()
+        assert release.wait(timeout=3)
+        return json.dumps({"schemaVersion": "excel.material_ledger.v1", "rows": [
+            {"values": {"工作事项": "取消结果"}, "fragmentIds": [1]}]})
+
+    with patch("app.services.excel.material_ledger.get_task_history_store", return_value=history), \
+            patch.object(coordinator, "_call_provider_model", side_effect=blocked_model):
+        coordinator.submit_job({"documentSessionId": "excel_test_sess", "clientJobId": "history-cancel", "headers": ["工作事项"]})
+        assert started.wait(timeout=2)
+        coordinator.cancel_job("history-cancel", "excel_test_sess")
+        release.set()
+        assert coordinator.wait_job("history-cancel", "excel_test_sess")["status"] == "cancelled"
+    with patch("app.services.excel.material_ledger.get_task_history_store", return_value=history), \
+            patch.object(coordinator, "_call_provider_model", return_value="invalid response"):
+        coordinator.submit_job({"documentSessionId": "excel_test_sess", "clientJobId": "history-invalid", "headers": ["工作事项"]})
+        assert coordinator.wait_job("history-invalid", "excel_test_sess")["status"] == "failed"
+    assert history.list_history("excel.material_ledger") == []

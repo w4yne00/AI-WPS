@@ -685,3 +685,70 @@ test("format history page remains valid when a background active result arrives"
   await pending;
   assert.strictEqual(rendered, true);
 });
+
+for (const entry of [
+  { name: "runDocumentReview", mode: "documentReview", taskType: "word.document_review" },
+  { name: "runFullDocumentReview", mode: "documentReview", taskType: "word.document_review" },
+  { name: "runDeterministicFormatReview", mode: "formatReview", taskType: "word.format_review" }
+]) {
+  for (const historyReport of [false, true]) {
+    test(entry.name + " starts in the current preview after " + (historyReport ? "viewing a historical report" : "opening history"), async () => {
+      const ctx = createBaseTestContext({ state: {
+        currentMode: entry.mode,
+        fullDocumentReviewEnabled: true,
+        historyOpen: !historyReport,
+        viewingHistoryReport: historyReport ? { jobId: "old-history-job" } : null,
+        historyItems: [{ id: "old-history-item", taskType: entry.taskType }]
+      } });
+      ctx.getCurrentWorkflowTaskType = () => entry.taskType;
+      ctx.resolveSelectionScope = () => ({ ok: true, selectionMode: "selection" });
+      ctx.clearDocumentReviewActiveJob = () => {};
+      ctx.getFullDocumentReviewReadiness = () => ({ fullDocumentReviewReady: true });
+      ctx.extractFullDocumentReviewBodyYielding = () => new Promise(() => {});
+      ctx.extractDeterministicFormatReviewSnapshotYielding = () => new Promise(() => {});
+      ctx.setTimeout = () => 1;
+      ctx.byId("word-result-section").hidden = !historyReport;
+      ctx.byId("word-history-view").hidden = historyReport;
+      ctx.setActiveResultRecord(entry.taskType, "doc-session-1", {
+        result: { report: { summary: { issueCount: 9 } } }, jobId: "old-active-job"
+      });
+      vm.runInNewContext(functionSource(entry.name), ctx);
+
+      ctx[entry.name]();
+
+      assert.strictEqual(ctx.state.historyOpen, false);
+      assert.strictEqual(ctx.state.viewingHistoryReport, null);
+      assert.strictEqual(ctx.byId("word-result-section").hidden, false);
+      assert.strictEqual(ctx.byId("word-history-view").hidden, true);
+      assert.strictEqual(ctx.getActiveResultRecord(entry.taskType, "doc-session-1"), null);
+      assert.strictEqual(ctx.state.historyItems[0].id, "old-history-item");
+      assert.ok(ctx.state.result.includes("正在"));
+
+      const newReport = { summary: "本次新结果" };
+      if (entry.name === "runDocumentReview") {
+        ctx.renderDocumentReviewResult = data => { ctx.setResult(data.summary); return true; };
+        vm.runInNewContext(functionSource("completeDocumentReview"), ctx);
+        ctx.completeDocumentReview(newReport, "new-job", "doc-session-1", "new-job");
+      } else if (entry.name === "runFullDocumentReview") {
+        ctx.DOCUMENT_REVIEW_POLL_REQUEST_TIMEOUT_MS = 5000;
+        ctx.state.fullDocumentReviewJobId = "new-job";
+        ctx.setActiveReviewJobRecord("word.document_review.full", "doc-session-1", { jobId: "new-job" });
+        ctx.cleanupFullDocumentReviewTerminal = () => { ctx.state.fullDocumentReviewJobId = ""; };
+        ctx.renderFullDocumentReviewReport = data => { ctx.setResult(data.summary); return Promise.resolve(); };
+        ctx.request = url => Promise.resolve({ data: url.endsWith("/report") ? newReport : { status: "completed" } });
+        vm.runInNewContext(functionSource("pollFullDocumentReviewJob"), ctx);
+        ctx.pollFullDocumentReviewJob("new-job", "doc-session-1");
+        await new Promise(resolve => setImmediate(resolve));
+      } else {
+        ctx.state.deterministicFormatReviewPreparing = false;
+        ctx.state.deterministicFormatReviewJobId = "new-job";
+        ctx.setActiveReviewJobRecord("word.format_review", "doc-session-1", { jobId: "new-job" });
+        ctx.request = url => Promise.resolve({ data: url.includes("/report") ? newReport : { issues: [] } });
+        ctx.renderDeterministicFormatReviewIssuePage = data => ctx.setResult(data.summary);
+        await ctx.loadDeterministicFormatReviewReport("new-job", "doc-session-1");
+      }
+      assert.strictEqual(ctx.state.result, "本次新结果");
+      assert.ok(ctx.getActiveResultRecord(entry.taskType, "doc-session-1"));
+    });
+  }
+}
