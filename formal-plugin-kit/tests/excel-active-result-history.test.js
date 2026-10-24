@@ -466,10 +466,12 @@ async function testNetworkRetryVsRegenerate() {
   };
 
   let failOnce = true;
+  const scheduled = [];
   const ledgerRequests = [];
   const ledger = context.createMaterialLedger({
     storage,
     getSessionId: () => "sess-retry",
+    schedule: fn => scheduled.push(fn),
     request: (url, body) => {
       ledgerRequests.push({ url, body });
       if (url === "/excel/material-ledger/jobs" && failOnce) {
@@ -494,22 +496,19 @@ async function testNetworkRetryVsRegenerate() {
   assert.strictEqual(jobPosts1.length, 1);
   const unconfirmedId = jobPosts1[0].body.clientJobId;
 
-  // Unconfirmed retry reuses the original clientJobId for backend idempotency
+  // An unconfirmed response resumes only status queries for the original identifier.
   await ledger.generate();
   const jobPosts2 = ledgerRequests.filter(r => r.url === "/excel/material-ledger/jobs");
-  assert.strictEqual(jobPosts2.length, 2);
-  assert.strictEqual(
-    jobPosts2[1].body.clientJobId,
-    unconfirmedId,
-    "Unconfirmed submission retry must reuse original clientJobId"
-  );
+  assert.strictEqual(jobPosts2.length, 1);
+  await scheduled.shift()();
+  assert.ok(ledgerRequests.some(r => r.url.includes("/jobs/" + unconfirmedId)));
 
   // Now job has completed. Next generate must produce a new clientJobId
   await ledger.generate();
   const jobPosts3 = ledgerRequests.filter(r => r.url === "/excel/material-ledger/jobs");
-  assert.strictEqual(jobPosts3.length, 3);
+  assert.strictEqual(jobPosts3.length, 2);
   assert.notStrictEqual(
-    jobPosts3[2].body.clientJobId,
+    jobPosts3[1].body.clientJobId,
     unconfirmedId,
     "New generation after completed task must produce a new clientJobId"
   );

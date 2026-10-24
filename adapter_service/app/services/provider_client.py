@@ -73,7 +73,7 @@ logger = get_logger(__name__)
 
 @contextmanager
 def _cancellable_urlopen(request, timeout, control):
-    state = {"connection": None, "socket": None, "response": None, "cancelled": False}
+    state = {"connection": None, "socket": None, "response": None, "cancelled": False, "timedOut": False}
     lock = threading.Lock()
 
     def interrupt():
@@ -127,7 +127,16 @@ def _cancellable_urlopen(request, timeout, control):
                                 context=self._context)
 
     opener = urllib_request.build_opener(TrackedHTTPHandler(), TrackedHTTPSHandler())
+
+    def expire():
+        with lock:
+            state["timedOut"] = True
+        interrupt()
+
+    timer = threading.Timer(timeout, expire)
+    timer.daemon = True
     control.set_cancel_callback(interrupt)
+    timer.start()
     try:
         with opener.open(request, timeout=timeout) as response:
             with lock:
@@ -137,12 +146,29 @@ def _cancellable_urlopen(request, timeout, control):
                 interrupt()
                 raise error.URLError("request cancelled")
             yield response
+            with lock:
+                timed_out = state["timedOut"]
+            if timed_out:
+                raise ProviderTimeoutError("模型调用超过当前任务等待时限。")
+            if control.cancel_requested():
+                raise LongTaskCancelled()
+    except LongTaskCancelled:
+        raise
+    except Exception as exc:
+        if control.cancel_requested():
+            raise LongTaskCancelled() from exc
+        with lock:
+            timed_out = state["timedOut"]
+        if timed_out:
+            raise ProviderTimeoutError("模型调用超过当前任务等待时限。") from exc
+        raise
     finally:
+        timer.cancel()
         control.clear_cancel_callback(interrupt)
 
 
 def _open_task_response(request, timeout, task_type, control):
-    if (task_type in ("word.material_composer", "ppt.material_outline") and control is not None
+    if (control is not None
             and hasattr(control, "set_cancel_callback") and hasattr(control, "clear_cancel_callback")):
         return _cancellable_urlopen(request, timeout, control)
     return urllib_request.urlopen(request, timeout=timeout)
@@ -3081,6 +3107,7 @@ class ProviderClient:
         staged_document,
         task_auth: Optional[Dict] = None,
         timeout_seconds: Optional[int] = None,
+        progress_callback=None,
     ) -> str:
         resolved_task_auth = task_auth if task_auth is not None else self.resolve_task_auth(task_type)
         provider_base_url = str(
@@ -3121,9 +3148,10 @@ class ProviderClient:
                 "X-Trace-Id": trace_id,
             },
         )
+        deadline = time.monotonic() + timeout
         try:
-            with urllib_request.urlopen(req, timeout=timeout) as response:
-                raw_body = response.read().decode("utf-8")
+            with _open_task_response(req, timeout, task_type, progress_callback) as response:
+                raw_body = _read_direct_response_body(response, deadline).decode("utf-8")
                 try:
                     body = json.loads(raw_body)
                 except json.JSONDecodeError as exc:
@@ -3177,12 +3205,15 @@ class ProviderClient:
                 )
                 return upload_file_id
         except error.HTTPError as exc:
+            raw_error, _complete = _read_http_error_raw_result(
+                exc, progress_callback, deadline=deadline,
+            )
             error_info = {
                 "type": "HTTPError",
                 "status": exc.code,
                 "message": str(exc),
-                "bodyPreview": _read_http_error_body(
-                    exc,
+                "bodyPreview": _sanitize_provider_error_body(
+                    raw_error,
                     api_key=str(resolved_task_auth.get("apiKey", "")),
                 ),
             }
@@ -3438,10 +3469,6 @@ class ProviderClient:
                             perf_metrics,
                         )
                         response.close()
-                        if progress_callback and hasattr(
-                            progress_callback, "disable_running_cancel"
-                        ):
-                            progress_callback.disable_running_cancel()
                         return self._post_direct_task(
                             task_type,
                             trace_id,
@@ -3697,7 +3724,7 @@ class ProviderClient:
             t_headers = time.monotonic()
             status = int(exc.code)
             raw_error_body, error_body_complete = _read_http_error_raw_result(
-                exc, progress_callback if task_type in ("word.material_composer", "ppt.material_outline") else None,
+                exc, progress_callback,
                 deadline=deadline,
             )
             t_complete = time.monotonic() if error_body_complete else None
@@ -3735,10 +3762,6 @@ class ProviderClient:
                 and not first_delta_seen
                 and status in (400, 404, 415, 422, 501)
             ):
-                if progress_callback and hasattr(
-                    progress_callback, "disable_running_cancel"
-                ):
-                    progress_callback.disable_running_cancel()
                 return self._post_direct_task(
                     task_type,
                     trace_id,
@@ -3953,6 +3976,8 @@ class ProviderClient:
                 sorted((input_data or {}).keys()),
             )
         compatibility_error = None
+        request_started = time.monotonic()
+        deadline = request_started + timeout
         for attempt_index, input_mode in enumerate(attempt_modes, start=1):
             attempt_metadata = {
                 "inputMode": input_mode,
@@ -3995,12 +4020,15 @@ class ProviderClient:
                     "X-Trace-Id": trace_id,
                 },
             )
-            t_start = time.monotonic()
+            t_start = request_started if attempt_index == 1 else time.monotonic()
             t_headers = None
             try:
-                with _open_task_response(req, timeout, task_type, progress_callback) as response:
+                remaining = deadline - t_start
+                if remaining <= 0:
+                    raise ProviderTimeoutError("模型调用超过当前任务等待时限。")
+                with _open_task_response(req, remaining, task_type, progress_callback) as response:
                     t_headers = time.monotonic()
-                    raw_body = response.read().decode("utf-8")
+                    raw_body = _read_direct_response_body(response, deadline).decode("utf-8")
                     t_complete = time.monotonic()
                     try:
                         body = json.loads(raw_body)
@@ -4076,7 +4104,7 @@ class ProviderClient:
             except error.HTTPError as exc:
                 t_headers = time.monotonic()
                 raw_error_body, error_body_complete = _read_http_error_raw_result(
-                    exc, progress_callback if task_type in ("word.material_composer", "ppt.material_outline") else None
+                    exc, progress_callback, deadline=deadline,
                 )
                 error_body = _sanitize_provider_error_body(
                     raw_error_body,
@@ -5776,6 +5804,7 @@ class ProviderClient:
             staged_document,
             task_auth=resolved_task_auth,
             timeout_seconds=timeout,
+            progress_callback=progress_callback,
         )
         if progress_callback:
             progress_callback("provider_processing")
@@ -6100,7 +6129,7 @@ class ProviderClient:
         }
 
     def _prepare_format_image_files(
-        self, image_files: object, auth: Dict, trace_id: str
+        self, image_files: object, auth: Dict, trace_id: str, progress_callback=None,
     ) -> List[Dict]:
         if not isinstance(image_files, list):
             return []
@@ -6118,6 +6147,7 @@ class ProviderClient:
                     SimpleNamespace(path=path, extension="png", mime_type="image/png"),
                     task_auth=auth,
                     timeout_seconds=60,
+                    progress_callback=progress_callback,
                 )
                 prepared.append({
                     "type": "image",
@@ -6192,7 +6222,7 @@ class ProviderClient:
             )
         input_data = dict(input_data or {})
         input_data["image_files"] = self._prepare_format_image_files(
-            input_data.get("image_files"), auth, trace_id
+            input_data.get("image_files"), auth, trace_id, progress_callback=progress_callback,
         )
         candidate_json = input_data.get("candidate_json")
         if not isinstance(candidate_json, str) or not candidate_json.strip():
@@ -6310,13 +6340,14 @@ class ProviderClient:
             return metrics
 
         try:
-            with urllib_request.urlopen(req, timeout=timeout_seconds) as response:
+            with _open_task_response(req, timeout_seconds, "word.format_review", progress_callback) as response:
                 t_headers = time.monotonic()
-                raw_bytes = response.read()
+                raw_bytes = _read_direct_response_body(response, t_start + timeout_seconds)
                 t_complete = time.monotonic()
                 raw_body = raw_bytes.decode("utf-8")
                 body = json.loads(raw_body)
         except error.HTTPError as exc:
+            exc.close()
             t_headers = time.monotonic()
             publish_performance()
             if exc.code in (401, 403):

@@ -353,6 +353,7 @@ function testCrossDocumentResumeIsolation() {
     setSourceMode: () => {},
     setStatus: (msg) => { statusSet = msg; },
     setRunDisabled: () => {},
+    setPptJobActionVisibility: () => {},
     setInterruptedRetryVisible: () => {},
     showProgressText: () => {},
     pollPptSlideJob: (id) => { polledJobId = id; },

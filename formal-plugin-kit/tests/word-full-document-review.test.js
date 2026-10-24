@@ -243,6 +243,7 @@ for (const [cancelName, idField] of [
         DOCUMENT_REVIEW_POLL_REQUEST_TIMEOUT_MS:1000,DETERMINISTIC_FORMAT_REVIEW_REQUEST_TIMEOUT_MS:1000,
         request:()=>new Promise((yes,no)=>{resolve=yes;reject=no;}),
         cleanupFullDocumentReviewTerminal(){},clearDeterministicFormatReviewActiveJob(){},
+        getActiveReviewJobRecord(){return null;},setInterruptedRetryVisible(){},
         renderFullDocumentReviewEntry(){},clearDeterministicFormatReviewPresentation(){},setDocumentReviewCancelVisible(){},
         setModelTaskBusy:busy=>{state.modelTaskBusy=busy;},
         setStatus:text=>{state.status=text;},setPlainResult:text=>{state.result=text;},

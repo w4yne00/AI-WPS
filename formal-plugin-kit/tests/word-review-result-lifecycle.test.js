@@ -1046,3 +1046,160 @@ test("snapshot discard cannot clear a regular review started while cleanup was p
   ctx.runDocumentReview();
   assert.strictEqual(timers.length, 1);
 });
+
+test('running document review keeps a stop action available', () => {
+  const ctx = createBaseTestContext();
+  vm.runInNewContext(['setDocumentReviewCancelVisible','renderDocumentReviewJobProgress'].map(functionSource).join('\n'), ctx);
+  ctx.renderDocumentReviewJobProgress({status:'running',canCancel:true}, 'review-running');
+  assert.strictEqual(ctx.byId('btn-cancel-document-review-job').hidden, false);
+  assert.strictEqual(ctx.byId('btn-cancel-document-review-job').disabled, false);
+});
+
+test('document review cancellation waits for the backend terminal acknowledgment', async () => {
+  const ctx = createBaseTestContext();
+  ctx.state.documentReviewJobId = 'review-cancelling';
+  helpers.claimTaskSlot(ctx.state.activeTaskSlots, 'wps', 'word.document_review', ctx.state.documentSessionId, 'review-cancelling');
+  ctx.request = () => Promise.resolve({data:{jobId:'review-cancelling',status:'running',cancelRequested:true}});
+  vm.runInNewContext(functionSource('cancelQueuedDocumentReviewJob'), ctx);
+  ctx.cancelQueuedDocumentReviewJob();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.strictEqual(ctx.state.documentReviewJobId, 'review-cancelling');
+  assert.strictEqual(helpers.isTaskSlotBusy(ctx.state.activeTaskSlots, 'wps', 'word.document_review', ctx.state.documentSessionId), true);
+  assert.ok(!String(ctx.state.status).includes('已取消'));
+});
+
+test('document review handles a plain missing-task response as terminal and permits resubmission', async () => {
+  const ctx = createBaseTestContext();
+  Object.assign(ctx, {DOCUMENT_REVIEW_POLL_MAX_ERRORS:240,DOCUMENT_REVIEW_POLL_MAX_WAIT_MS:3600000,
+    DOCUMENT_REVIEW_POLL_ERROR_RETRY_DELAY_MS:15000,DOCUMENT_REVIEW_POLL_SLOW_RETRY_DELAY_MS:30000,
+    scheduleDocumentReviewPoll:()=>{}});
+  ctx.state.documentReviewJobId = 'missing-review';
+  ctx.state.modelTaskBusy = true;
+  helpers.claimTaskSlot(ctx.state.activeTaskSlots, 'wps', 'word.document_review', ctx.state.documentSessionId, 'missing-review');
+  ctx.request = () => Promise.reject(Object.assign(Error('HTTP 404'), {httpStatus:404}));
+  vm.runInNewContext(functionSource('isFatalDocumentReviewPollError'), ctx);
+  ctx.pollDocumentReviewJob('missing-review', () => {}, true, ctx.state.documentSessionId);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.strictEqual(ctx.state.documentReviewJobId, '');
+  assert.strictEqual(ctx.state.modelTaskBusy, false);
+  assert.strictEqual(helpers.isTaskSlotBusy(ctx.state.activeTaskSlots, 'wps', 'word.document_review', ctx.state.documentSessionId), false);
+});
+
+for (const full of [false,true]) {
+  test((full ? 'full' : 'regular') + ' document review pauses repeated disconnections without losing the original job', async () => {
+    const ctx = createBaseTestContext();
+    const scheduled=[];
+    const jobField=full ? 'fullDocumentReviewJobId' : 'documentReviewJobId';
+    ctx.state[jobField]='offline-review';
+    ctx.state.documentReviewPollErrorCount=0;
+    ctx.state.fullDocumentReviewPollErrorCount=0;
+    Object.assign(ctx, {DOCUMENT_REVIEW_POLL_MAX_ERRORS:240,DOCUMENT_REVIEW_POLL_MAX_WAIT_MS:3600000,
+      DOCUMENT_REVIEW_POLL_ERROR_RETRY_DELAY_MS:15000,DOCUMENT_REVIEW_POLL_SLOW_RETRY_DELAY_MS:30000,
+      isFatalDocumentReviewPollError:()=>false,isFullDocumentReviewPermanentPollError:()=>false,
+      scheduleDocumentReviewPoll:()=>scheduled.push('poll'),setTimeout:()=>scheduled.push('poll'),
+      setInterruptedRetryVisible:(visible,label)=>{ctx.retryVisible=visible;ctx.retryLabel=label;},
+      request:()=>Promise.reject(Error('Adapter无法连接'))});
+    for(let i=0;i<3;i+=1) {
+      if(full) ctx.pollFullDocumentReviewJob('offline-review',ctx.state.documentSessionId);
+      else ctx.pollDocumentReviewJob('offline-review',()=>{},true,ctx.state.documentSessionId);
+      await new Promise(resolve=>setImmediate(resolve));
+    }
+    assert.strictEqual(scheduled.length,2);
+    assert.strictEqual(ctx.state[jobField],'offline-review');
+    assert.strictEqual(ctx.retryVisible,true);
+    assert.strictEqual(ctx.retryLabel,'继续查询');
+  });
+}
+
+for (const full of [false, true]) {
+  const taskType = full ? 'word.document_review.full' : 'word.document_review';
+  const jobField = full ? 'fullDocumentReviewJobId' : 'documentReviewJobId';
+  const poll = full ? 'pollFullDocumentReviewJob' : 'pollDocumentReviewJob';
+  const cancel = full ? 'cancelFullDocumentReviewJob' : 'cancelQueuedDocumentReviewJob';
+  const resume = full ? 'resumeFullDocumentReviewActiveJob' : 'resumeDocumentReviewActiveJob';
+
+  test(taskType + ' stopping a paused running job queries its original ID through cancellation', async () => {
+    const ctx = createBaseTestContext();
+    const calls = [];
+    const timers = [];
+    ctx.state[jobField] = 'paused-review';
+    ctx.state.modelTaskBusy = true;
+    ctx.retryVisible = true;
+    ctx.setInterruptedRetryVisible = visible => { ctx.retryVisible = visible; };
+    ctx.setActiveReviewJobRecord(taskType, 'doc-session-1', { jobId: 'paused-review', pollPaused: true });
+    helpers.claimTaskSlot(ctx.state.activeTaskSlots, 'wps', taskType, 'doc-session-1', 'paused-review');
+    ctx.request = (url, body, options = {}) => {
+      calls.push([url, options.method || 'GET']);
+      return Promise.resolve({ data: { jobId: 'paused-review', status: calls.length < 3 ? 'running' : 'cancelled', cancelRequested: true } });
+    };
+    ctx.setTimeout = callback => { timers.push(callback); };
+    vm.runInNewContext([cancel, 'finishCancelledDocumentReview', 'scheduleDocumentReviewPoll'].map(functionSource).join('\n'), ctx);
+    ctx[cancel]();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepStrictEqual(calls.map(call => call[1]), ['DELETE', 'GET']);
+    assert.strictEqual(ctx.state[jobField], 'paused-review');
+    assert.strictEqual(helpers.isTaskSlotBusy(ctx.state.activeTaskSlots, 'wps', taskType, 'doc-session-1'), true);
+    assert.strictEqual(timers.length, 1);
+    timers.shift()();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepStrictEqual(calls.map(call => call[1]), ['DELETE', 'GET', 'GET']);
+    assert.ok(calls.every(call => call[0].includes('/paused-review')));
+    assert.strictEqual(ctx.state[jobField], '');
+    assert.strictEqual(ctx.retryVisible, false);
+    assert.strictEqual(helpers.isTaskSlotBusy(ctx.state.activeTaskSlots, 'wps', taskType, 'doc-session-1'), false);
+  });
+
+  test(taskType + ' returning to a paused task restores explicit query without submitting or polling', () => {
+    const ctx = createBaseTestContext();
+    const record = { jobId: 'paused-review', taskType, documentSessionId: 'doc-session-1', pollPaused: true };
+    ctx.setActiveReviewJobRecord(taskType, 'doc-session-1', record);
+    if (full) ctx.saveFullDocumentReviewActiveJob('paused-review', 'doc-session-1');
+    else ctx.saveDocumentReviewActiveJob(record);
+    ctx.state[jobField] = '';
+    const calls = [];
+    ctx.request = (...args) => { calls.push(args); return new Promise(() => {}); };
+    ctx.setInterruptedRetryVisible = (visible, label) => { ctx.retry = [visible, label]; };
+    assert.strictEqual(ctx[resume](), true);
+    assert.strictEqual(ctx.state[jobField], 'paused-review');
+    assert.deepStrictEqual(ctx.retry, [true, '继续查询']);
+    assert.strictEqual(calls.length, 0);
+  });
+
+  for (const otherView of ['document', 'mode']) {
+    test(taskType + ' background pause preserves another ' + otherView + ' view', async () => {
+      const ctx = createBaseTestContext();
+      ctx.state[jobField] = 'background-review';
+      ctx.state[full ? 'fullDocumentReviewPollErrorCount' : 'documentReviewPollErrorCount'] = 2;
+      ctx.setActiveReviewJobRecord(taskType, 'doc-session-1', { jobId: 'background-review' });
+      if (otherView === 'document') ctx.state.documentSessionId = 'doc-session-2';
+      else ctx.state.currentMode = 'smartWrite';
+      const changes = [];
+      ctx.request = () => Promise.reject(Error('offline'));
+      ctx.isFatalDocumentReviewPollError = () => false;
+      ctx.isFullDocumentReviewPermanentPollError = () => false;
+      ctx.setInterruptedRetryVisible = () => changes.push('retry');
+      ctx.setDocumentReviewCancelVisible = () => changes.push('cancel');
+      ctx.setStatus = () => changes.push('status');
+      if (full) ctx[poll]('background-review', 'doc-session-1');
+      else ctx[poll]('background-review', () => {}, true, 'doc-session-1');
+      await new Promise(resolve => setImmediate(resolve));
+      assert.deepStrictEqual(changes, []);
+      assert.strictEqual(ctx.getActiveReviewJobRecord(taskType, 'doc-session-1').pollPaused, true);
+    });
+  }
+}
+
+test('full review cancellation 404 releases the original slot for resubmission', async () => {
+  const ctx = createBaseTestContext();
+  ctx.state.fullDocumentReviewJobId = 'missing-full';
+  ctx.state.modelTaskBusy = true;
+  ctx.setActiveReviewJobRecord('word.document_review.full', 'doc-session-1', { jobId: 'missing-full', pollPaused: true });
+  helpers.claimTaskSlot(ctx.state.activeTaskSlots, 'wps', 'word.document_review.full', 'doc-session-1', 'missing-full');
+  ctx.request = () => Promise.reject(Object.assign(Error('missing'), { httpStatus: 404 }));
+  vm.runInNewContext(functionSource('cancelFullDocumentReviewJob'), ctx);
+  ctx.cancelFullDocumentReviewJob();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.strictEqual(ctx.state.fullDocumentReviewJobId, '');
+  assert.strictEqual(ctx.state.modelTaskBusy, false);
+  assert.strictEqual(helpers.isTaskSlotBusy(ctx.state.activeTaskSlots, 'wps', 'word.document_review.full', 'doc-session-1'), false);
+});

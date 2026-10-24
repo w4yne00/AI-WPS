@@ -83,8 +83,8 @@ class StreamingDeliveryAndRollbackTests(unittest.TestCase):
         with patch.dict(os.environ, {"AI_WPS_ENABLE_DIRECT_STREAMING": "1"}):
             self.assertTrue(direct_streaming_enabled())
 
-    def test_flag_disabled_forces_blocking_and_queued_only_cancellation(self):
-        """When feature flag is disabled, new writing jobs use blocking execution without running cancellation."""
+    def test_flag_disabled_forces_blocking_without_removing_running_cancellation(self):
+        """Stopping a task stays available when streaming is disabled."""
         coordinator = LongTaskCoordinator()
         worker = FakeWorker()
         store = SmartWriteJobStore(worker=worker, coordinator=coordinator)
@@ -96,8 +96,7 @@ class StreamingDeliveryAndRollbackTests(unittest.TestCase):
             self.assertFalse(job["streamingEnabled"])
             internal_job = coordinator._jobs.get(("word.smart_write", job["jobId"]))
             self.assertIsNotNone(internal_job)
-            # allow_running_cancel must be False when feature flag is off
-            self.assertFalse(internal_job["_allowRunningCancel"])
+            self.assertTrue(internal_job["_allowRunningCancel"])
 
     def test_running_job_preserves_submission_snapshot_if_flag_toggled_mid_run(self):
         """A running job submitted with streaming keeps its cancellation capability even if flag is disabled mid-run."""

@@ -371,7 +371,7 @@ test('a missing recovered task stops polling and allows resubmission', async () 
   assert.ok(h.api.getState().error);
 });
 
-test('an uncertain submission retries the original job and request', async () => {
+test('an uncertain submission queries the original job without posting it again', async () => {
   const h = createTestHarness();
   const submitted = [];
   h.requestHandler = async (url, body) => {
@@ -379,13 +379,18 @@ test('an uncertain submission retries the original job and request', async () =>
       submitted.push(JSON.parse(JSON.stringify(body)));
       throw new Error('Failed to fetch');
     }
+    if (url.includes('/jobs/')) return { data: { status: 'running' } };
     return { data: { conflicts: [] } };
   };
   await h.api.generate();
   h.api.setInstruction('编辑后的要求');
   await h.api.generate();
-  assert.equal(submitted.length, 2);
-  assert.deepEqual(submitted[1], submitted[0]);
+  assert.equal(submitted.length, 1);
+  const jobId = submitted[0].clientJobId;
+  await h.scheduled.shift()();
+  assert.equal(h.api.getState().jobId, jobId);
+  assert.equal(h.api.getState().pendingRequest, null);
+  assert.equal(submitted.length, 1);
 });
 
 function ledgerPaneHarness() {

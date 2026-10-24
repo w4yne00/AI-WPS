@@ -1104,6 +1104,32 @@ class PptStructureReviewActiveResultsAndHistoryTests(unittest.TestCase):
         finally:
             provider.release_event.set()
 
+    def test_running_cancel_keeps_document_busy_until_worker_stops(self):
+        provider = BlockingProvider()
+        jobs = PptStructureReviewJobStore(
+            reviewer=PptStructureReviewer(provider_client=provider),
+            coordinator=LongTaskCoordinator(max_running=2),
+        )
+        request = parse_request(request_payload(
+            client_job_id="client-structure-stop", document_session_id="doc-structure-stop",
+        ))
+        try:
+            jobs.start(request, "trace-structure-stop")
+            self.assertTrue(provider.started_event.wait(timeout=1))
+            stopping = jobs.cancel("client-structure-stop")
+            self.assertEqual(stopping["phase"], "stopping")
+            self.assertTrue(stopping["cancelRequested"])
+            with self.assertRaises(AdapterError) as raised:
+                jobs.start(parse_request(request_payload(
+                    client_job_id="client-structure-new", document_session_id="doc-structure-stop",
+                )), "trace-structure-new")
+            self.assertEqual(raised.exception.code, "PPT_STRUCTURE_REVIEW_DOCUMENT_TASK_BUSY")
+        finally:
+            provider.release_event.set()
+        terminal = jobs.coordinator.wait("client-structure-stop", task_type="ppt.structure_review")
+        self.assertEqual(terminal["status"], "cancelled")
+        self.assertIsNone(terminal.get("result"))
+
     def test_job_store_releases_slot_on_cancel(self):
         provider = RecordingProvider()
         reviewer = PptStructureReviewer(provider_client=provider)
