@@ -88,8 +88,9 @@ const resume = functionSource("resumeDeterministicFormatReviewActiveJob");
 assert.ok(resume.includes('job.status === "failed"'));
 assert.ok(resume.includes('job.status === "cancelled"'));
 // Exercise terminal cleanup below; its document-bound call signature is an implementation detail.
+const restoredUnknownJob = resume.slice(resume.indexOf("jobId = String(active.jobId)"));
 assert.ok(
-  resume.indexOf("request(") < resume.indexOf("setModelTaskBusy(true)"),
+  restoredUnknownJob.indexOf("request(") < restoredUnknownJob.indexOf("setModelTaskBusy(true)"),
   "resume must peek job status before locking the start button"
 );
 assert.ok(!resume.includes("本次格式审查后台任务失败，旧结果不会复用"));

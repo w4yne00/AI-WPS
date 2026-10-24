@@ -423,7 +423,7 @@ class EnterpriseProviderTests(unittest.TestCase):
                 client.post_task("word.smart_write", "trace-timeout", {}, "完整提示词")
             self.assertEqual(urlopen.call_count, 1)
 
-    @patch("app.services.provider_client.time.monotonic", side_effect=[1.0, 2.0, 5.0])
+    @patch("app.services.provider_client.time.monotonic", side_effect=[1.0, 2.0, 2.0, 5.0, 5.0, 5.0, 5.0])
     @patch("app.services.provider_client.urllib_request.urlopen")
     def test_workflow_http_error_measures_complete_body_read(
         self, urlopen, _monotonic
@@ -472,7 +472,7 @@ class EnterpriseProviderTests(unittest.TestCase):
             },
         )
 
-    @patch("app.services.provider_client.time.monotonic", side_effect=[1.0, 2.0])
+    @patch("app.services.provider_client.time.monotonic", side_effect=[1.0, 2.0, 2.0])
     @patch("app.services.provider_client.urllib_request.urlopen")
     def test_workflow_midstream_disconnect_preserves_header_timing(
         self, urlopen, _monotonic

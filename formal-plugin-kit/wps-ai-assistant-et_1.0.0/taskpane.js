@@ -8,7 +8,7 @@
   var EXCEL_ANALYSIS_POLL_SLOW_RETRY_DELAY_MS = 30000;
   var EXCEL_ANALYSIS_POLL_REQUEST_TIMEOUT_MS = 10000;
   var SETTINGS_REFRESH_REQUEST_TIMEOUT_MS = 8000;
-  var EXCEL_ANALYSIS_POLL_MAX_ERRORS = 240;
+  var EXCEL_ANALYSIS_POLL_MAX_ERRORS = 3;
   var EXCEL_ANALYSIS_POLL_MAX_WAIT_MS = 60 * 60 * 1000;
   var EXCEL_ANALYSIS_ACTIVE_JOB_STORAGE_KEY = "ai-wps-excel-analysis-active-job-v1";
   var EXCEL_FORMULA_ACTIVE_JOB_STORAGE_KEY = "ai-wps-excel-formula-active-job-v1";
@@ -414,6 +414,138 @@
     return state.currentMode === modes[taskType] && getCurrentExcelDocumentSession() === documentSessionId;
   }
 
+  function excelTaskMeta(taskType) {
+    return {
+      "excel.analysis": { path: "/excel/analysis/jobs/", label: "智能分析", cancel: "analysis", retry: "", run: "Analysis" },
+      "excel.formula_assistant": { path: "/excel/formula-assistant/jobs/", label: "公式助手", cancel: "formula", retry: "-formula", run: "Formula" },
+      "excel.smart_fill": { path: "/excel/smart-fill/jobs/", label: "智能填写", cancel: "smart-fill", retry: "-smart-fill", run: "SmartFill" }
+    }[taskType];
+  }
+
+  function refreshExcelTaskControls() {
+    var currentType = getCurrentWorkflowTaskType();
+    var sessionId = getCurrentExcelDocumentSession();
+    ["excel.analysis", "excel.formula_assistant", "excel.smart_fill"].forEach(function (taskType) {
+      var meta = excelTaskMeta(taskType);
+      var task = getExcelTaskSession(taskType, sessionId);
+      var current = taskType === currentType && state.currentMode !== "settings";
+      var cancel = byId("btn-cancel-excel-" + meta.cancel + "-job");
+      var retry = byId("btn-resubmit-interrupted" + meta.retry + "-job");
+      if (cancel) {
+        cancel.hidden = !current || !task.jobId;
+        cancel.disabled = Boolean(task.cancelling);
+      }
+      if (retry) {
+        retry.hidden = !current || !(task.interrupted || task.paused);
+        retry.textContent = task.jobId ? "继续查询" : "重新提交" + meta.label;
+      }
+    });
+    var stop = byId("btn-stop-excel-task-wait");
+    var current = excelTaskMeta(currentType) && getExcelTaskSession(currentType, sessionId);
+    if (stop) stop.hidden = !current || !current.jobId || Boolean(current.paused) || state.currentMode === "settings";
+  }
+
+  function markExcelTaskUnavailable(taskType, jobId, documentSessionId, message) {
+    var task = getExcelTaskSession(taskType, documentSessionId);
+    if (task.jobId !== jobId) return;
+    if (taskType === "excel.analysis") clearExcelAnalysisActiveJob(jobId, documentSessionId);
+    else if (taskType === "excel.formula_assistant") clearExcelFormulaActiveJob(jobId, documentSessionId);
+    else clearExcelSmartFillActiveJob(jobId, documentSessionId);
+    helpers.releaseTaskSlot(state.activeTaskSlots, "et", taskType, documentSessionId, jobId);
+    task.jobId = "";
+    task.pendingRetryClientJobId = null;
+    task.interrupted = true;
+    task.preparing = false;
+    task.submissionPending = false;
+    task.cancelRequested = false;
+    task.cancelling = false;
+    task.recoveryPending = false;
+    if (task.stopWaiting) task.stopWaiting();
+    setExcelTaskBusy(false, documentSessionId, taskType);
+    if (!isExcelTaskVisible(taskType, documentSessionId)) return;
+    var meta = excelTaskMeta(taskType);
+    byId("btn-cancel-excel-" + meta.cancel + "-job").hidden = true;
+    byId("btn-resubmit-interrupted" + meta.retry + "-job").hidden = false;
+    setStatus(message || (meta.label + "任务不存在或已中断，请重新提交。"));
+    setPlainResult((message || "原任务已失效，请重新提交。") + "\n任务编号：" + jobId);
+  }
+
+  function pauseExcelTaskWaiting(taskType, documentSessionId) {
+    var sessionId = documentSessionId || getCurrentExcelDocumentSession();
+    var task = getExcelTaskSession(taskType, sessionId);
+    if (!task.jobId) return;
+    task.paused = true;
+    task.recoveryPending = true;
+    if (task.stopWaiting) task.stopWaiting();
+    if (!isExcelTaskVisible(taskType, sessionId)) return;
+    var meta = excelTaskMeta(taskType);
+    var retry = byId("btn-resubmit-interrupted" + meta.retry + "-job");
+    retry.hidden = false;
+    retry.textContent = "继续查询";
+    byId("btn-stop-excel-task-wait").hidden = true;
+    setStatus("已停止自动等待，后台任务状态尚未确认。可继续查询或取消任务。");
+  }
+
+  function continueExcelTask(taskType) {
+    var sessionId = getCurrentExcelDocumentSession();
+    var task = getExcelTaskSession(taskType, sessionId);
+    if (task.jobId) {
+      task.paused = false;
+      task.recoveryPending = false;
+      task.pollErrorCount = 0;
+      task.pollStartedAt = Date.now();
+      byId("btn-resubmit-interrupted" + excelTaskMeta(taskType).retry + "-job").hidden = true;
+      if (taskType === "excel.analysis") pollExcelAnalysisJob(task.jobId, task.stopWaiting || function () {}, sessionId);
+      else if (taskType === "excel.formula_assistant") pollExcelFormulaJob(task.jobId, task.stopWaiting || function () {}, sessionId);
+      else pollExcelSmartFillJob(task.jobId, task.stopWaiting || function () {}, sessionId);
+      return;
+    }
+    if (taskType === "excel.analysis") runExcelAnalysisAction();
+    else if (taskType === "excel.formula_assistant") runExcelFormulaAction();
+    else runExcelSmartFillAction();
+  }
+
+  function cancelExcelTask(taskType, documentSessionId) {
+    var sessionId = documentSessionId || getCurrentExcelDocumentSession();
+    var task = getExcelTaskSession(taskType, sessionId);
+    var jobId = task.jobId;
+    if (!jobId || task.cancelling) return;
+    task.cancelRequested = true;
+    if (task.preparing) {
+      if (taskType === "excel.smart_fill" && isExcelTaskVisible(taskType, sessionId)) state.smartFillCancelRequested = true;
+      markExcelTaskUnavailable(taskType, jobId, sessionId, "数据准备已取消，未提交模型任务。");
+      return;
+    }
+    var meta = excelTaskMeta(taskType);
+    task.cancelling = true;
+    if (isExcelTaskVisible(taskType, sessionId)) byId("btn-cancel-excel-" + meta.cancel + "-job").disabled = true;
+    return request(meta.path + encodeURIComponent(jobId), null, { method: "DELETE", timeoutMs: EXCEL_ANALYSIS_POLL_REQUEST_TIMEOUT_MS }).then(function (body) {
+      if (task.jobId !== jobId) return;
+      task.cancelling = false;
+      var job = (body && body.data) || {};
+      if (job.status === "cancelled") {
+        var stop = task.stopWaiting || function () { setExcelTaskBusy(false, sessionId, taskType); };
+        if (taskType === "excel.analysis") finishCancelledExcelAnalysis(jobId, stop, sessionId);
+        else if (taskType === "excel.formula_assistant") finishCancelledExcelFormula(jobId, stop, sessionId);
+        else finishCancelledExcelSmartFill(jobId, stop, job.result || null, sessionId);
+      } else if (isExcelTaskVisible(taskType, sessionId)) {
+        byId("btn-cancel-excel-" + meta.cancel + "-job").disabled = Boolean(job.cancelRequested);
+        setStatus(job.cancelRequested ? "正在取消任务，等待后台确认。" : "取消尚未确认，可重试或继续查询。");
+      }
+    }).catch(function (error) {
+      if (task.jobId !== jobId) return;
+      task.cancelling = false;
+      if (error.status === 404 && !task.submissionPending) {
+        markExcelTaskUnavailable(taskType, jobId, sessionId);
+        return;
+      }
+      if (isExcelTaskVisible(taskType, sessionId)) {
+        byId("btn-cancel-excel-" + meta.cancel + "-job").disabled = false;
+        setStatus(error.status === 404 ? "已记录取消请求，正在等待提交确认。" : "取消请求未确认：" + describeFetchError(error));
+      }
+    });
+  }
+
   function setExcelTaskBusy(isBusy, docSessionId, taskType) {
     var app = typeof getEtApplication === "function" ? getEtApplication() : null;
     var workbook = typeof getActiveWorkbook === "function" ? getActiveWorkbook(app) : null;
@@ -421,6 +553,7 @@
     var isCurrent = session === getCurrentExcelDocumentSession() && (!taskType || isExcelTaskVisible(taskType, session));
     if (isCurrent) {
       state.busy = Boolean(isBusy) || Boolean(helpers.isTaskSlotBusy && helpers.isTaskSlotBusy(state.activeTaskSlots, "et", getCurrentWorkflowTaskType(), session));
+      refreshExcelTaskControls();
       if (byId("btn-run-primary")) {
         byId("btn-run-primary").disabled = state.busy || state.workflowProfileMutationBusy;
       }
@@ -3453,9 +3586,11 @@
     }
     var runBtn = byId("btn-run-primary");
     if (runBtn) {
-      runBtn.disabled = Boolean(view.busy) || isRunning;
-      runBtn.textContent = isRunning ? (view.phaseLabel || "提取中...") : "生成任务台账";
+      runBtn.disabled = !view.paused && (Boolean(view.busy) || isRunning);
+      runBtn.textContent = view.paused ? "继续查询" : (isRunning ? (view.phaseLabel || "提取中...") : "生成任务台账");
     }
+    var stopWaitingBtn = byId("btn-stop-excel-task-wait");
+    if (stopWaitingBtn) stopWaitingBtn.hidden = !view.jobId || Boolean(view.paused);
 
     if (view.error) {
       setStatus(view.error);
@@ -3737,7 +3872,7 @@
       "adapter 等待预算：" + (job.providerTimeoutSeconds || 1800) + " 秒",
       "任务编号：" + jobId
     );
-    setExcelAnalysisCancelVisible(job.status === "queued" && job.canCancel, false);
+    setExcelAnalysisCancelVisible((job.status === "queued" || job.status === "running") && job.canCancel !== false, Boolean(job.cancelRequested));
     setPlainResult(lines.join("\n"));
   }
 
@@ -3769,47 +3904,17 @@
     if (isCurrent) {
       setExcelAnalysisCancelVisible(false);
       setStatus("智能分析任务已取消。");
-      setPlainResult("排队中的智能分析任务已取消，未调用模型后台。\n任务编号：" + jobId);
+      setPlainResult("智能分析任务已取消。\n任务编号：" + jobId);
     }
   }
 
-  function cancelQueuedExcelAnalysisJob() {
-    var taskSession = getExcelTaskSession("excel.analysis");
-    var jobId = taskSession.jobId;
-    if (!jobId) {
-      return;
-    }
-    var app = typeof getEtApplication === "function" ? getEtApplication() : null;
-    var workbook = typeof getActiveWorkbook === "function" ? getActiveWorkbook(app) : null;
-    var targetDocSession = (workbook && helpers.getDocumentSessionId ? helpers.getDocumentSessionId(workbook) : "") || state.documentSessionId || "default";
-
-    setExcelAnalysisCancelVisible(true, true);
-    request("/excel/analysis/jobs/" + encodeURIComponent(jobId), null, {
-      method: "DELETE",
-      timeoutMs: EXCEL_ANALYSIS_POLL_REQUEST_TIMEOUT_MS
-    }).then(function (body) {
-      if (taskSession.jobId !== jobId) {
-        return;
-      }
-      if ((body.data || {}).status === "cancelled") {
-        finishCancelledExcelAnalysis(jobId, function () {
-          setExcelTaskBusy(false, targetDocSession, "excel.analysis");
-        }, targetDocSession);
-      }
-    }).catch(function (error) {
-      var app2 = typeof getEtApplication === "function" ? getEtApplication() : null;
-      var wb2 = typeof getActiveWorkbook === "function" ? getActiveWorkbook(app2) : null;
-      var curr = (wb2 && helpers.getDocumentSessionId ? helpers.getDocumentSessionId(wb2) : "") || state.documentSessionId || "default";
-      if (taskSession.jobId === jobId && state.currentMode === "excelAnalysis" && curr === targetDocSession) {
-        setExcelAnalysisCancelVisible(true, false);
-        setStatus("取消排队任务失败：" + describeExcelAnalysisPollError(error));
-      }
-    });
+  function cancelQueuedExcelAnalysisJob(boundDocSessionId) {
+    return cancelExcelTask("excel.analysis", boundDocSessionId);
   }
 
   function pollExcelAnalysisJob(jobId, stopWaiting, boundDocSessionId) {
     var taskSession = getExcelTaskSession("excel.analysis", boundDocSessionId);
-    if (!jobId || taskSession.jobId !== jobId) {
+    if (!jobId || taskSession.jobId !== jobId || taskSession.paused) {
       return;
     }
     var app = typeof getEtApplication === "function" ? getEtApplication() : null;
@@ -3835,6 +3940,7 @@
           return;
         }
         taskSession.pollErrorCount = 0;
+        taskSession.submissionPending = false;
         if (isVisibleForTask()) {
           setTrace(body.traceId || job.traceId || jobId);
         }
@@ -3890,9 +3996,11 @@
           }
           return;
         }
+        if (taskSession.paused) return;
         if (isVisibleForTask()) {
           renderExcelAnalysisJobProgress(job, jobId);
         }
+        if (taskSession.cancelRequested && !taskSession.cancelling) cancelExcelTask("excel.analysis", targetDocSession);
         scheduleExcelAnalysisPoll(jobId, stopWaiting, EXCEL_ANALYSIS_POLL_INTERVAL_MS, targetDocSession);
       })
       .catch(function (error) {
@@ -3903,26 +4011,17 @@
         if (taskSession.jobId !== jobId) {
           return;
         }
+        if (taskSession.paused) return;
         message = describeExcelAnalysisPollError(error);
         taskSession.pollErrorCount = (taskSession.pollErrorCount || 0) + 1;
         elapsed = Date.now() - (taskSession.pollStartedAt || Date.now());
-        if (error && error.adapterCode === "EXCEL_ANALYSIS_JOB_INTERRUPTED") {
-          clearExcelAnalysisActiveJob(jobId, targetDocSession);
-          if (helpers.releaseTaskSlot) {
-            helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.analysis", targetDocSession, jobId);
+          if (error && (error.status === 404 || error.status === 410 || /_JOB_(NOT_FOUND|INTERRUPTED)$/.test(error.adapterCode || ""))) {
+          if (taskSession.submissionPending) {
+            setTimeout(function () { pollExcelAnalysisJob(jobId, stopWaiting, targetDocSession); }, EXCEL_ANALYSIS_POLL_ERROR_RETRY_DELAY_MS);
+            return;
           }
-          taskSession.jobId = "";
-          taskSession.pollStartedAt = 0;
-          taskSession.pollErrorCount = 0;
-          taskSession.resumeExpected = false;
-          stopWaiting();
-          if (isVisibleForTask()) {
-            setExcelAnalysisCancelVisible(false);
-            setInterruptedRetryVisible(true);
-            taskSession.pendingRetryClientJobId = jobId;
-            setStatus("adapter 已重启，原智能分析任务已中断，请重新提交。");
-            setPlainResult("adapter 已重启，原智能分析任务无法恢复，请使用“重新提交分析”。\n任务编号：" + jobId);
-          }
+          taskSession.stopWaiting = stopWaiting;
+          markExcelTaskUnavailable("excel.analysis", jobId, targetDocSession);
           return;
         }
         if (!isFatalExcelAnalysisPollError(error)) {
@@ -3930,6 +4029,11 @@
             taskSession.pollErrorCount <= EXCEL_ANALYSIS_POLL_MAX_ERRORS &&
             elapsed <= EXCEL_ANALYSIS_POLL_MAX_WAIT_MS
           );
+          if (!withinRetryBudget) {
+            taskSession.stopWaiting = stopWaiting;
+            pauseExcelTaskWaiting("excel.analysis", targetDocSession);
+            return;
+          }
           retryDelay = withinRetryBudget
             ? EXCEL_ANALYSIS_POLL_ERROR_RETRY_DELAY_MS
             : EXCEL_ANALYSIS_POLL_SLOW_RETRY_DELAY_MS;
@@ -3990,6 +4094,7 @@
       clearExcelAnalysisActiveJob(active.jobId, currentDocSession);
       return;
     }
+    if (taskSession.paused) return;
     if (taskSession.jobId && !taskSession.recoveryPending) {
       return;
     }
@@ -4055,14 +4160,15 @@
     }).catch(function (error) {
       if (taskSession.jobId !== active.jobId) { return; }
       taskSession.recoveryPending = true;
-      if (error && (error.status === 404 || (error.adapterCode && error.adapterCode.indexOf("NOT_FOUND") >= 0))) {
-        taskSession.jobId = "";
-        clearExcelAnalysisActiveJob(active.jobId, currentDocSession);
-        if (helpers.releaseTaskSlot) {
-          helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.analysis", currentDocSession, active.jobId);
-        }
-        setExcelTaskBusy(false, currentDocSession, "excel.analysis");
+      if (error && (error.status === 404 || error.status === 410 || /_JOB_(NOT_FOUND|INTERRUPTED)$/.test(error.adapterCode || ""))) {
+        if (taskSession.submissionPending) return;
+        markExcelTaskUnavailable("excel.analysis", active.jobId, currentDocSession);
+        return;
       }
+      taskSession.pollErrorCount = (taskSession.pollErrorCount || 0) + 1;
+      setTimeout(function () {
+        pollExcelAnalysisJob(active.jobId, function () { setExcelTaskBusy(false, currentDocSession, "excel.analysis"); }, currentDocSession);
+      }, EXCEL_ANALYSIS_POLL_ERROR_RETRY_DELAY_MS);
     });
   }
 
@@ -4136,7 +4242,16 @@
     if (helpers.claimTaskSlot) {
       helpers.claimTaskSlot(state.activeTaskSlots, "et", "excel.analysis", docSessionId, clientJobId);
     }
+    taskSession.jobId = clientJobId;
+    byId("btn-stop-excel-task-wait").hidden = false;
+    taskSession.preparing = true;
+    taskSession.paused = false;
+    taskSession.interrupted = false;
+    taskSession.cancelRequested = false;
+    taskSession.cancelling = false;
+    taskSession.stopWaiting = null;
     setExcelTaskBusy(true, docSessionId, "excel.analysis");
+    setExcelAnalysisCancelVisible(true);
     if (typeof switchHistoryView === "function") switchHistoryView(false);
     setStatus("正在校验智能分析选区...");
     setPlainResult("正在读取 Excel 表格范围，请稍候。");
@@ -4147,10 +4262,12 @@
       : null;
 
     setTimeout(function () {
-      if (!isCurrentVisible()) {
+      if (taskSession.jobId !== clientJobId || !isCurrentVisible()) {
         if (helpers.releaseTaskSlot) {
           helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.analysis", docSessionId, clientJobId);
         }
+        if (taskSession.jobId === clientJobId) taskSession.jobId = "";
+        taskSession.preparing = false;
         setExcelTaskBusy(false, docSessionId, "excel.analysis");
         return;
       }
@@ -4167,7 +4284,10 @@
         if (helpers.releaseTaskSlot) {
           helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.analysis", docSessionId, clientJobId);
         }
+        taskSession.jobId = "";
+        taskSession.preparing = false;
         setExcelTaskBusy(false, docSessionId, "excel.analysis");
+        setExcelAnalysisCancelVisible(false);
         setStatus("读取 Excel 表格失败：" + error.message);
         if (state.analysisResult && typeof renderExcelAnalysisResult === "function") {
           renderExcelAnalysisResult(state.analysisResult);
@@ -4178,7 +4298,7 @@
       }
 
       setInterruptedRetryVisible(false);
-      setExcelAnalysisCancelVisible(false);
+      setExcelAnalysisCancelVisible(true);
       taskSession.pendingRetryClientJobId = null;
       state.analysisRequirement = safeText(byId("excel-analysis-requirement").value);
       state.analysisResult = null;
@@ -4188,6 +4308,7 @@
       clearExcelAnalysisActiveJob(null, docSessionId);
       taskSession.recoveryPending = false;
       taskSession.jobId = clientJobId;
+    byId("btn-stop-excel-task-wait").hidden = false;
       taskSession.pollStartedAt = 0;
       taskSession.pollErrorCount = 0;
       taskSession.resumeExpected = false;
@@ -4202,7 +4323,10 @@
           setExcelTaskBusy(false, docSessionId, "excel.analysis");
         };
       })(stopWaiting);
+      taskSession.stopWaiting = stopWaiting;
 
+      taskSession.preparing = false;
+      taskSession.submissionPending = true;
       startedAt = Date.now();
       state.latestExcelPayload.clientJobId = clientJobId;
       state.latestExcelPayload.documentSessionId = docSessionId;
@@ -4235,6 +4359,7 @@
           if (taskSession.jobId !== clientJobId) {
             return;
           }
+          taskSession.submissionPending = false;
           if (isCurrentVisible()) {
             setTrace(body.traceId || job.traceId || jobId);
           }
@@ -4273,16 +4398,19 @@
             }
             return;
           }
+          if (taskSession.cancelRequested && !taskSession.cancelling) cancelExcelTask("excel.analysis", docSessionId);
+          if (taskSession.paused) return;
           if (isCurrentVisible()) {
             renderExcelAnalysisJobProgress(job, jobId);
           }
-          pollExcelAnalysisJob(jobId, stopWaiting, docSessionId);
+        pollExcelAnalysisJob(jobId, stopWaiting, docSessionId);
         })
         .catch(function (error) {
           var message = describeExcelAnalysisPollError(error);
           if (taskSession.jobId !== clientJobId) {
             return;
           }
+          taskSession.submissionPending = false;
           if (isFatalExcelAnalysisPollError(error)) {
             clearExcelAnalysisActiveJob(clientJobId, docSessionId);
             if (helpers.releaseTaskSlot) {
@@ -4351,7 +4479,7 @@
       "adapter 等待预算：" + (job.providerTimeoutSeconds || 1800) + " 秒",
       "任务编号：" + jobId
     );
-    setExcelFormulaCancelVisible(job.status === "queued" && job.canCancel, false);
+    setExcelFormulaCancelVisible((job.status === "queued" || job.status === "running") && job.canCancel !== false, Boolean(job.cancelRequested));
     setPlainResult(lines.join("\n"));
   }
 
@@ -4377,44 +4505,17 @@
     if (isCurrent) {
       setExcelFormulaCancelVisible(false);
       setStatus("公式助手任务已取消。");
-      setPlainResult("排队中的公式助手任务已取消，未调用模型后台。\n任务编号：" + jobId);
+      setPlainResult("公式助手任务已取消。\n任务编号：" + jobId);
     }
   }
 
-  function cancelQueuedExcelFormulaJob() {
-    var taskSession = getExcelTaskSession("excel.formula_assistant");
-    var jobId = taskSession.jobId;
-    if (!jobId) {
-      return;
-    }
-    var app = typeof getEtApplication === "function" ? getEtApplication() : null;
-    var workbook = typeof getActiveWorkbook === "function" ? getActiveWorkbook(app) : null;
-    var targetDocSession = (workbook && helpers.getDocumentSessionId ? helpers.getDocumentSessionId(workbook) : "") || state.documentSessionId || "default";
-
-    setExcelFormulaCancelVisible(true, true);
-    request("/excel/formula-assistant/jobs/" + encodeURIComponent(jobId), null, {
-      method: "DELETE",
-      timeoutMs: EXCEL_ANALYSIS_POLL_REQUEST_TIMEOUT_MS
-    }).then(function (body) {
-      if (taskSession.jobId === jobId && (body.data || {}).status === "cancelled") {
-        finishCancelledExcelFormula(jobId, function () {
-          setExcelTaskBusy(false, targetDocSession, "excel.formula_assistant");
-        }, targetDocSession);
-      }
-    }).catch(function (error) {
-      var app2 = typeof getEtApplication === "function" ? getEtApplication() : null;
-      var wb2 = typeof getActiveWorkbook === "function" ? getActiveWorkbook(app2) : null;
-      var curr = (wb2 && helpers.getDocumentSessionId ? helpers.getDocumentSessionId(wb2) : "") || state.documentSessionId || "default";
-      if (taskSession.jobId === jobId && state.currentMode === "excelFormulaAssistant" && curr === targetDocSession) {
-        setExcelFormulaCancelVisible(true, false);
-        setStatus("取消排队任务失败：" + describeExcelFormulaPollError(error));
-      }
-    });
+  function cancelQueuedExcelFormulaJob(boundDocSessionId) {
+    return cancelExcelTask("excel.formula_assistant", boundDocSessionId);
   }
 
   function pollExcelFormulaJob(jobId, stopWaiting, boundDocSessionId) {
     var taskSession = getExcelTaskSession("excel.formula_assistant", boundDocSessionId);
-    if (!jobId || taskSession.jobId !== jobId) {
+    if (!jobId || taskSession.jobId !== jobId || taskSession.paused) {
       return;
     }
     var app = typeof getEtApplication === "function" ? getEtApplication() : null;
@@ -4437,6 +4538,7 @@
         return;
       }
       taskSession.pollErrorCount = 0;
+      taskSession.submissionPending = false;
       if (isVisibleForTask()) {
         setTrace(body.traceId || job.traceId || jobId);
       }
@@ -4492,9 +4594,11 @@
         }
         return;
       }
+      if (taskSession.paused) return;
       if (isVisibleForTask()) {
         renderExcelFormulaJobProgress(job, jobId);
       }
+      if (taskSession.cancelRequested && !taskSession.cancelling) cancelExcelTask("excel.formula_assistant", targetDocSession);
       scheduleExcelFormulaPoll(jobId, stopWaiting, EXCEL_ANALYSIS_POLL_INTERVAL_MS, targetDocSession);
     }).catch(function (error) {
       var elapsed;
@@ -4504,26 +4608,17 @@
       if (taskSession.jobId !== jobId) {
         return;
       }
+      if (taskSession.paused) return;
       message = describeExcelFormulaPollError(error);
       taskSession.pollErrorCount += 1;
       elapsed = Date.now() - (taskSession.pollStartedAt || Date.now());
-      if (error && error.adapterCode === "EXCEL_FORMULA_JOB_INTERRUPTED") {
-        clearExcelFormulaActiveJob(jobId, targetDocSession);
-        if (helpers.releaseTaskSlot) {
-          helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.formula_assistant", targetDocSession, jobId);
+      if (error && (error.status === 404 || error.status === 410 || /_JOB_(NOT_FOUND|INTERRUPTED)$/.test(error.adapterCode || ""))) {
+        if (taskSession.submissionPending) {
+          setTimeout(function () { pollExcelFormulaJob(jobId, stopWaiting, targetDocSession); }, EXCEL_ANALYSIS_POLL_ERROR_RETRY_DELAY_MS);
+          return;
         }
-        taskSession.jobId = "";
-        taskSession.pollStartedAt = 0;
-        taskSession.pollErrorCount = 0;
-        taskSession.resumeExpected = false;
-        stopWaiting();
-        if (isVisibleForTask()) {
-          setExcelFormulaCancelVisible(false);
-          setFormulaInterruptedRetryVisible(true);
-          taskSession.pendingRetryClientJobId = jobId;
-          setStatus("adapter 已重启，原公式助手任务已中断，请重新提交。");
-          setPlainResult("adapter 已重启，原公式助手任务无法恢复，请重新提交计算需求。\n任务编号：" + jobId);
-        }
+        taskSession.stopWaiting = stopWaiting;
+        markExcelTaskUnavailable("excel.formula_assistant", jobId, targetDocSession);
         return;
       }
       if (!isFatalExcelFormulaPollError(error)) {
@@ -4531,6 +4626,11 @@
           taskSession.pollErrorCount <= EXCEL_ANALYSIS_POLL_MAX_ERRORS &&
           elapsed <= EXCEL_ANALYSIS_POLL_MAX_WAIT_MS
         );
+        if (!withinRetryBudget) {
+          taskSession.stopWaiting = stopWaiting;
+          pauseExcelTaskWaiting("excel.formula_assistant", targetDocSession);
+          return;
+        }
         retryDelay = withinRetryBudget
           ? EXCEL_ANALYSIS_POLL_ERROR_RETRY_DELAY_MS
           : EXCEL_ANALYSIS_POLL_SLOW_RETRY_DELAY_MS;
@@ -4586,6 +4686,7 @@
       clearExcelFormulaActiveJob(active.jobId, currentDocSession);
       return;
     }
+    if (taskSession.paused) return;
     if (taskSession.jobId && !taskSession.recoveryPending) {
       return;
     }
@@ -4647,14 +4748,15 @@
     }).catch(function (error) {
       if (taskSession.jobId !== active.jobId) { return; }
       taskSession.recoveryPending = true;
-      if (error && (error.status === 404 || (error.adapterCode && error.adapterCode.indexOf("NOT_FOUND") >= 0))) {
-        taskSession.jobId = "";
-        clearExcelFormulaActiveJob(active.jobId, currentDocSession);
-        if (helpers.releaseTaskSlot) {
-          helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.formula_assistant", currentDocSession, active.jobId);
-        }
-        setExcelTaskBusy(false, currentDocSession, "excel.formula_assistant");
+      if (error && (error.status === 404 || error.status === 410 || /_JOB_(NOT_FOUND|INTERRUPTED)$/.test(error.adapterCode || ""))) {
+        if (taskSession.submissionPending) return;
+        markExcelTaskUnavailable("excel.formula_assistant", active.jobId, currentDocSession);
+        return;
       }
+      taskSession.pollErrorCount = (taskSession.pollErrorCount || 0) + 1;
+      setTimeout(function () {
+        pollExcelFormulaJob(active.jobId, function () { setExcelTaskBusy(false, currentDocSession, "excel.formula_assistant"); }, currentDocSession);
+      }, EXCEL_ANALYSIS_POLL_ERROR_RETRY_DELAY_MS);
     });
   }
 
@@ -4705,7 +4807,16 @@
     if (helpers.claimTaskSlot) {
       helpers.claimTaskSlot(state.activeTaskSlots, "et", "excel.formula_assistant", docSessionId, clientJobId);
     }
+    taskSession.jobId = clientJobId;
+    byId("btn-stop-excel-task-wait").hidden = false;
+    taskSession.preparing = true;
+    taskSession.paused = false;
+    taskSession.interrupted = false;
+    taskSession.cancelRequested = false;
+    taskSession.cancelling = false;
+    taskSession.stopWaiting = null;
     setExcelTaskBusy(true, docSessionId, "excel.formula_assistant");
+    setExcelFormulaCancelVisible(true);
     if (typeof switchHistoryView === "function") switchHistoryView(false);
     setStatus("正在校验公式上下文...");
     setPlainResult("公式助手正在读取明确选区，不会读取工作表已用范围。");
@@ -4716,10 +4827,12 @@
       : null;
 
     setTimeout(function () {
-      if (!isCurrentVisible()) {
+      if (taskSession.jobId !== clientJobId || !isCurrentVisible()) {
         if (helpers.releaseTaskSlot) {
           helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.formula_assistant", docSessionId, clientJobId);
         }
+        if (taskSession.jobId === clientJobId) taskSession.jobId = "";
+        taskSession.preparing = false;
         setExcelTaskBusy(false, docSessionId, "excel.formula_assistant");
         return;
       }
@@ -4737,7 +4850,10 @@
         if (helpers.releaseTaskSlot) {
           helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.formula_assistant", docSessionId, clientJobId);
         }
+        taskSession.jobId = "";
+        taskSession.preparing = false;
         setExcelTaskBusy(false, docSessionId, "excel.formula_assistant");
+        setExcelFormulaCancelVisible(false);
         setStatus("读取公式上下文失败：" + error.message);
         if (state.formulaResult && typeof renderExcelFormulaResult === "function") {
           renderExcelFormulaResult(state.formulaResult);
@@ -4748,7 +4864,7 @@
       }
 
       setFormulaInterruptedRetryVisible(false);
-      setExcelFormulaCancelVisible(false);
+      setExcelFormulaCancelVisible(true);
       taskSession.pendingRetryClientJobId = null;
       state.formulaResult = null;
       if (state.activeFormulaResultsBySession) {
@@ -4759,6 +4875,7 @@
       clearExcelFormulaActiveJob(null, docSessionId);
       taskSession.recoveryPending = false;
       taskSession.jobId = clientJobId;
+    byId("btn-stop-excel-task-wait").hidden = false;
       taskSession.pollStartedAt = 0;
       taskSession.pollErrorCount = 0;
       taskSession.resumeExpected = false;
@@ -4773,7 +4890,10 @@
           setExcelTaskBusy(false, docSessionId, "excel.formula_assistant");
         };
       })(stopWaiting);
+      taskSession.stopWaiting = stopWaiting;
 
+      taskSession.preparing = false;
+      taskSession.submissionPending = true;
       startedAt = Date.now();
       payload.clientJobId = clientJobId;
       payload.documentSessionId = docSessionId;
@@ -4804,6 +4924,7 @@
         if (taskSession.jobId !== clientJobId) {
           return;
         }
+        taskSession.submissionPending = false;
         if (isCurrentVisible()) {
           setTrace(body.traceId || job.traceId || jobId);
         }
@@ -4842,6 +4963,8 @@
           }
           return;
         }
+        if (taskSession.cancelRequested && !taskSession.cancelling) cancelExcelTask("excel.formula_assistant", docSessionId);
+        if (taskSession.paused) return;
         if (isCurrentVisible()) {
           renderExcelFormulaJobProgress(job, jobId);
         }
@@ -4851,6 +4974,7 @@
         if (taskSession.jobId !== clientJobId) {
           return;
         }
+        taskSession.submissionPending = false;
         if (isFatalExcelFormulaPollError(error)) {
           clearExcelFormulaActiveJob(clientJobId, docSessionId);
           if (helpers.releaseTaskSlot) {
@@ -4952,7 +5076,7 @@
       "adapter 等待预算：" + (job.providerTimeoutSeconds || 1800) + " 秒",
       "任务编号：" + jobId
     );
-    setExcelSmartFillCancelVisible((job.status === "queued" || job.status === "running") && job.canCancel, false);
+    setExcelSmartFillCancelVisible((job.status === "queued" || job.status === "running") && job.canCancel !== false, Boolean(job.cancelRequested));
     setPlainResult(lines.join("\n"));
   }
 
@@ -4990,49 +5114,13 @@
     }
   }
 
-  function cancelExcelSmartFillJob() {
-    var taskSession = getExcelTaskSession("excel.smart_fill");
-    var jobId = taskSession.jobId;
-    if (!jobId) {
-      return;
-    }
-    if (state.smartFillExtractionInFlight) {
-      state.smartFillCancelRequested = true;
-      setStatus("正在取消智能填写数据准备...");
-      return;
-    }
-    var app = typeof getEtApplication === "function" ? getEtApplication() : null;
-    var workbook = typeof getActiveWorkbook === "function" ? getActiveWorkbook(app) : null;
-    var docSessionId = (workbook && helpers.getDocumentSessionId ? helpers.getDocumentSessionId(workbook) : "") || state.documentSessionId || "default";
-    setExcelSmartFillCancelVisible(true, true);
-    request("/excel/smart-fill/jobs/" + encodeURIComponent(jobId), null, {
-      method: "DELETE",
-      timeoutMs: EXCEL_SMART_FILL_REQUEST_TIMEOUT_MS
-    }).then(function (body) {
-      if (taskSession.jobId === jobId) {
-        var job = (body && body.data) || {};
-        if (job.status === "cancelled") {
-          finishCancelledExcelSmartFill(jobId, function () {
-            setExcelTaskBusy(false, docSessionId, "excel.smart_fill");
-          }, job.result || null, docSessionId);
-        } else if (job.status === "running" && job.cancelRequested && isExcelTaskVisible("excel.smart_fill", docSessionId)) {
-          setStatus("智能填写正在停止，当前批次完成后将保留部分预览。");
-        }
-      }
-    }).catch(function (error) {
-      var app2 = typeof getEtApplication === "function" ? getEtApplication() : null;
-      var wb2 = typeof getActiveWorkbook === "function" ? getActiveWorkbook(app2) : null;
-      var curr = (wb2 && helpers.getDocumentSessionId ? helpers.getDocumentSessionId(wb2) : "") || state.documentSessionId || "default";
-      if (taskSession.jobId === jobId && state.currentMode === "excelSmartFill" && curr === docSessionId) {
-        setExcelSmartFillCancelVisible(true, false);
-        setStatus("取消智能填写任务失败：" + describeExcelSmartFillPollError(error));
-      }
-    });
+  function cancelExcelSmartFillJob(boundDocSessionId) {
+    return cancelExcelTask("excel.smart_fill", boundDocSessionId);
   }
 
   function pollExcelSmartFillJob(jobId, stopWaiting, boundDocSessionId) {
     var taskSession = getExcelTaskSession("excel.smart_fill", boundDocSessionId);
-    if (!jobId || taskSession.jobId !== jobId) {
+    if (!jobId || taskSession.jobId !== jobId || taskSession.paused) {
       return;
     }
     var app = typeof getEtApplication === "function" ? getEtApplication() : null;
@@ -5055,6 +5143,7 @@
         return;
       }
       taskSession.pollErrorCount = 0;
+      taskSession.submissionPending = false;
       if (isCurrentDoc()) {
         setTrace(body.traceId || job.traceId || jobId);
       }
@@ -5128,9 +5217,11 @@
         }
         return;
       }
+      if (taskSession.paused) return;
       if (isCurrentDoc()) {
         renderExcelSmartFillJobProgress(job, jobId);
       }
+      if (taskSession.cancelRequested && !taskSession.cancelling) cancelExcelTask("excel.smart_fill", targetDocSession);
       setTimeout(function () {
         pollExcelSmartFillJob(jobId, stopWaiting, targetDocSession);
       }, EXCEL_ANALYSIS_POLL_INTERVAL_MS);
@@ -5142,31 +5233,17 @@
       if (taskSession.jobId !== jobId) {
         return;
       }
+      if (taskSession.paused) return;
       message = describeExcelSmartFillPollError(error);
       taskSession.pollErrorCount += 1;
       elapsed = Date.now() - (taskSession.pollStartedAt || Date.now());
-      if (error && error.adapterCode === "EXCEL_SMART_FILL_JOB_INTERRUPTED") {
-        if (helpers.releaseTaskSlot) {
-          helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.smart_fill", targetDocSession, jobId);
+      if (error && (error.status === 404 || error.status === 410 || /_JOB_(NOT_FOUND|INTERRUPTED)$/.test(error.adapterCode || ""))) {
+        if (taskSession.submissionPending) {
+          setTimeout(function () { pollExcelSmartFillJob(jobId, stopWaiting, targetDocSession); }, EXCEL_ANALYSIS_POLL_ERROR_RETRY_DELAY_MS);
+          return;
         }
-        clearExcelSmartFillActiveJob(jobId, targetDocSession);
-        if (taskSession.jobId === jobId) {
-          taskSession.jobId = "";
-          taskSession.pollStartedAt = 0;
-          taskSession.pollErrorCount = 0;
-          taskSession.resumeExpected = false;
-        }
-        stopWaiting();
-        if (isCurrentDoc()) {
-          setExcelSmartFillCancelVisible(false);
-          setSmartFillInterruptedRetryVisible(true);
-          taskSession.pendingRetryClientJobId = jobId;
-          if (state.smartFillRetryItemId) {
-            restoreSmartFillRetryResult();
-          }
-          setStatus("adapter 已重启，原智能填写任务已中断，请重新提交。");
-          setPlainResult("adapter 已重启，原智能填写任务无法恢复，请重新提交智能填写。\n任务编号：" + jobId);
-        }
+        taskSession.stopWaiting = stopWaiting;
+        markExcelTaskUnavailable("excel.smart_fill", jobId, targetDocSession);
         return;
       }
       if (!isFatalExcelSmartFillPollError(error)) {
@@ -5174,6 +5251,11 @@
           taskSession.pollErrorCount <= EXCEL_ANALYSIS_POLL_MAX_ERRORS &&
           elapsed <= EXCEL_ANALYSIS_POLL_MAX_WAIT_MS
         );
+        if (!withinRetryBudget) {
+          taskSession.stopWaiting = stopWaiting;
+          pauseExcelTaskWaiting("excel.smart_fill", targetDocSession);
+          return;
+        }
         retryDelay = withinRetryBudget
           ? EXCEL_ANALYSIS_POLL_ERROR_RETRY_DELAY_MS
           : EXCEL_ANALYSIS_POLL_SLOW_RETRY_DELAY_MS;
@@ -5228,7 +5310,7 @@
     var currentDocSession = (helpers.getDocumentSessionId ? helpers.getDocumentSessionId(workbook) : "") || state.documentSessionId || "default";
     var active = loadExcelSmartFillActiveJob(currentDocSession);
     var restored;
-    if (taskSession.jobId) { return; }
+    if (taskSession.paused || (taskSession.jobId && !taskSession.recoveryPending)) { return; }
     if (helpers.sanitizeRestoredExcelSmartFillState) {
       restored = helpers.sanitizeRestoredExcelSmartFillState(state);
       state.smartFillTarget = restored.smartFillTarget;
@@ -5334,7 +5416,7 @@
       state.smartFillCancelRequested = false;
       state.smartFillExtractionInFlight = false;
       setSmartFillInterruptedRetryVisible(false);
-      setExcelSmartFillCancelVisible(false);
+      setExcelSmartFillCancelVisible(true);
       setExcelTaskBusy(true, docSessionId, "excel.smart_fill");
       if (typeof switchHistoryView === "function") switchHistoryView(false);
       if (!state.smartFillRetryItemId) {
@@ -5351,14 +5433,22 @@
         }
       }
       clearExcelSmartFillActiveJob(null, docSessionId);
+      taskSession.preparing = false;
+      taskSession.submissionPending = true;
+      taskSession.paused = false;
+      taskSession.interrupted = false;
+      taskSession.cancelRequested = false;
+      taskSession.cancelling = false;
       taskSession.recoveryPending = false;
       taskSession.jobId = clientJobId;
+      byId("btn-stop-excel-task-wait").hidden = false;
       taskSession.pollStartedAt = Date.now();
       taskSession.pollErrorCount = 0;
       taskSession.resumeExpected = true;
       startedAt = taskSession.pollStartedAt;
       saveCurrentSmartFillSessionState(docSessionId);
       saveExcelSmartFillActiveJob({ jobId: clientJobId, startedAt: startedAt, documentSessionId: docSessionId });
+      setExcelSmartFillCancelVisible(true);
       byId("result-view-switch").hidden = true;
       setScopeLine(summarizeSmartFillSource(payload.source));
       setStatus("正在提交智能填写请求...");
@@ -5370,6 +5460,7 @@
           setExcelTaskBusy(false, docSessionId, "excel.smart_fill");
         };
       })(stopWaiting);
+      taskSession.stopWaiting = stopWaiting;
 
       return request("/excel/smart-fill/jobs", payload, {
         timeoutMs: EXCEL_SMART_FILL_REQUEST_TIMEOUT_MS
@@ -5379,6 +5470,7 @@
         if (taskSession.jobId !== clientJobId) {
           return;
         }
+        taskSession.submissionPending = false;
         if (isCurrentVisible()) {
           setTrace(body.traceId || job.traceId || jobId);
         }
@@ -5420,6 +5512,8 @@
           }
           return;
         }
+        if (taskSession.cancelRequested && !taskSession.cancelling) cancelExcelTask("excel.smart_fill", docSessionId);
+        if (taskSession.paused) return;
         if (isCurrentVisible()) {
           renderExcelSmartFillJobProgress(job, jobId);
         }
@@ -5429,6 +5523,7 @@
         if (taskSession.jobId !== clientJobId) {
           return;
         }
+        taskSession.submissionPending = false;
         if (isFatalExcelSmartFillPollError(error)) {
           if (helpers.releaseTaskSlot) {
             helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.smart_fill", docSessionId, clientJobId);
@@ -5493,8 +5588,14 @@
     state.smartFillExtractionInFlight = !state.smartFillRetryItemId;
     setSmartFillInterruptedRetryVisible(false);
     clearExcelSmartFillActiveJob(null, docSessionId);
+    taskSession.preparing = true;
+    taskSession.paused = false;
+    taskSession.interrupted = false;
+    taskSession.cancelRequested = false;
+    taskSession.cancelling = false;
     taskSession.recoveryPending = false;
     taskSession.jobId = clientJobId;
+      byId("btn-stop-excel-task-wait").hidden = false;
     taskSession.pollStartedAt = Date.now();
     taskSession.pollErrorCount = 0;
     taskSession.resumeExpected = true;
@@ -5582,10 +5683,10 @@
     }
 
     return payloadPromise.then(function (preparedPayload) {
+      if (taskSession.jobId !== clientJobId) return;
       state.smartFillExtractionInFlight = false;
-      if (taskSession.jobId !== clientJobId) {
-        return;
-      }
+      taskSession.preparing = false;
+      taskSession.submissionPending = true;
       if (!state.smartFillRetryItemId) {
         state.smartFillResult = null;
         state.smartFillPreview = null;
@@ -5615,6 +5716,7 @@
           setExcelTaskBusy(false, docSessionId, "excel.smart_fill");
         };
       })(stopWaiting);
+      taskSession.stopWaiting = stopWaiting;
 
       return request("/excel/smart-fill/jobs", payload, {
         timeoutMs: EXCEL_SMART_FILL_REQUEST_TIMEOUT_MS
@@ -5631,6 +5733,7 @@
         if (taskSession.jobId !== clientJobId) {
           return;
         }
+        taskSession.submissionPending = false;
         if (isCurrentVisible()) {
           setTrace(body.traceId || job.traceId || jobId);
         }
@@ -5673,6 +5776,8 @@
           }
           return;
         }
+        if (taskSession.cancelRequested && !taskSession.cancelling) cancelExcelTask("excel.smart_fill", docSessionId);
+        if (taskSession.paused) return;
         if (isCurrentVisible()) {
           renderExcelSmartFillJobProgress(job, jobId);
         }
@@ -5682,6 +5787,7 @@
         if (taskSession.jobId !== clientJobId) {
           return;
         }
+        taskSession.submissionPending = false;
         if (isFatalExcelSmartFillPollError(error)) {
           if (helpers.releaseTaskSlot) {
             helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.smart_fill", docSessionId, clientJobId);
@@ -5709,6 +5815,8 @@
         pollExcelSmartFillJob(clientJobId, stopWaiting, docSessionId);
       });
     }).catch(function (error) {
+      if (taskSession.jobId !== clientJobId) return;
+      taskSession.preparing = false;
       state.smartFillExtractionInFlight = false;
       if (helpers.releaseTaskSlot) {
         helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.smart_fill", docSessionId, clientJobId);
@@ -9006,20 +9114,22 @@
         ctrl.writeToSheet(app).catch(function () {});
       });
     }
+    byId("btn-stop-excel-task-wait").addEventListener("click", function () {
+      if (state.currentMode === "excelLedger") {
+        var ledger = ensureMaterialLedger();
+        if (ledger) ledger.stopWaiting();
+      } else {
+        pauseExcelTaskWaiting(getCurrentWorkflowTaskType());
+      }
+    });
     byId("btn-resubmit-interrupted-job").addEventListener("click", function () {
-      var ts = getExcelTaskSession("excel.analysis");
-      var retryId = ts && ts.pendingRetryClientJobId;
-      runExcelAnalysisAction({ reuseClientJobId: retryId });
+      continueExcelTask("excel.analysis");
     });
     byId("btn-resubmit-interrupted-formula-job").addEventListener("click", function () {
-      var ts = getExcelTaskSession("excel.formula_assistant");
-      var retryId = ts && ts.pendingRetryClientJobId;
-      runExcelFormulaAction({ reuseClientJobId: retryId });
+      continueExcelTask("excel.formula_assistant");
     });
     byId("btn-resubmit-interrupted-smart-fill-job").addEventListener("click", function () {
-      var ts = getExcelTaskSession("excel.smart_fill");
-      var retryId = ts && ts.pendingRetryClientJobId;
-      runExcelSmartFillAction({ reuseClientJobId: retryId });
+      continueExcelTask("excel.smart_fill");
     });
     byId("diagnostics-disclosure").addEventListener("toggle", handleDiagnosticsDisclosureToggle);
     byId("workflow-task-tabs").addEventListener("click", handleWorkflowTaskTabClick);

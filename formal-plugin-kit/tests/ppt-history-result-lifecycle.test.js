@@ -38,6 +38,7 @@ function harness(taskMode = "pptSlideAssistant") {
     },
     document: {}, getActivePresentation: () => ({}), getWppApplication: () => ({}),
     setStatus: text => { state.status = text; }, setRunDisabled: busy => { state.busy = busy; },
+    setPptJobActionVisibility() {},
     setTimeout: fn => timers.push(fn), beginTaskPerformance: () => ({}), setSummary() {},
     safeText: value => String(value || ""), buildPptSlideClientJobId: mode => "new-" + mode,
     showProgressText: text => { state.output = text; },

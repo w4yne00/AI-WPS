@@ -744,7 +744,7 @@ class PptSlideAssistantTests(unittest.TestCase):
         self.assertIn("adapter 重启".encode("utf-8"), interrupted.body)
 
     @unittest.skipUnless(HAS_FASTAPI, "fastapi is required for PPT route tests")
-    def test_fastapi_cancel_queued_job_contract(self):
+    def test_fastapi_cancel_queued_and_running_job_contract(self):
         assistant = BlockingPptAssistant()
         store = PptSlideAssistantJobStore(
             assistant=assistant,
@@ -764,6 +764,9 @@ class PptSlideAssistantTests(unittest.TestCase):
             response = ppt_api.cancel_ppt_slide_assistant_job(
                 "client-ppt-fastapi-queued"
             )
+            stopping = ppt_api.cancel_ppt_slide_assistant_job("client-ppt-fastapi-running")
+            self.assertEqual(stopping["data"]["phase"], "stopping")
+            self.assertTrue(stopping["data"]["cancelRequested"])
         finally:
             assistant.release.set()
             ppt_api.ppt_slide_jobs = original_store
@@ -771,6 +774,9 @@ class PptSlideAssistantTests(unittest.TestCase):
         self.assertEqual(response["message"], "任务已取消。")
         self.assertEqual(response["data"]["status"], "cancelled")
         self.assertFalse(response["data"]["canCancel"])
+        terminal = store.coordinator.wait("client-ppt-fastapi-running", task_type="ppt.slide_assistant")
+        self.assertEqual(terminal["status"], "cancelled")
+        self.assertIsNone(terminal.get("result"))
 
     @unittest.skipUnless(HAS_FASTAPI, "fastapi is required for PPT route tests")
     def test_fastapi_upload_and_document_result_serialization(self):

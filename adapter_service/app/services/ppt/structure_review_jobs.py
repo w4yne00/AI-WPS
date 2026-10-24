@@ -105,6 +105,7 @@ class PptStructureReviewJobStore:
                 },
                 failure_code="PPT_STRUCTURE_JOB_FAILED",
                 failure_message=JOB_FAILED_MESSAGE,
+                allow_running_cancel=True,
                 public_metadata={
                     "runningMessage": "模型后台正在处理 PPT 结构审查，adapter 会继续等待结果。",
                     "providerTimeoutSeconds": PPT_STRUCTURE_REVIEW_TIMEOUT_SECONDS,
@@ -122,7 +123,7 @@ class PptStructureReviewJobStore:
         return self.coordinator.get(job_id, task_type="ppt.structure_review")
 
     def cancel(self, job_id: str) -> Optional[Dict]:
-        job = self.coordinator.cancel(job_id, task_type="ppt.structure_review")
+        job = self.coordinator.request_cancel(job_id, task_type="ppt.structure_review")
         if job is not None and job.get("status") == "cancelled":
             with self._submission_lock:
                 for key, val in list(self._active_doc_sessions.items()):

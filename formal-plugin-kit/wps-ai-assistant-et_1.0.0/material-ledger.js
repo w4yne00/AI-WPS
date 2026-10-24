@@ -15,6 +15,8 @@
   }
 })(typeof globalThis !== "undefined" ? globalThis : this, function () {
   var DEFAULT_LEDGER_HEADERS = ["工作事项", "责任部门", "完成时间", "交付物验收"];
+  var LEDGER_REQUEST_TIMEOUT_MS = 10000;
+  var LEDGER_POLL_MAX_ERRORS = 3;
 
   var LEDGER_PHASE_TEXT = {
     queued: "正在排队...",
@@ -85,6 +87,11 @@
           pendingRequest: (saved && saved.pendingRequest) || null,
           busy: Boolean(saved && saved.jobId && (!saved.status || saved.status === "running" || saved.status === "queued")),
           pollScheduled: false,
+          paused: Boolean(saved && saved.paused),
+          preparing: false,
+          submissionPending: false,
+          cancelRequested: false,
+          pollErrors: 0,
           activeDrawerRowIndex: null,
           includeHeaders: (saved && typeof saved.includeHeaders === "boolean") ? saved.includeHeaders : true,
           targetRangeInfo: null,
@@ -118,6 +125,7 @@
           phase: s.phase,
           error: s.error,
           pendingRequest: s.pendingRequest,
+          paused: s.paused,
           includeHeaders: s.includeHeaders,
           writeReport: s.writeReport,
           writeStatus: s.writeStatus
@@ -243,7 +251,7 @@
           "/excel/material-ledger/conflicts?documentSessionId=" + encodeURIComponent(s.documentSessionId) +
           "&userFacts=" + encodeURIComponent(userFacts || ""),
           null,
-          { method: "GET" }
+          { method: "GET", timeoutMs: LEDGER_REQUEST_TIMEOUT_MS }
         );
         if (s.userFacts !== userFacts) return [];
         var previous = JSON.stringify(s.conflicts);
@@ -265,7 +273,7 @@
     async function listReusableSources(sessionId) {
       var s = stateFor(sessionId || getSessionId());
       try {
-        var res = await request("/materials/reusable-sources", null, { method: "GET" });
+        var res = await request("/materials/reusable-sources", null, { method: "GET", timeoutMs: LEDGER_REQUEST_TIMEOUT_MS });
         var list = ((res && res.data && res.data.sources) || []).filter(function (source) {
           return source.sourceSessionId !== s.documentSessionId;
         });
@@ -432,7 +440,7 @@
     async function loadCatalog(sessionId) {
       var s = stateFor(sessionId || getSessionId());
       try {
-        var res = await request("/excel/materials/catalog?documentSessionId=" + encodeURIComponent(s.documentSessionId), null, { method: "GET" });
+        var res = await request("/excel/materials/catalog?documentSessionId=" + encodeURIComponent(s.documentSessionId), null, { method: "GET", timeoutMs: LEDGER_REQUEST_TIMEOUT_MS });
         if (res && res.data) {
           s.catalogSummary = res.data;
           persist(s);
@@ -459,6 +467,10 @@
       if (!s.busy) {
         s.jobId = "";
         s.pendingRequest = null;
+        s.paused = false;
+        s.cancelRequested = false;
+        s.submissionPending = false;
+        s.preparing = false;
       }
       persist(s);
       notify(s);
@@ -466,21 +478,45 @@
 
     async function generate() {
       var s = current();
+      if (s.jobId && s.paused) {
+        s.paused = false;
+        s.pollErrors = 0;
+        s.error = "";
+        notify(s);
+        pollJob(s.jobId, s.documentSessionId);
+        return;
+      }
       if (s.busy) return;
       var displayName = opts.getDocumentDisplayName ? opts.getDocumentDisplayName() : "工作簿.xlsx";
       var payload = s.pendingRequest;
       var selectedHeaders = s.headers.filter(function (h) { return s.uncheckedHeaders.indexOf(h) < 0; });
       if (!payload && !selectedHeaders.length) { s.error = "至少选择一列台账表头。"; notify(s); return; }
       s.activeDrawerRowIndex = null;
+      var preparingJobId = payload ? payload.clientJobId : "job_" + Math.random().toString(36).slice(2, 10);
+      s.clientJobId = preparingJobId;
+      s.jobId = preparingJobId;
+      s.status = "running";
+      s.phase = "preparing";
+      s.preparing = !payload;
+      s.cancelRequested = false;
+      s.paused = false;
+      s.pollErrors = 0;
       s.busy = true;
       s.error = "";
       notify(s);
       if (!payload) {
         try {
           await checkConflicts(s.documentSessionId);
-        } catch (err) { s.busy = false; notify(s); return; }
+        } catch (err) {
+          if (s.jobId !== preparingJobId) return;
+          s.preparing = false; s.jobId = ""; s.status = "failed"; s.busy = false; notify(s); return;
+        }
+        if (s.jobId !== preparingJobId) return;
         if (s.conflicts.length && s.conflictResolutions.length !== s.conflicts.length) {
           s.busy = false;
+          s.preparing = false;
+          s.jobId = "";
+          s.status = "failed";
           s.error = "资料存在事实差异，请先选择依据后再生成。";
           notify(s);
           return;
@@ -488,7 +524,7 @@
         payload = clone({
           documentSessionId: s.documentSessionId,
           documentDisplayName: displayName,
-          clientJobId: "job_" + Math.random().toString(36).slice(2, 10),
+          clientJobId: preparingJobId,
           headers: selectedHeaders,
           instruction: s.instruction,
           userFacts: s.userFacts,
@@ -496,6 +532,8 @@
         });
       }
       s.pendingRequest = payload;
+      s.preparing = false;
+      s.submissionPending = true;
       s.clientJobId = payload.clientJobId;
       s.jobId = payload.clientJobId;
       s.status = "running";
@@ -507,54 +545,72 @@
       persist(s);
       notify(s);
       try {
-        var res = await request("/excel/material-ledger/jobs", payload, { method: "POST" });
+        var res = await request("/excel/material-ledger/jobs", payload, { method: "POST", timeoutMs: LEDGER_REQUEST_TIMEOUT_MS });
         if (s.clientJobId !== payload.clientJobId || s.jobId !== payload.clientJobId) return;
+        s.submissionPending = false;
         var job = res && res.data;
         if (!job || !job.jobId) throw new Error("未返回任务编号，请恢复查询。");
         s.jobId = job.jobId;
         s.pendingRequest = null;
         finishJob(s, job);
+        if (s.busy && s.cancelRequested) await cancel(s.documentSessionId);
         if (s.busy) pollJob(s.jobId, s.documentSessionId);
       } catch (err) {
         if (s.clientJobId !== payload.clientJobId || s.jobId !== payload.clientJobId) return;
-        s.status = "interrupted";
+        s.submissionPending = false;
+        s.status = "running";
         s.phase = "";
-        s.busy = false;
+        s.busy = true;
         if (err && err.status >= 400 && err.status < 500) {
           s.pendingRequest = null;
           s.jobId = "";
           s.status = "failed";
+          s.busy = false;
         }
         s.error = (err && err.message) || "提交响应未确认，重试将恢复原任务。";
         persist(s);
         notify(s);
+        if (s.busy) pollJob(s.jobId, s.documentSessionId);
       }
     }
 
     function pollJob(jobId, sessionId) {
       var s = stateFor(sessionId || getSessionId());
-      if (!jobId || s.jobId !== jobId || s.pollScheduled || !s.busy) return;
+      if (!jobId || s.jobId !== jobId || s.pollScheduled || !s.busy || s.paused) return;
       s.pollScheduled = true;
       schedule(async function () {
-        s.pollScheduled = false;
-        if (s.jobId !== jobId || !s.busy) return;
+        if (s.jobId !== jobId || !s.busy || s.paused) { s.pollScheduled = false; return; }
         try {
-          var res = await request("/excel/material-ledger/jobs/" + encodeURIComponent(jobId) + "?documentSessionId=" + encodeURIComponent(s.documentSessionId), null, { method: "GET" });
+          var res = await request("/excel/material-ledger/jobs/" + encodeURIComponent(jobId) + "?documentSessionId=" + encodeURIComponent(s.documentSessionId), null, { method: "GET", timeoutMs: LEDGER_REQUEST_TIMEOUT_MS });
+          s.pollScheduled = false;
           if (s.jobId !== jobId) return;
           if (!res || !res.data) throw new Error("任务状态响应无效");
+          s.pendingRequest = null;
+          s.submissionPending = false;
+          s.pollErrors = 0;
+          if (s.paused && (res.data.status === "queued" || res.data.status === "running")) return;
           finishJob(s, res.data);
+          if (s.busy && s.cancelRequested) await cancel(s.documentSessionId);
           if (s.busy) pollJob(jobId, s.documentSessionId);
         } catch (err) {
+          s.pollScheduled = false;
           if (s.jobId !== jobId) return;
-          if (err && err.status === 404) {
+          if (s.paused) return;
+          if (err && (err.status === 404 || err.status === 410) && !s.submissionPending) {
             s.jobId = "";
             s.status = "interrupted";
             s.phase = "";
             s.busy = false;
+            s.pendingRequest = null;
             s.error = "原任务不存在，可能因 Adapter 重启而中断，请重新提交。";
             persist(s);
             notify(s);
           } else {
+            s.pollErrors += 1;
+            if (s.pollErrors > LEDGER_POLL_MAX_ERRORS) {
+              stopWaiting(s.documentSessionId);
+              return;
+            }
             s.error = (err && err.message) || "状态查询暂时失败，正在恢复。";
             notify(s);
             pollJob(jobId, s.documentSessionId);
@@ -563,20 +619,46 @@
       }, 1000);
     }
 
-    async function cancel() {
-      var s = current();
+    function stopWaiting(sessionId) {
+      var s = stateFor(sessionId || getSessionId());
+      if (!s.jobId) return;
+      s.paused = true;
+      s.error = "已停止自动等待，后台任务状态尚未确认。可继续查询或取消任务。";
+      persist(s);
+      notify(s);
+    }
+
+    async function cancel(sessionId) {
+      var s = stateFor(sessionId || getSessionId());
       if (!s.jobId) return;
       var jobId = s.jobId;
+      s.cancelRequested = true;
+      if (s.preparing) {
+        s.preparing = false;
+        finishJob(s, { status: "cancelled" });
+        return;
+      }
       try {
         var res = await request("/excel/material-ledger/jobs/" + encodeURIComponent(jobId) + "/cancel", {
           documentSessionId: s.documentSessionId
-        }, { method: "POST" });
+        }, { method: "POST", timeoutMs: LEDGER_REQUEST_TIMEOUT_MS });
         if (s.jobId !== jobId) return;
         if (!res || !res.data) throw new Error("取消响应无效");
         finishJob(s, res.data);
         if (s.busy) pollJob(s.jobId, s.documentSessionId);
       } catch (err) {
         if (s.jobId !== jobId) return;
+        if (err.status === 404 && s.submissionPending) {
+          s.error = "已记录取消请求，正在等待提交确认。";
+          notify(s);
+          return;
+        }
+        if (err.status === 404 || err.status === 410) {
+          s.jobId = "";
+          s.pendingRequest = null;
+          s.status = "interrupted";
+          s.busy = false;
+        }
         s.error = "取消失败：" + ((err && err.message) || "请稍后重试");
         notify(s);
       }
@@ -757,11 +839,9 @@
     async function restore() {
       var s = current();
       notify(s);
+      if (s.jobId && s.busy) pollJob(s.jobId, s.documentSessionId);
       await loadCatalog(s.documentSessionId);
       await listReusableSources(s.documentSessionId);
-      if (s.jobId && s.busy) {
-        pollJob(s.jobId, s.documentSessionId);
-      }
     }
 
     // Initial render
@@ -786,6 +866,7 @@
       loadCatalog: loadCatalog,
       generate: generate,
       cancel: cancel,
+      stopWaiting: stopWaiting,
       setResult: setResult,
       formatTsv: formatTsv,
       copyTsv: copyTsv,

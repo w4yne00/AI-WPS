@@ -282,7 +282,7 @@ def shared_outline_model(tmp_path, monkeypatch):
     )
     calls = []
 
-    def urlopen(request, timeout):
+    def urlopen(request, timeout, *_):
         calls.append({"url": request.full_url, "body": json.loads(request.data), "timeout": timeout})
         answer = {"schemaVersion": "ppt.template_page.v1", "title": "建设成果",
                   "keyPoints": ["覆盖十二个网点"], "speakerNotes": "建设成果讲稿", "fragmentIds": []}
@@ -292,7 +292,7 @@ def shared_outline_model(tmp_path, monkeypatch):
         response.status = 200
         return response
 
-    monkeypatch.setattr("urllib.request.urlopen", urlopen)
+    monkeypatch.setattr("app.services.provider_client._open_task_response", urlopen)
     store = PptMaterialStore(tmp_path / "materials")
     coord = PptTemplatePageCoordinator(store=store, provider=provider, coordinator=LongTaskCoordinator())
     return coord, services, service, calls

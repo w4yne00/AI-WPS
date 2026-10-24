@@ -135,7 +135,7 @@ class Task12DeterministicScenariosTests(unittest.TestCase):
         second_body = json.loads(call_records[1].data.decode("utf-8"))
         self.assertTrue(first_body.get("stream"))
         self.assertFalse(second_body.get("stream"))
-        self.assertTrue(control.running_cancel_disabled)
+        self.assertFalse(control.running_cancel_disabled)
         self.assertIn("确定性阻塞回退正文", res["answer"])
 
     def test_mid_stream_disconnect_fails_without_blocking_retry_and_retains_partial(self):

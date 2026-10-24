@@ -1071,7 +1071,7 @@ class DirectModelProviderTests(unittest.TestCase):
         "app.services.provider_client.time.monotonic",
         side_effect=[0.0, 1.0, 1.0, 2.0, 2.0, 2.0, 2.0, 2.0, 3.0, 4.0, 4.0, 5.0, 5.0, 6.0],
     )
-    @patch("app.services.provider_client.urllib_request.urlopen")
+    @patch("app.services.provider_client._open_task_response")
     def test_direct_fallback_accumulates_provider_attempt_metrics(
         self, urlopen, _monotonic
     ) -> None:
