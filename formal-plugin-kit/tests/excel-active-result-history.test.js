@@ -758,3 +758,95 @@ for (const response of ["running", "completed", "error"]) {
     assert.strictEqual(scheduled.length, 0, "late submission must not restart polling");
   });
 }
+
+function createExcelResultRenderContext(mode) {
+  const h = createBaseTestContext({ state: { currentMode: mode, resultViewMode: "preview" } });
+  h.ctx.saveCurrentSmartFillSessionState = () => {};
+  for (const name of [
+    "setResult", "setPlainResult", "normalizeReportList", "buildExcelAnalysisMarkdown",
+    "updateResultViewButtons", "setExcelResultViewSwitchForMode", "setResultViewMode",
+    "renderExcelAnalysisResult", "buildExcelFormulaMarkdown", "renderExcelFormulaResult",
+    "smartFillResultAddress", "buildExcelSmartFillMarkdown", "buildExcelSmartFillCopyText",
+    "renderExcelSmartFillResult", "renderMaterialLedgerView"
+  ]) {
+    vm.runInNewContext(functionSource(name), h.ctx);
+  }
+  return h;
+}
+
+for (const task of [
+  { mode: "excelAnalysis", render: "renderExcelAnalysisResult", result: text => ({ structuredReport: { overview: text }, plainText: text }) },
+  { mode: "excelFormulaAssistant", render: "renderExcelFormulaResult", result: text => ({ primaryFormula: "=SUM(A1:A2)", explanation: text }) },
+  { mode: "excelSmartFill", render: "renderExcelSmartFillResult", result: text => ({ items: [{ itemId: "row-1", value: text, status: "completed" }] }) }
+]) {
+  test(`${task.mode} renders the next result and copy text without switching tabs`, () => {
+    const h = createExcelResultRenderContext(task.mode);
+    const output = h.byId("result-output");
+    h.ctx[task.render](task.result("旧任务甲"));
+    assert.match(output.innerHTML, /旧任务甲/);
+    h.ctx.setPlainResult("正在等待新任务");
+    h.ctx[task.render](task.result("新任务乙"));
+    assert.match(output.innerHTML, /新任务乙/);
+    assert.doesNotMatch(output.innerHTML, /旧任务甲/);
+    assert.match(h.state.copyText, /新任务乙/);
+    assert.doesNotMatch(h.state.copyText, /旧任务甲/);
+    assert.strictEqual(output.hidden, false);
+    assert.strictEqual(output.classList.contains("plain-output"), false);
+  });
+}
+
+test("ledger replaces the previous table and copied text after the next task", { timeout: 2000 }, async () => {
+  const h = createExcelResultRenderContext("excelLedger");
+  const makeNode = () => ({
+    children: [],
+    appendChild(child) { this.children.push(child); },
+    addEventListener() {},
+    set innerHTML(value) { this.html = value; this.children = []; },
+    get innerHTML() { return this.html || ""; }
+  });
+  const originalById = h.ctx.byId;
+  h.ctx.byId = id => {
+    const element = originalById(id);
+    element.appendChild = element.appendChild || (() => {});
+    return element;
+  };
+  h.ctx.document.createElement = makeNode;
+  h.ctx.document.createTextNode = text => ({ textContent: text });
+  const head = makeNode();
+  const body = makeNode();
+  h.byId("ledger-preview-table").querySelector = selector => selector === "tbody" ? body : head;
+  const ledgerContext = { window: {} };
+  vm.runInNewContext(materialLedgerSource, ledgerContext);
+  let resolveJob;
+  let copied = "";
+  let markSubmitted;
+  const submitted = new Promise(resolve => { markSubmitted = resolve; });
+  const result = text => ({ headers: ["工作事项"], rows: [{ values: { "工作事项": text } }] });
+  const ledger = ledgerContext.createMaterialLedger({
+    render: h.ctx.renderMaterialLedgerView,
+    copyText: text => { copied = text; },
+    request: (url, payload) => {
+      if (url !== "/excel/material-ledger/jobs") return Promise.resolve({ data: { conflicts: [] } });
+      markSubmitted();
+      return new Promise(resolve => { resolveJob = () => resolve({ data: {
+        jobId: payload.clientJobId, status: "completed", result: result("新任务乙")
+      } }); });
+    }
+  });
+  ledger.setResult(result("旧任务甲"));
+  assert.match(body.children[0].innerHTML, /旧任务甲/);
+  ledger.copyTsv();
+  assert.match(copied, /旧任务甲/);
+  const pending = ledger.generate();
+  await submitted;
+  assert.strictEqual(h.byId("excel-ledger-result").hidden, true);
+  resolveJob();
+  await pending;
+  assert.strictEqual(body.children.length, 1);
+  assert.match(body.children[0].innerHTML, /新任务乙/);
+  assert.doesNotMatch(body.children[0].innerHTML, /旧任务甲/);
+  assert.strictEqual(h.byId("excel-ledger-result").hidden, false);
+  assert.strictEqual(ledger.copyTsv(), true);
+  assert.match(copied, /新任务乙/);
+  assert.doesNotMatch(copied, /旧任务甲/);
+});

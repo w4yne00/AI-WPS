@@ -1664,6 +1664,7 @@
 
   function setSmartWriteResult(result, taskType) {
     var normalized = normalizeSmartWriteResult(result);
+    state.rewriteResult = normalized;
     var text = normalized.rewrittenText || "";
     var previewSource = {};
     var key;

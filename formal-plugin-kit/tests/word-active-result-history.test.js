@@ -1048,6 +1048,46 @@ runAll().catch((err) => {
 const test = require('node:test');
 
 for (const taskType of ['word.smart_write', 'word.smart_imitation']) {
+  for (const entry of ['completion', 'history-return', 'mode-return']) {
+    test(taskType + ' renders the new result immediately on ' + entry, () => {
+      const mode = taskType === 'word.smart_write' ? 'smartWrite' : 'smartImitation';
+      const h = createBaseContext({ state: { currentMode: mode }, ctx: {
+        renderWritingPolicyUsage() {}, renderWritingPolicyAudit() {}
+      } });
+      // Keep the production presentation chain: a setter stub hides stale state reads.
+      for (const name of ['getLatestOriginalText', 'normalizeSmartWriteResult',
+        'shouldUseStructuredSmartWriteResult', 'setSmartWriteResult',
+        'renderSmartWritePreviewMode', 'setResultViewMode', 'setResult', 'setPlainResult',
+        'setResultViewSwitchVisible', 'updateResultViewButtons']) {
+        h.ctx[name] = vm.runInNewContext(`(${functionSource(name)}\n)`, h.ctx);
+      }
+      h.state.rewriteResult = h.ctx.setSmartWriteResult({ rewrittenText: '上一轮结果' }, taskType);
+      h.state.latestDocumentPayload = { selectionMode: 'selection', content: { plainText: '新的目标文字' } };
+      h.ctx.setActiveWritingJobRecord(taskType, 'doc_1', {
+        jobId: 'next-job', documentPayload: h.state.latestDocumentPayload
+      });
+      h.ctx.setWritingJob('next-job', taskType, mode);
+      h.state.historyOpen = entry === 'history-return';
+      if (entry === 'mode-return') h.state.currentMode = 'settings';
+      h.ctx.completeWritingJob({ rewrittenText: '本轮新结果' }, 'next-trace', taskType,
+        false, mode, 'next-job', 'doc_1');
+      if (entry === 'history-return') h.ctx.switchWordHistoryView(false);
+      if (entry === 'mode-return') h.ctx.switchMode(mode);
+
+      assert.ok(h.byId('result-output').innerHTML.includes('本轮新结果'));
+      assert.ok(!h.byId('result-output').innerHTML.includes('上一轮结果'));
+      assert.strictEqual(h.state.copyText, '本轮新结果');
+      assert.strictEqual(h.state.rewriteResult.rewrittenText, '本轮新结果');
+      assert.strictEqual(h.state.resultViewMode, 'preview');
+      assert.strictEqual(h.state.smartWritePreviewModel.originalText, '新的目标文字');
+      assert.strictEqual(h.ctx.getActiveResultRecord(taskType, 'doc_1').result.rewrittenText, '本轮新结果');
+      h.ctx.setResultViewMode('plain');
+      assert.strictEqual(h.byId('result-output').textContent, '本轮新结果');
+    });
+  }
+}
+
+for (const taskType of ['word.smart_write', 'word.smart_imitation']) {
   test(taskType + ' streams and completes in an unsaved document across fresh host proxies', () => {
     const mode = taskType === 'word.smart_write' ? 'smartWrite' : 'smartImitation';
     const freshDocument = () => Object.freeze({
