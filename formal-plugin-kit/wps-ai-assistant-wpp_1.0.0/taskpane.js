@@ -1699,7 +1699,7 @@
       (Array.isArray(data.recommendedOutline) && data.recommendedOutline.length)
     );
     var markdownAnswer = safeText(
-      data.rawAnswer || (!hasStructuredDetails && (data.plainText || data.reviewConclusion))
+      data.rawAnswer || (hasStructuredDetails ? "" : (data.plainText || data.reviewConclusion))
     );
     var view = helpers.presentPptStructureReviewResultView
       ? helpers.presentPptStructureReviewResultView({ result: data })
