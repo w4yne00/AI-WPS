@@ -708,6 +708,7 @@ window.fetch=async function(url,options){
     run("fill", '[data-title-page="1"]', "重新编辑标题");
     run("keyboard", "type", "继续");
     assert.equal(run("get", "value", '[data-title-page="1"]').trim(), "重新编辑标题继续");
+    run("scrollintoview", "#btn-confirm-outline");
     run("click", "#btn-confirm-outline");
     run("wait", "--text", "大纲状态：已确认");
     run("set", "viewport", "320", "700");

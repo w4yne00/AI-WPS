@@ -1057,5 +1057,104 @@ class LongTaskCoordinatorTests(unittest.TestCase):
         self.assertGreater(gap_resp["latestSequence"], 256)
 
 
+class CancellationEventStateTests(unittest.TestCase):
+    def test_events_keep_current_cancel_state_in_initial_idle_reset_and_terminal_responses(self):
+        for task in ("word.smart_write", "word.smart_imitation"):
+            for streaming in (True, False):
+                with self.subTest(task=task, streaming=streaming):
+                    coordinator = LongTaskCoordinator(max_running=1, max_queued=1)
+                    started, finish = threading.Event(), threading.Event()
+
+                    def runner(_snapshot, control):
+                        control("provider_waiting")
+                        started.set()
+                        finish.wait(timeout=2)
+                        return {"rewrittenText": "done"}
+
+                    coordinator.submit("control-state", "trace-control", task, runner, {}, "FAILED", "failed",
+                                       public_metadata={"streamingEnabled": streaming}, allow_running_cancel=streaming)
+                    try:
+                        self.assertTrue(started.wait(timeout=1))
+                        initial = coordinator.wait_events("control-state", task_type=task)
+                        idle = coordinator.wait_events("control-state", task_type=task,
+                                                       after_sequence=initial["latestSequence"])
+                        reset = coordinator.wait_events("control-state", task_type=task,
+                                                        after_sequence=initial["latestSequence"] + 100)
+                        self.assertEqual(idle["events"], [])
+                        self.assertTrue(reset["resetRequired"])
+                        for response in (initial, initial["previewSnapshot"], initial["events"][-1], idle,
+                                         reset, reset["previewSnapshot"]):
+                            self.assertIs(response.get("canCancel"), streaming)
+                            self.assertIs(response.get("cancelRequested"), False)
+                            self.assertIs(response.get("streamingEnabled"), streaming)
+                    finally:
+                        finish.set()
+                        coordinator.wait("control-state", task_type=task)
+                    terminal = coordinator.wait_events("control-state", task_type=task)
+                    empty_terminal = coordinator.wait_events("control-state", task_type=task,
+                                                             after_sequence=terminal["latestSequence"])
+                    for response in (terminal, terminal["previewSnapshot"], terminal["events"][-1], empty_terminal):
+                        self.assertIs(response.get("canCancel"), False)
+                        self.assertIs(response.get("streamingEnabled"), streaming)
+
+    def test_events_report_stopping_without_releasing_the_running_slot(self):
+        coordinator = LongTaskCoordinator(max_running=1, max_queued=1)
+        started, finish = threading.Event(), threading.Event()
+
+        def runner(_snapshot, control):
+            control("provider_waiting")
+            started.set()
+            finish.wait(timeout=2)
+            return {"rewrittenText": "late result"}
+
+        coordinator.submit("stopping-state", "trace-stop", "word.smart_write", runner, {}, "FAILED", "failed",
+                           public_metadata={"streamingEnabled": True}, allow_running_cancel=True)
+        try:
+            self.assertTrue(started.wait(timeout=1))
+            coordinator.submit("queued-state", "trace-queue", "word.smart_write", lambda *_: {}, {}, "FAILED", "failed",
+                               public_metadata={"streamingEnabled": True}, allow_running_cancel=True)
+            queued = coordinator.wait_events("queued-state", task_type="word.smart_write")
+            self.assertIs(queued.get("canCancel"), True)
+            self.assertIs(queued["previewSnapshot"].get("canCancel"), True)
+            coordinator.request_cancel("stopping-state", task_type="word.smart_write")
+            stopping = coordinator.wait_events("stopping-state", task_type="word.smart_write")
+            for response in (stopping, stopping["previewSnapshot"], stopping["events"][-1]):
+                self.assertIs(response.get("canCancel"), False)
+                self.assertIs(response.get("cancelRequested"), True)
+                self.assertEqual(response["phase"], "stopping")
+            self.assertEqual(coordinator.get("queued-state")["status"], "queued")
+        finally:
+            finish.set()
+            coordinator.wait("stopping-state")
+            coordinator.wait("queued-state")
+        self.assertEqual(coordinator.get("stopping-state")["status"], "cancelled")
+
+    def test_idle_event_response_reflects_disabled_running_cancellation(self):
+        coordinator = LongTaskCoordinator(max_running=1, max_queued=1)
+        started, finish = threading.Event(), threading.Event()
+        controls = []
+
+        def runner(_snapshot, control):
+            controls.append(control)
+            started.set()
+            finish.wait(timeout=2)
+            return {}
+
+        coordinator.submit("fallback-state", "trace-fallback", "word.smart_write", runner, {}, "FAILED", "failed",
+                           public_metadata={"streamingEnabled": True}, allow_running_cancel=True)
+        try:
+            self.assertTrue(started.wait(timeout=1))
+            before = coordinator.wait_events("fallback-state")
+            controls[0].disable_running_cancel()
+            after = coordinator.wait_events("fallback-state", after_sequence=before["latestSequence"])
+            self.assertEqual(after["events"], [])
+            self.assertIs(before.get("canCancel"), True)
+            self.assertIs(after.get("canCancel"), False)
+            self.assertIs(after.get("cancelRequested"), False)
+        finally:
+            finish.set()
+            coordinator.wait("fallback-state")
+
+
 if __name__ == "__main__":
     unittest.main()

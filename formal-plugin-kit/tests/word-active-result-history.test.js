@@ -440,6 +440,7 @@ function testActiveResultBehaviorWithExistingResult() {
 
   // Case 2: New valid submission and completion
   helpers.claimTaskSlot(state.activeTaskSlots, "wps", "word.smart_write", "doc_1", "job_2");
+  ctx.setActiveWritingJobRecord("word.smart_write", "doc_1", { jobId: "job_2" });
   ctx.completeWritingJob({ rewrittenText: "全新的智能编写结果。" }, "trace_2", "word.smart_write", false, "smartWrite", "job_2", "doc_1");
   assert.strictEqual(ctx.getActiveResultRecord("word.smart_write", "doc_1").result.rewrittenText, "全新的智能编写结果。");
   assert.strictEqual(byId("result-output").textContent, "全新的智能编写结果。");
@@ -449,6 +450,7 @@ function testActiveResultBehaviorWithExistingResult() {
   state.historyOpen = true;
   state.historyUnreadCount = 0;
   helpers.claimTaskSlot(state.activeTaskSlots, "wps", "word.smart_write", "doc_1", "job_3");
+  ctx.setActiveWritingJobRecord("word.smart_write", "doc_1", { jobId: "job_3" });
   ctx.completeWritingJob({ rewrittenText: "后台完成的新编写结果。" }, "trace_3", "word.smart_write", false, "smartWrite", "job_3", "doc_1");
   assert.strictEqual(state.historyUnreadCount, 1, "Unread count must increment by 1");
   assert.strictEqual(byId("history-unread-badge").textContent, "1");

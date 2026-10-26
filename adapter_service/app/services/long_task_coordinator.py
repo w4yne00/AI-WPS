@@ -382,6 +382,23 @@ class LongTaskCoordinator:
                 return True
             return False
 
+    def _public_control_state_locked(self, job: Dict) -> Dict:
+        invalidated = bool(job.get("_authInvalidated"))
+        state = {
+            "canCancel": not invalidated and (
+                job["status"] == "queued" or bool(
+                    job["status"] == "running"
+                    and job.get("_allowRunningCancel")
+                    and not job.get("_cancelRequested")
+                )
+            ),
+            "cancelRequested": not invalidated and bool(job.get("_cancelRequested")),
+        }
+        metadata = job.get("_publicMetadata", {})
+        if "streamingEnabled" in metadata:
+            state["streamingEnabled"] = metadata["streamingEnabled"]
+        return state
+
     def _append_event_locked(
         self,
         job: Dict,
@@ -395,6 +412,7 @@ class LongTaskCoordinator:
         job["_latest_sequence"] = seq
         now_wall = self._wall_clock()
         event = {
+            **self._public_control_state_locked(job),
             "sequence": seq,
             "type": event_type,
             "phase": phase,
@@ -411,6 +429,7 @@ class LongTaskCoordinator:
 
     def _build_preview_snapshot_locked(self, job: Dict) -> Dict:
         return {
+            **self._public_control_state_locked(job),
             "jobId": job["jobId"],
             "taskType": job["taskType"],
             "status": "failed" if job.get("_authInvalidated") else job["status"],
@@ -465,6 +484,7 @@ class LongTaskCoordinator:
                     job.get("_authInvalidatedError") or job.get("error")
                 )
                 preview_truncated = bool(job.get("_text_preview_truncated"))
+                control_state = self._public_control_state_locked(job)
 
                 reset_required = False
                 if after_seq < 0:
@@ -476,6 +496,7 @@ class LongTaskCoordinator:
 
                 if reset_required:
                     return {
+                        **control_state,
                         "jobId": job["jobId"],
                         "traceId": job["traceId"],
                         "taskType": job["taskType"],
@@ -492,6 +513,7 @@ class LongTaskCoordinator:
 
                 if after_seq == 0:
                     return {
+                        **control_state,
                         "jobId": job["jobId"],
                         "traceId": job["traceId"],
                         "taskType": job["taskType"],
@@ -511,6 +533,7 @@ class LongTaskCoordinator:
                         deepcopy(e) for e in events_ring if e["sequence"] > after_seq
                     ]
                     return {
+                        **control_state,
                         "jobId": job["jobId"],
                         "traceId": job["traceId"],
                         "taskType": job["taskType"],
@@ -527,6 +550,7 @@ class LongTaskCoordinator:
 
                 if is_terminal:
                     return {
+                        **control_state,
                         "jobId": job["jobId"],
                         "traceId": job["traceId"],
                         "taskType": job["taskType"],
@@ -544,6 +568,7 @@ class LongTaskCoordinator:
                 remaining = deadline_mono - self._monotonic()
                 if remaining <= 0 or bounded_wait_ms <= 0:
                     return {
+                        **control_state,
                         "jobId": job["jobId"],
                         "traceId": job["traceId"],
                         "taskType": job["taskType"],
@@ -1380,6 +1405,7 @@ class LongTaskCoordinator:
         queue_wait_ms = phase_durations_ms.get("queued", 0)
         metrics = deepcopy(job.get("_metrics", {}))
         public_job = {
+            **self._public_control_state_locked(job),
             "jobId": job["jobId"],
             "traceId": job["traceId"],
             "status": effective_status,
@@ -1402,14 +1428,7 @@ class LongTaskCoordinator:
                 max(now_mono - job.get("_updatedMonotonic", now_mono), 0.0)
             ),
             "queuePosition": queue_position if not is_invalidated else None,
-            "canCancel": False if is_invalidated else (job["status"] == "queued" or bool(
-                job["status"] == "running"
-                and job.get("_allowRunningCancel")
-                and not job.get("_cancelRequested")
-            )),
         }
-        if job.get("_allowRunningCancel") and not is_invalidated:
-            public_job["cancelRequested"] = bool(job.get("_cancelRequested"))
         public_job.update(job.get("_publicMetadata", {}))
         if "providerOutcome" in metrics:
             public_job["providerOutcome"] = metrics["providerOutcome"]

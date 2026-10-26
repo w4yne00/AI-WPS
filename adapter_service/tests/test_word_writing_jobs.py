@@ -342,7 +342,7 @@ class WritingJobStoreTests(unittest.TestCase):
 
         sent_requests = []
 
-        def fake_urlopen(req, timeout=None):
+        def fake_urlopen(req, timeout=None, task_type=None, control=None):
             sent_requests.append(req)
             return FakeHTTPResponse([sse_payload])
 
