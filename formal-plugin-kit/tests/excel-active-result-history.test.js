@@ -466,10 +466,12 @@ async function testNetworkRetryVsRegenerate() {
   };
 
   let failOnce = true;
+  const scheduled = [];
   const ledgerRequests = [];
   const ledger = context.createMaterialLedger({
     storage,
     getSessionId: () => "sess-retry",
+    schedule: fn => scheduled.push(fn),
     request: (url, body) => {
       ledgerRequests.push({ url, body });
       if (url === "/excel/material-ledger/jobs" && failOnce) {
@@ -494,22 +496,19 @@ async function testNetworkRetryVsRegenerate() {
   assert.strictEqual(jobPosts1.length, 1);
   const unconfirmedId = jobPosts1[0].body.clientJobId;
 
-  // Unconfirmed retry reuses the original clientJobId for backend idempotency
+  // An unconfirmed response resumes only status queries for the original identifier.
   await ledger.generate();
   const jobPosts2 = ledgerRequests.filter(r => r.url === "/excel/material-ledger/jobs");
-  assert.strictEqual(jobPosts2.length, 2);
-  assert.strictEqual(
-    jobPosts2[1].body.clientJobId,
-    unconfirmedId,
-    "Unconfirmed submission retry must reuse original clientJobId"
-  );
+  assert.strictEqual(jobPosts2.length, 1);
+  await scheduled.shift()();
+  assert.ok(ledgerRequests.some(r => r.url.includes("/jobs/" + unconfirmedId)));
 
   // Now job has completed. Next generate must produce a new clientJobId
   await ledger.generate();
   const jobPosts3 = ledgerRequests.filter(r => r.url === "/excel/material-ledger/jobs");
-  assert.strictEqual(jobPosts3.length, 3);
+  assert.strictEqual(jobPosts3.length, 2);
   assert.notStrictEqual(
-    jobPosts3[2].body.clientJobId,
+    jobPosts3[1].body.clientJobId,
     unconfirmedId,
     "New generation after completed task must produce a new clientJobId"
   );
@@ -757,4 +756,251 @@ for (const response of ["running", "completed", "error"]) {
     assert.strictEqual(ledger.getState().error, "");
     assert.strictEqual(scheduled.length, 0, "late submission must not restart polling");
   });
+}
+
+for (const [kind, mode] of [
+  ["Analysis", "excelAnalysis"], ["Formula", "excelFormulaAssistant"], ["SmartFill", "excelSmartFill"]
+]) {
+  test(`new ${kind} task leaves history and exposes its current preview`, async () => {
+    const h = createBaseTestContext({ state: { currentMode: mode, historyOpen: true } });
+    const oldResult = { plainText: "旧任务结果", items: [] };
+    h.state[`active${kind}ResultsBySession`][h.state.documentSessionId] = oldResult;
+    h.state.historyItems = [{ id: "old", result: oldResult }];
+    h.byId("excel-result-panel").hidden = true;
+    h.byId("excel-history-view").hidden = false;
+    h.byId("excel-history-content").innerHTML = "旧任务历史";
+    h.byId("excel-formula-requirement").value = "计算新目标";
+    h.ctx.buildExcelSmartFillRequest = () => ({ userInstruction: "填写新目标", source: {} });
+    h.ctx.summarizeSmartFillSource = () => "新来源";
+    let finishRequest;
+    h.ctx.request = (url, body) => new Promise(resolve => {
+      finishRequest = () => resolve({ data: { jobId: body.clientJobId, status: "completed",
+        result: { plainText: "新任务结果", items: [] } } });
+    });
+    h.ctx[`renderExcel${kind}Result`] = result => { h.byId("result-output").textContent = result.plainText; };
+    const sandbox = vm.createContext(h.ctx);
+    const names = ["switchHistoryView", "saveCurrentSmartFillSessionState", "updateHistoryBadge", `runExcel${kind}Action`];
+    if (kind === "SmartFill") names.push("finalizeExcelSmartFillResult", "recordFinalizedSmartFillResult", "restoreSmartFillSessionState");
+    else names.push(`recordFinalized${kind}Result`);
+    vm.runInContext(names.map(functionSource).join("\n"), sandbox);
+    vm.runInContext(`runExcel${kind}Action()`, sandbox);
+    assert.strictEqual(h.state.historyOpen, false);
+    assert.strictEqual(h.byId("excel-result-panel").hidden, false);
+    assert.strictEqual(h.byId("excel-history-view").hidden, true);
+    assert.strictEqual(h.byId("excel-history-content").innerHTML, "旧任务历史", "history must be retained");
+    if (kind !== "SmartFill") h.timeouts.shift().fn();
+    finishRequest();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.strictEqual(h.byId("result-output").textContent, "新任务结果");
+    assert.strictEqual(h.state[`active${kind}ResultsBySession`][h.state.documentSessionId].plainText, "新任务结果");
+    assert.strictEqual(h.state.historyItems[0].result.plainText, "旧任务结果");
+  });
+}
+
+test("new ledger task leaves history and exposes its current preview", () => {
+  const h = createBaseTestContext({ state: { currentMode: "excelLedger", historyOpen: true } });
+  h.byId("excel-result-panel").hidden = true;
+  h.byId("excel-history-view").hidden = false;
+  h.ctx.ensureMaterialLedger = () => ({ generate: () => {} });
+  const sandbox = vm.createContext(h.ctx);
+  vm.runInContext(["switchHistoryView", "runExcelLedgerAction"].map(functionSource).join("\n"), sandbox);
+  vm.runInContext("runExcelLedgerAction()", sandbox);
+  assert.strictEqual(h.state.historyOpen, false);
+  assert.strictEqual(h.byId("excel-result-panel").hidden, false);
+  assert.strictEqual(h.byId("excel-history-view").hidden, true);
+});
+
+test("empty ledger session clears the previous workbook or task preview", () => {
+  const h = createBaseTestContext({ state: { currentMode: "excelLedger" } });
+  h.byId("result-output").textContent = "上一工作簿的结果";
+  const render = vm.runInNewContext(`(${functionSource("renderMaterialLedgerView")})`, h.ctx);
+  render({ headers: [], result: null, busy: false, status: "idle" });
+  assert.doesNotMatch(h.byId("result-output").textContent, /上一工作簿/);
+  assert.match(h.byId("result-output").textContent, /尚未生成/);
+});
+
+for (const response of ["cancelled", "error"]) {
+  test(`late ledger cancel ${response} cannot overwrite a newer completed task`, async () => {
+    const context = { window: {}, console, setTimeout, clearTimeout };
+    vm.runInNewContext(materialLedgerSource, context);
+    let settleCancel;
+    let completed = false;
+    const ledger = context.createMaterialLedger({
+      getSessionId: () => "ledger-session",
+      schedule: () => {},
+      request: (url, body) => {
+        if (url.endsWith("/cancel")) {
+          return new Promise((resolve, reject) => {
+            settleCancel = () => response === "error"
+              ? reject(new Error("旧任务取消失败"))
+              : resolve({ data: { status: "cancelled" } });
+          });
+        }
+        if (url === "/excel/material-ledger/jobs") {
+          return Promise.resolve({ data: { jobId: body.clientJobId, status: completed ? "completed" : "running",
+            result: completed ? { headers: ["工作事项"], rows: [{ values: { "工作事项": "新结果" } }] } : null } });
+        }
+        return Promise.resolve({ data: { conflicts: [] } });
+      }
+    });
+    await ledger.generate();
+    const pendingCancel = ledger.cancel();
+    ledger.setResult({ headers: [], rows: [] });
+    completed = true;
+    await ledger.generate();
+    settleCancel();
+    await pendingCancel;
+    assert.strictEqual(ledger.getState().status, "completed");
+    assert.strictEqual(ledger.getState().result.rows[0].values["工作事项"], "新结果");
+    assert.strictEqual(ledger.getState().error, "");
+  });
+}
+
+test("ledger history uses its own table content without replacing the active result", async () => {
+  const archived = { columns: ["工作事项", "部门"], rows: [{ values: { "工作事项": "历史任务 <安全>", "部门": "A\nB" } }] };
+  const h = createBaseTestContext({ state: { currentMode: "excelLedger", historyItems: [
+    { id: "ledger-old", taskType: "excel.material_ledger", result: archived, documentDisplayName: "台账.xlsx",
+      jobId: "ledger-job-old", serviceName: "台账服务", modelName: "ledger-model" }
+  ] } });
+  h.ctx.EXCEL_LEDGER_WORKFLOW_TASK_TYPE = "excel.material_ledger";
+  h.byId("result-output").textContent = "当前任务结果";
+  h.ctx.document.createElement = () => ({ style: {}, innerHTML: "" });
+  let detail;
+  const card = { querySelector: () => null, appendChild: element => { detail = element; } };
+  const btn = { closest: () => card };
+  let copied;
+  h.ctx.navigator = { clipboard: { writeText: text => { copied = text; return Promise.resolve(); } } };
+  const sandbox = vm.createContext(h.ctx);
+  vm.runInContext(["getCurrentWorkflowTaskType", "renderCurrentTaskHistoryList", "handleSmartFillHistoryViewItem", "handleSmartFillHistoryCopyItem"].map(functionSource).join("\n"), sandbox);
+  const list = vm.runInContext("renderCurrentTaskHistoryList(state.historyItems)", sandbox);
+  assert.match(list, /任务台账成果/);
+  assert.match(list, /ledger-job-old/);
+  assert.match(list, /台账服务/);
+  assert.match(list, /ledger-model/);
+  assert.doesNotMatch(list, /智能分析成果/);
+  sandbox.historyButton = btn;
+  vm.runInContext("handleSmartFillHistoryViewItem('ledger-old', historyButton)", sandbox);
+  assert.match(detail.innerHTML, /历史任务 &lt;安全&gt;/);
+  assert.match(detail.innerHTML, /工作事项/);
+  assert.doesNotMatch(detail.innerHTML, /<安全>/);
+  vm.runInContext("handleSmartFillHistoryCopyItem('ledger-old')", sandbox);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.strictEqual(copied, "工作事项\t部门\n历史任务 <安全>\tA B");
+  assert.strictEqual(h.byId("result-output").textContent, "当前任务结果");
+});
+
+test("ledger submissions freeze the workbook display name before asynchronous preparation", async () => {
+  const context = { window: {}, console, setTimeout, clearTimeout };
+  vm.runInNewContext(materialLedgerSource, context);
+  let name = "原工作簿.xlsx";
+  let finishConflicts;
+  let submitted;
+  const ledger = context.createMaterialLedger({
+    getSessionId: () => "name-session",
+    getDocumentDisplayName: () => name,
+    schedule: () => {},
+    request: (url, body) => {
+      if (url.startsWith("/excel/material-ledger/conflicts")) return new Promise(resolve => { finishConflicts = resolve; });
+      submitted = body;
+      return Promise.resolve({ data: { jobId: body.clientJobId, status: "completed", result: { headers: [], rows: [] } } });
+    }
+  });
+  const pending = ledger.generate();
+  name = "切换后的工作簿.xlsx";
+  finishConflicts({ data: { conflicts: [] } });
+  await pending;
+  assert.strictEqual(submitted.documentDisplayName, "原工作簿.xlsx");
+});
+
+for (const mode of ["excelAnalysis", "excelFormulaAssistant", "excelSmartFill", "settings"]) {
+  test(`switching from ledger to ${mode} removes the old ledger preview`, () => {
+    const h = createBaseTestContext({ state: { currentMode: "excelLedger" } });
+    h.byId("excel-ledger-result").hidden = false;
+    h.ctx.closeTaskModelConfigMenu = () => {};
+    const switchMode = vm.runInNewContext(`(${functionSource("switchMode")})`, h.ctx);
+    switchMode(mode);
+    assert.strictEqual(h.byId("excel-ledger-result").hidden, true);
+  });
+}
+
+test("yielding smart fill extraction exposes the current preview before reading cells", () => {
+  const h = createBaseTestContext({ state: { currentMode: "excelSmartFill", historyOpen: true } });
+  h.byId("excel-smart-fill-instruction").value = "新目标";
+  h.byId("excel-result-panel").hidden = true;
+  h.ctx.getActiveSheet = () => ({});
+  h.ctx.getSelectionRange = () => ({});
+  h.ctx.readSmartFillWorkbookId = () => "workbook";
+  h.ctx.readSmartFillSheetName = () => "Sheet1";
+  h.ctx.EXCEL_SMART_FILL_EXTRACTION_OPTIONS = {};
+  h.ctx.helpers.extractExcelSmartFillSourcePayloadYielding = () => new Promise(() => {});
+  const sandbox = vm.createContext(h.ctx);
+  vm.runInContext(["switchHistoryView", "saveCurrentSmartFillSessionState", "runExcelSmartFillAction"].map(functionSource).join("\n"), sandbox);
+  vm.runInContext("runExcelSmartFillAction()", sandbox);
+  assert.strictEqual(h.state.historyOpen, false);
+  assert.strictEqual(h.byId("excel-result-panel").hidden, false);
+});
+
+test("ledger history copy preserves zero and false cell values", () => {
+  assert.strictEqual(helpers.buildExcelLedgerHistoryText({ columns: ["数量", "完成"], rows: [
+    { values: { "数量": 0, "完成": false } }
+  ] }), "数量\t完成\n0\tfalse");
+});
+
+for (const hasResult of [true, false]) {
+  test(`ledger current-result copy ignores the previous task text (${hasResult ? "completed" : "empty"})`, () => {
+    const h = createBaseTestContext({ state: { currentMode: "excelLedger", copyText: "旧任务结果" } });
+    const context = { window: {}, console, setTimeout, clearTimeout };
+    vm.runInNewContext(materialLedgerSource, context);
+    let copied;
+    const ledger = context.createMaterialLedger({ getSessionId: () => "copy-session", copyText: text => { copied = text; } });
+    if (hasResult) ledger.setResult({ headers: ["工作事项"], rows: [{ values: { "工作事项": "当前台账" } }] });
+    h.ctx.ensureMaterialLedger = () => ledger;
+    h.ctx.navigator = { clipboard: { writeText: text => { copied = text; return Promise.resolve(); } } };
+    const copy = vm.runInNewContext(`(${functionSource("copyResult")})`, h.ctx);
+    copy();
+    assert.strictEqual(copied, hasResult ? "工作事项\n当前台账" : undefined);
+    if (!hasResult) assert.strictEqual(h.state.statusMessage, "暂无可复制的结果。");
+  });
+}
+
+for (const mutation of ["clear", "delete"]) {
+  for (const mode of ["excelAnalysis", "excelFormulaAssistant", "excelSmartFill", "excelLedger"]) {
+    test(`${mode} ${mutation} invalidates history read started during its request`, async () => {
+      const h = createBaseTestContext({ state: { currentMode: mode, historyItems: [{ id: "old" }, { id: "keep" }] } });
+      h.ctx.EXCEL_LEDGER_WORKFLOW_TASK_TYPE = "excel.material_ledger";
+      let finishMutation, finishRead;
+      h.ctx.request = (url, body, options) => new Promise(resolve => {
+        if (options.method === "DELETE") finishMutation = resolve;
+        else finishRead = resolve;
+      });
+      const sandbox = vm.createContext(h.ctx);
+      vm.runInContext(["getCurrentWorkflowTaskType", "renderCurrentTaskHistoryList", "loadAndRenderSmartFillHistory", "handleClearSmartFillHistory", "handleSmartFillHistoryDeleteItem"].map(functionSource).join("\n"), sandbox);
+      vm.runInContext(mutation === "clear" ? "handleClearSmartFillHistory()" : "handleSmartFillHistoryDeleteItem('old')", sandbox);
+      vm.runInContext("loadAndRenderSmartFillHistory()", sandbox);
+      finishMutation({ data: {} });
+      await new Promise(resolve => setImmediate(resolve));
+      finishRead({ data: { items: [{ id: "old" }, { id: "keep" }] } });
+      await new Promise(resolve => setImmediate(resolve));
+      assert.deepStrictEqual(Array.from(h.state.historyItems, item => item.id), mutation === "clear" ? [] : ["keep"]);
+    });
+  }
+  for (const response of ["success", "error"]) {
+    test(`late history ${mutation} ${response} leaves settings untouched`, async () => {
+      const h = createBaseTestContext();
+      let settle;
+      h.ctx.request = () => new Promise((resolve, reject) => {
+        settle = () => response === "success" ? resolve({}) : reject(new Error("历史请求失败"));
+      });
+      const sandbox = vm.createContext(h.ctx);
+      vm.runInContext(["getCurrentWorkflowTaskType", "renderCurrentTaskHistoryList", "handleClearSmartFillHistory", "handleSmartFillHistoryDeleteItem"].map(functionSource).join("\n"), sandbox);
+      vm.runInContext(mutation === "clear" ? "handleClearSmartFillHistory()" : "handleSmartFillHistoryDeleteItem('old')", sandbox);
+      h.state.currentMode = "settings";
+      h.state.statusMessage = "当前设置";
+      h.byId("excel-history-content").innerHTML = "当前界面";
+      settle();
+      await new Promise(resolve => setImmediate(resolve));
+      assert.strictEqual(h.state.statusMessage, "当前设置");
+      assert.strictEqual(h.byId("excel-history-content").innerHTML, "当前界面");
+    });
+  }
 }

@@ -685,3 +685,199 @@ test("format history page remains valid when a background active result arrives"
   await pending;
   assert.strictEqual(rendered, true);
 });
+
+for (const entry of [
+  { name: "runDocumentReview", mode: "documentReview", taskType: "word.document_review" },
+  { name: "runFullDocumentReview", mode: "documentReview", taskType: "word.document_review" },
+  { name: "runDeterministicFormatReview", mode: "formatReview", taskType: "word.format_review" }
+]) {
+  for (const historyReport of [false, true]) {
+    test(entry.name + " starts in the current preview after " + (historyReport ? "viewing a historical report" : "opening history"), async () => {
+      const ctx = createBaseTestContext({ state: {
+        currentMode: entry.mode,
+        fullDocumentReviewEnabled: true,
+        historyOpen: !historyReport,
+        viewingHistoryReport: historyReport ? { jobId: "old-history-job" } : null,
+        historyItems: [{ id: "old-history-item", taskType: entry.taskType }]
+      } });
+      ctx.getCurrentWorkflowTaskType = () => entry.taskType;
+      ctx.resolveSelectionScope = () => ({ ok: true, selectionMode: "selection" });
+      ctx.clearDocumentReviewActiveJob = () => {};
+      ctx.getFullDocumentReviewReadiness = () => ({ fullDocumentReviewReady: true });
+      ctx.extractFullDocumentReviewBodyYielding = () => new Promise(() => {});
+      ctx.extractDeterministicFormatReviewSnapshotYielding = () => new Promise(() => {});
+      ctx.setTimeout = () => 1;
+      ctx.byId("word-result-section").hidden = !historyReport;
+      ctx.byId("word-history-view").hidden = historyReport;
+      ctx.setActiveResultRecord(entry.taskType, "doc-session-1", {
+        result: { report: { summary: { issueCount: 9 } } }, jobId: "old-active-job"
+      });
+      vm.runInNewContext(functionSource(entry.name), ctx);
+
+      ctx[entry.name]();
+
+      assert.strictEqual(ctx.state.historyOpen, false);
+      assert.strictEqual(ctx.state.viewingHistoryReport, null);
+      assert.strictEqual(ctx.byId("word-result-section").hidden, false);
+      assert.strictEqual(ctx.byId("word-history-view").hidden, true);
+      assert.strictEqual(ctx.getActiveResultRecord(entry.taskType, "doc-session-1"), null);
+      assert.strictEqual(ctx.state.historyItems[0].id, "old-history-item");
+      assert.ok(ctx.state.result.includes("正在"));
+
+      const newReport = { summary: "本次新结果" };
+      if (entry.name === "runDocumentReview") {
+        ctx.renderDocumentReviewResult = data => { ctx.setResult(data.summary); return true; };
+        vm.runInNewContext(functionSource("completeDocumentReview"), ctx);
+        ctx.completeDocumentReview(newReport, "new-job", "doc-session-1", "new-job");
+      } else if (entry.name === "runFullDocumentReview") {
+        ctx.DOCUMENT_REVIEW_POLL_REQUEST_TIMEOUT_MS = 5000;
+        ctx.state.fullDocumentReviewJobId = "new-job";
+        ctx.setActiveReviewJobRecord("word.document_review.full", "doc-session-1", { jobId: "new-job" });
+        ctx.cleanupFullDocumentReviewTerminal = () => { ctx.state.fullDocumentReviewJobId = ""; };
+        ctx.renderFullDocumentReviewReport = data => { ctx.setResult(data.summary); return Promise.resolve(); };
+        ctx.request = url => Promise.resolve({ data: url.endsWith("/report") ? newReport : { status: "completed" } });
+        vm.runInNewContext(functionSource("pollFullDocumentReviewJob"), ctx);
+        ctx.pollFullDocumentReviewJob("new-job", "doc-session-1");
+        await new Promise(resolve => setImmediate(resolve));
+      } else {
+        ctx.state.deterministicFormatReviewPreparing = false;
+        ctx.state.deterministicFormatReviewJobId = "new-job";
+        ctx.setActiveReviewJobRecord("word.format_review", "doc-session-1", { jobId: "new-job" });
+        ctx.request = url => Promise.resolve({ data: url.includes("/report") ? newReport : { issues: [] } });
+        ctx.renderDeterministicFormatReviewIssuePage = data => ctx.setResult(data.summary);
+        await ctx.loadDeterministicFormatReviewReport("new-job", "doc-session-1");
+      }
+      assert.strictEqual(ctx.state.result, "本次新结果");
+      assert.ok(ctx.getActiveResultRecord(entry.taskType, "doc-session-1"));
+    });
+  }
+}
+
+test('format review confirmed cancellation releases the slot and permits a new review', async () => {
+  const ctx=createBaseTestContext();
+  ctx.state.deterministicFormatReviewJobId='cancel-format';
+  ctx.setActiveReviewJobRecord('word.format_review','doc-session-1',{jobId:'cancel-format'});
+  helpers.claimTaskSlot(ctx.state.activeTaskSlots,'wps','word.format_review','doc-session-1','cancel-format');
+  ctx.request=()=>Promise.resolve({data:{jobId:'cancel-format',status:'cancelled'}});
+  vm.runInNewContext(functionSource('cancelDeterministicFormatReviewJob'),ctx);
+  ctx.cancelDeterministicFormatReviewJob();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.strictEqual(helpers.isTaskSlotBusy(ctx.state.activeTaskSlots,'wps','word.format_review','doc-session-1'),false);
+  assert.strictEqual(ctx.getActiveReviewJobRecord('word.format_review','doc-session-1'),null);
+});
+
+test('plain format review 404 clears the active slot instead of retrying an expired task', async () => {
+  const ctx=createBaseTestContext();
+  Object.assign(ctx,{DETERMINISTIC_FORMAT_REVIEW_POLL_MAX_ERRORS:240,DETERMINISTIC_FORMAT_REVIEW_POLL_MAX_WAIT_MS:3600000,
+    DETERMINISTIC_FORMAT_REVIEW_POLL_RETRY_DELAY_MS:15000,setTimeout:()=>{}});
+  ctx.state.deterministicFormatReviewJobId='missing-format';
+  ctx.setActiveReviewJobRecord('word.format_review','doc-session-1',{jobId:'missing-format'});
+  helpers.claimTaskSlot(ctx.state.activeTaskSlots,'wps','word.format_review','doc-session-1','missing-format');
+  ctx.request=()=>Promise.reject(Object.assign(Error('HTTP 404'),{httpStatus:404}));
+  vm.runInNewContext(functionSource('expireDeterministicFormatReviewJob'),ctx);
+  ctx.pollDeterministicFormatReviewJob('missing-format','doc-session-1');
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.strictEqual(ctx.state.deterministicFormatReviewJobId,'');
+  assert.strictEqual(helpers.isTaskSlotBusy(ctx.state.activeTaskSlots,'wps','word.format_review','doc-session-1'),false);
+});
+
+test('format review disconnects pause polling and preserve the task for explicit query or stop', async () => {
+  const ctx=createBaseTestContext();
+  const scheduled=[];
+  Object.assign(ctx,{DETERMINISTIC_FORMAT_REVIEW_POLL_MAX_ERRORS:240,DETERMINISTIC_FORMAT_REVIEW_POLL_MAX_WAIT_MS:3600000,
+    DETERMINISTIC_FORMAT_REVIEW_POLL_RETRY_DELAY_MS:15000,setTimeout:()=>scheduled.push('poll'),
+    setInterruptedRetryVisible:(visible,label)=>{ctx.retryVisible=visible;ctx.retryLabel=label;}});
+  ctx.state.deterministicFormatReviewJobId='offline-format';
+  ctx.request=()=>Promise.reject(Error('Adapter无法连接'));
+  for(let i=0;i<3;i+=1){ctx.pollDeterministicFormatReviewJob('offline-format','doc-session-1');await new Promise(resolve=>setImmediate(resolve));}
+  assert.strictEqual(scheduled.length,2);
+  assert.strictEqual(ctx.state.deterministicFormatReviewJobId,'offline-format');
+  assert.strictEqual(ctx.retryVisible,true);
+  assert.strictEqual(ctx.retryLabel,'继续查询');
+});
+
+test('entering an idle format review releases the previous feature busy state', () => {
+  const ctx=createBaseTestContext();
+  ctx.state.currentMode='smartWrite';
+  ctx.state.modelTaskBusy=true;
+  ctx.switchMode('formatReview');
+  assert.strictEqual(ctx.state.modelTaskBusy,false);
+});
+
+test('stopping a paused format job queries its original ID until cancellation is confirmed', async () => {
+  const ctx = createBaseTestContext();
+  const calls = [];
+  const timers = [];
+  ctx.state.deterministicFormatReviewJobId = 'paused-format';
+  ctx.retryVisible = true;
+  ctx.setInterruptedRetryVisible = visible => { ctx.retryVisible = visible; };
+  ctx.setActiveReviewJobRecord('word.format_review', 'doc-session-1', { jobId: 'paused-format', pollPaused: true });
+  helpers.claimTaskSlot(ctx.state.activeTaskSlots, 'wps', 'word.format_review', 'doc-session-1', 'paused-format');
+  ctx.request = (url, body, options = {}) => {
+    calls.push([url, options.method || 'GET']);
+    return Promise.resolve({ data: { status: calls.length < 3 ? 'running' : 'cancelled', cancelRequested: true } });
+  };
+  ctx.setTimeout = callback => { timers.push(callback); };
+  vm.runInNewContext(functionSource('cancelDeterministicFormatReviewJob'), ctx);
+  ctx.cancelDeterministicFormatReviewJob();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepStrictEqual(calls.map(call => call[1]), ['DELETE', 'GET']);
+  assert.strictEqual(ctx.state.deterministicFormatReviewJobId, 'paused-format');
+  assert.strictEqual(helpers.isTaskSlotBusy(ctx.state.activeTaskSlots, 'wps', 'word.format_review', 'doc-session-1'), true);
+  assert.strictEqual(timers.length, 1);
+  timers.shift()();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepStrictEqual(calls.map(call => call[1]), ['DELETE', 'GET', 'GET']);
+  assert.ok(calls.every(call => call[0].includes('/paused-format')));
+  assert.strictEqual(ctx.state.deterministicFormatReviewJobId, '');
+  assert.strictEqual(ctx.retryVisible, false);
+  assert.strictEqual(helpers.isTaskSlotBusy(ctx.state.activeTaskSlots, 'wps', 'word.format_review', 'doc-session-1'), false);
+});
+
+test('returning to paused format review restores query action without another request', () => {
+  const ctx = createBaseTestContext();
+  ctx.state.deterministicFormatReviewJobId = 'paused-format';
+  ctx.setActiveReviewJobRecord('word.format_review', 'doc-session-1', { jobId: 'paused-format', pollPaused: true });
+  ctx.saveDeterministicFormatReviewActiveJob('paused-format', Date.now(), 'doc-session-1');
+  const calls = [];
+  ctx.request = (...args) => { calls.push(args); return new Promise(() => {}); };
+  ctx.setInterruptedRetryVisible = (visible, label) => { ctx.retry = [visible, label]; };
+  assert.strictEqual(ctx.resumeDeterministicFormatReviewActiveJob(), true);
+  assert.deepStrictEqual(ctx.retry, [true, '继续查询']);
+  assert.strictEqual(calls.length, 0);
+});
+
+for (const otherView of ['document', 'mode']) {
+  test('background format pause preserves another ' + otherView + ' view', async () => {
+    const ctx = createBaseTestContext();
+    ctx.state.deterministicFormatReviewJobId = 'background-format';
+    ctx.state.deterministicFormatReviewPollErrorCount = 2;
+    ctx.setActiveReviewJobRecord('word.format_review', 'doc-session-1', { jobId: 'background-format' });
+    if (otherView === 'document') ctx.state.documentSessionId = 'doc-session-2';
+    else ctx.state.currentMode = 'smartWrite';
+    const changes = [];
+    ctx.request = () => Promise.reject(Error('offline'));
+    ctx.setInterruptedRetryVisible = () => changes.push('retry');
+    ctx.setDocumentReviewCancelVisible = () => changes.push('cancel');
+    ctx.setStatus = () => changes.push('status');
+    ctx.pollDeterministicFormatReviewJob('background-format', 'doc-session-1');
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepStrictEqual(changes, []);
+    assert.strictEqual(ctx.getActiveReviewJobRecord('word.format_review', 'doc-session-1').pollPaused, true);
+  });
+}
+
+test('format cancellation 404 releases the original slot for resubmission', async () => {
+  const ctx = createBaseTestContext();
+  ctx.state.deterministicFormatReviewJobId = 'missing-format';
+  ctx.state.modelTaskBusy = true;
+  ctx.setActiveReviewJobRecord('word.format_review', 'doc-session-1', { jobId: 'missing-format', pollPaused: true });
+  helpers.claimTaskSlot(ctx.state.activeTaskSlots, 'wps', 'word.format_review', 'doc-session-1', 'missing-format');
+  ctx.request = () => Promise.reject(Object.assign(Error('missing'), { httpStatus: 404 }));
+  vm.runInNewContext(functionSource('cancelDeterministicFormatReviewJob'), ctx);
+  ctx.cancelDeterministicFormatReviewJob();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.strictEqual(ctx.state.deterministicFormatReviewJobId, '');
+  assert.strictEqual(ctx.state.modelTaskBusy, false);
+  assert.strictEqual(helpers.isTaskSlotBusy(ctx.state.activeTaskSlots, 'wps', 'word.format_review', 'doc-session-1'), false);
+});

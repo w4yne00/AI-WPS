@@ -109,6 +109,7 @@ class DocumentReviewJobStore:
                 snapshot=snapshot,
                 failure_code="DOCUMENT_REVIEW_JOB_FAILED",
                 failure_message="文档审查后台任务执行失败，请稍后重试或查看最近一次任务诊断。",
+                allow_running_cancel=True,
                 public_metadata={
                     "runningMessage": RUNNING_MESSAGE,
                     "providerTimeoutSeconds": DOCUMENT_REVIEW_TIMEOUT_SECONDS,
@@ -122,12 +123,13 @@ class DocumentReviewJobStore:
         return self.coordinator.get(job_id, task_type="word.document_review")
 
     def cancel(self, job_id: str) -> Optional[Dict]:
-        res = self.coordinator.cancel(job_id, task_type="word.document_review")
-        with self._submission_lock:
-            for key, val in list(self._active_doc_sessions.items()):
-                if val == job_id:
-                    self._active_doc_sessions.pop(key, None)
-            self._job_identities.pop(job_id, None)
+        res = self.coordinator.request_cancel(job_id, task_type="word.document_review")
+        if res is not None and res.get("status") == "cancelled":
+            with self._submission_lock:
+                for key, val in list(self._active_doc_sessions.items()):
+                    if val == job_id:
+                        self._active_doc_sessions.pop(key, None)
+                self._job_identities.pop(job_id, None)
         return res
 
     def run_sync(self, request: WordDocumentRequest, trace_id: str) -> Dict:

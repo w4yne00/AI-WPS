@@ -371,7 +371,7 @@ test('a missing recovered task stops polling and allows resubmission', async () 
   assert.ok(h.api.getState().error);
 });
 
-test('an uncertain submission retries the original job and request', async () => {
+test('an uncertain submission queries the original job without posting it again', async () => {
   const h = createTestHarness();
   const submitted = [];
   h.requestHandler = async (url, body) => {
@@ -379,13 +379,18 @@ test('an uncertain submission retries the original job and request', async () =>
       submitted.push(JSON.parse(JSON.stringify(body)));
       throw new Error('Failed to fetch');
     }
+    if (url.includes('/jobs/')) return { data: { status: 'running' } };
     return { data: { conflicts: [] } };
   };
   await h.api.generate();
   h.api.setInstruction('编辑后的要求');
   await h.api.generate();
-  assert.equal(submitted.length, 2);
-  assert.deepEqual(submitted[1], submitted[0]);
+  assert.equal(submitted.length, 1);
+  const jobId = submitted[0].clientJobId;
+  await h.scheduled.shift()();
+  assert.equal(h.api.getState().jobId, jobId);
+  assert.equal(h.api.getState().pendingRequest, null);
+  assert.equal(submitted.length, 1);
 });
 
 function ledgerPaneHarness() {
@@ -473,7 +478,7 @@ test('real ledger pane uploads files, previews backend rows and manages independ
   });
   const mock = `
 window.paneErrors=[];window.addEventListener('error',e=>paneErrors.push(e.message));
-window.confirm=()=>true;window.requests=[];window.cellWrites=0;
+window.confirm=()=>true;window.requests=[];window.cellWrites=0;window.ledgerHistory=[];
 var cell={Text:'工作事项'};['Value','Value2','Formula'].forEach(key=>Object.defineProperty(cell,key,{get:()=>'',set:()=>window.cellWrites++}));
 var sheet={Name:'Sheet1',Range:()=>cell,Cells:{Item:()=>cell}};
 window.Application={Selection:{Rows:{Count:1},Columns:{Count:1},Cells:{Item:()=>cell}},ActiveSheet:sheet,
@@ -493,9 +498,11 @@ window.fetch=async function(url,options){
   if(p==='/excel/material-ledger/conflicts')data={conflicts:[]};
   if(p==='/excel/material-ledger/jobs')data={jobId:body.clientJobId,status:'completed',result:{
     headers:['工作事项','责任部门'],basisMaterials:[{materialId:'m1',updatedAt:'v1'}],rows:[
-      {values:{'工作事项':'网络改造','责任部门':''},missingFields:['责任部门'],isDuplicate:true,duplicateOfIndex:0,duplicateReason:'重复提及',
+      {values:{'工作事项':'网络改造'+(ledgerHistory.length?'2':''),'责任部门':''},missingFields:['责任部门'],isDuplicate:true,duplicateOfIndex:0,duplicateReason:'重复提及',
        sources:[{fileName:'方案.docx',chapter:'第一章',text:'开展网络改造'}]}
     ]}};
+  if(p==='/excel/material-ledger/jobs')ledgerHistory.unshift({id:'history-'+body.clientJobId,taskType:'excel.material_ledger',documentDisplayName:'台账.xlsx',result:{columns:data.result.headers,rows:data.result.rows}});
+  if(p==='/history')data={items:ledgerHistory};
   return {ok:true,status:200,json:async()=>({success:true,data:data})};
 };`;
   let html = fs.readFileSync(path.join(root, 'taskpane.html'), 'utf8');
@@ -530,6 +537,19 @@ window.fetch=async function(url,options){
       run('set', 'viewport', String(width), '900');
       assert.equal(run('eval', "document.querySelector('.ledger-table-scroll').getBoundingClientRect().width <= document.querySelector('#excel-ledger-result').getBoundingClientRect().width").trim(), 'true');
     }
+    run('eval', "document.querySelector('#btn-view-history').click()");
+    run('wait', '--text', '任务台账成果');
+    run('click', '.btn-history-view');
+    assert.match(run('get', 'text', '#excel-history-content'), /网络改造/);
+    run('eval', "document.querySelector('#btn-run-primary').click()");
+    run('wait', '--fn', "!document.querySelector('#excel-result-panel').hidden && document.querySelector('#ledger-preview-table').textContent.includes('网络改造2')");
+    assert.equal(run('eval', "document.querySelector('#excel-history-view').hidden").trim(), 'true');
+    run('eval', "document.querySelector('#btn-view-history').click()");
+    run('wait', '--fn', "document.querySelectorAll('.excel-history-card').length===2");
+    run('eval', "document.querySelectorAll('.btn-history-view')[1].click()");
+    assert.match(run('get', 'text', '#excel-history-content'), /网络改造/);
+    run('click', '#btn-history-back');
+    assert.match(run('get', 'text', '#ledger-preview-table'), /网络改造2/);
     run('eval', "document.querySelector('[data-ledger-update]').click()");
     upload('更新版.docx');
     run('wait', '--text', '更新版.docx');

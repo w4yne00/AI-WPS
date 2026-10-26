@@ -460,12 +460,10 @@ class ExcelAnalysisTests(unittest.TestCase):
         self.assertEqual(cancelled.status_code, 200)
         self.assertEqual(cancelled.json()["message"], "cancelled")
         self.assertEqual(cancelled.json()["data"]["status"], "cancelled")
-        self.assertEqual(running_cancel.status_code, 409)
+        self.assertEqual(running_cancel.status_code, 200)
         self.assertEqual(running_cancel.json()["taskType"], "excel.analysis")
-        self.assertEqual(
-            running_cancel.json()["errors"][0]["code"],
-            "LONG_TASK_NOT_CANCELLABLE",
-        )
+        self.assertEqual(running_cancel.json()["data"]["phase"], "stopping")
+        self.assertTrue(running_cancel.json()["data"]["cancelRequested"])
         self.assertEqual(interrupted.status_code, 404)
         self.assertEqual(
             interrupted.json()["errors"][0]["code"],

@@ -76,6 +76,9 @@ function createMaterialComposer(options) {
         basisStatus: 'current',
         error: '',
         busy: false,
+        requestVersion: 0,
+        cancelRequested: Boolean(data.cancelRequested),
+        cancelPending: false,
         pending: false
       };
     }
@@ -90,6 +93,7 @@ function createMaterialComposer(options) {
       catalogSummary: s.catalogSummary,
       jobId: s.jobId,
       clientJobId: s.clientJobId,
+      cancelRequested: s.cancelRequested,
       input: s.input,
       editingInput: s.editingInput,
       submittedRequest: s.submittedRequest,
@@ -134,23 +138,49 @@ function createMaterialComposer(options) {
       s.result = job.result;
     }
     s.error = s.status === 'failed' ? (job.error && (job.error.message || job.error) || '任务失败，请检查后重新生成。') : '';
+    if (!active(s)) s.cancelRequested = false;
   }
   async function execute(s, url, body, method) {
+    var version = ++s.requestVersion;
     s.busy = true; s.error = ''; show(s);
-    try { accept(s, await options.request(url, body, { method: method })); }
+    try {
+      var response = await options.request(url, body, { method: method, timeoutMs: 8000 });
+      if (version !== s.requestVersion) return;
+      accept(s, response);
+    }
     catch (error) {
+      if (version !== s.requestVersion) return;
       s.error = error.message || '任务请求失败，请重试。';
       var httpStatus = error.httpStatus || error.status;
       if (method === 'GET' && httpStatus === 404) {
         // A missing known job has expired; an uncertain submission can retry its original key.
-        if (s.jobId) s.clientJobId = '';
+        if (s.jobId) { s.clientJobId = ''; s.cancelRequested = false; }
         s.jobId = ''; s.result = null; s.status = 'idle'; s.phase = ''; s.phaseLabel = '';
       }
       if (method === 'POST' && !s.jobId && httpStatus >= 400 && httpStatus < 500 && httpStatus !== 408 && httpStatus !== 409) {
-        s.clientJobId = ''; s.result = null; s.status = 'idle'; s.phase = ''; s.phaseLabel = '';
+        s.clientJobId = ''; s.cancelRequested = false; s.result = null; s.status = 'idle'; s.phase = ''; s.phaseLabel = '';
       }
     }
-    finally { s.busy = false; persist(s); show(s); if (!s.error) poll(s); }
+    finally {
+      if (version === s.requestVersion) { s.busy = false; persist(s); show(s); if (!s.error) poll(s); }
+    }
+    if (version === s.requestVersion && s.cancelRequested && active(s)) await cancelJob(s);
+  }
+  async function cancelJob(s) {
+    if (!(s.jobId || s.clientJobId) || s.cancelPending || !active(s)) return;
+    var clientJobId = s.clientJobId;
+    s.cancelRequested = true; s.cancelPending = true; s.error = ''; persist(s); show(s);
+    try {
+      var response = await options.request('/word/material-composer/jobs/' + encodeURIComponent(s.jobId || clientJobId) + '/cancel', { documentSessionId: s.documentSessionId }, { method: 'POST', timeoutMs: 8000 });
+      if (clientJobId !== s.clientJobId || !active(s)) return;
+      accept(s, response);
+      if (!active(s)) { s.requestVersion += 1; s.busy = false; }
+    } catch (error) {
+      if (clientJobId !== s.clientJobId || !active(s)) return;
+      s.error = error.message || '取消请求失败，请重试。';
+    } finally {
+      s.cancelPending = false; persist(s); show(s); if (!s.error) poll(s);
+    }
   }
   async function refresh() {
     var s = current();
@@ -161,7 +191,7 @@ function createMaterialComposer(options) {
     s.catalogPending = true;
     show(s);
     var version = ++s.catalogRequestVersion;
-    var response = await options.request('/word/materials/catalog?documentSessionId=' + encodeURIComponent(s.documentSessionId), undefined, { method: 'GET' });
+    var response = await options.request('/word/materials/catalog?documentSessionId=' + encodeURIComponent(s.documentSessionId), undefined, { method: 'GET', timeoutMs: 8000 });
     if (version !== s.catalogRequestVersion) return;
     var catalog = response && response.success === true && response.data;
     if (!catalog || !Array.isArray(catalog.documents) || !Array.isArray(catalog.toc) || typeof catalog.totalDocuments !== 'number' || typeof catalog.totalCharacters !== 'number') {
@@ -178,7 +208,7 @@ function createMaterialComposer(options) {
   return {
     setMaterial: function (reading) {
       var s = stateFor(reading.documentSessionId || options.getSessionId());
-      if (s.busy || active(s)) return;
+      if (s.busy || s.cancelPending || active(s)) return;
       s.catalogRequestVersion += 1;
       s.conflictRequestVersion += 1;
       s.submittedRequest = null;
@@ -204,6 +234,7 @@ function createMaterialComposer(options) {
       s.conflictResolutions = [];
       s.jobId = '';
       s.clientJobId = '';
+      s.cancelRequested = false;
       s.result = null;
       s.status = 'idle';
       s.error = '';
@@ -228,7 +259,7 @@ function createMaterialComposer(options) {
       var mids = (s.materialIds && s.materialIds.length) ? s.materialIds.slice() : (s.materialId ? [s.materialId] : []);
       if (mids.length) { body.materialIds = mids; body.materialId = mids[0]; }
       var res;
-      try { res = await options.request('/word/material-composer/conflicts', body, { method: 'POST' }); }
+      try { res = await options.request('/word/material-composer/conflicts', body, { method: 'POST', timeoutMs: 8000 }); }
       catch (error) {
         if (version !== s.conflictRequestVersion || options.getSessionId() !== s.documentSessionId) return null;
         throw error;
@@ -262,12 +293,13 @@ function createMaterialComposer(options) {
     },
     start: async function (input) {
       var s = current();
-      if (s.busy || s.materialMutationPending || (s.jobId && active(s))) { show(s); return; }
+      if (s.busy || s.cancelPending || s.materialMutationPending || (s.jobId && active(s))) { show(s); return; }
       var retryingUncertain = Boolean(s.clientJobId && !s.jobId);
       var selectedInput = retryingUncertain ? s.input : input;
       var hasMaterial = Boolean(s.materialId || (s.materialIds && s.materialIds.length) || (s.catalogSummary && s.catalogSummary.totalDocuments));
       if (!hasMaterial || !s.documentSessionId || !selectedInput || typeof selectedInput.instruction !== 'string' || !selectedInput.instruction.trim()) { s.error = '请上传参考文档并填写写作要求。'; show(s); return; }
       if (!retryingUncertain) {
+        s.cancelRequested = false;
         updateInput(s, selectedInput);
         if (s.conflicts.some(function (conflict) {
           return !s.conflictResolutions.some(function (resolution) { return resolution.conflictId === conflict.conflictId; });
@@ -320,7 +352,7 @@ function createMaterialComposer(options) {
       catch (error) { s.error = error.message || '资料目录查询失败，请重试。'; show(s); }
       if (s.jobId || s.clientJobId) await refresh();
     },
-    cancel: async function () { var s = current(); if (!s.jobId || s.busy || !active(s)) return; await execute(s, '/word/material-composer/jobs/' + encodeURIComponent(s.jobId) + '/cancel', { documentSessionId: s.documentSessionId }, 'POST'); },
+    cancel: async function () { await cancelJob(current()); },
     copy: async function () { var s = current(); if (s.status === 'succeeded' && validResult(s.result, s.documentSessionId)) await options.copyText(s.result.plainText); },
     apply: async function (target) {
       var s = current();

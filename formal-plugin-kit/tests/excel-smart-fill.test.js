@@ -479,7 +479,7 @@ function testSmartFillProgressBatchDisplay() {
 
 function testSmartFillCancellationCooperativeNotice() {
   assert.ok(
-    js.includes("智能填写正在停止，当前批次完成后将保留部分预览。"),
+    js.includes("正在取消任务，等待后台确认。"),
     "taskpane.js must inform user when cancellation is requested on a running job"
   );
   assert.ok(

@@ -1098,7 +1098,7 @@ function writingSubmissionHarness(taskType = 'word.smart_write') {
     WRITING_POLL_REQUEST_TIMEOUT_MS: 1000,
     WRITING_POLL_INTERVAL_MS: 1000, WRITING_POLL_RETRY_DELAY_MS: 1000,
     DOCUMENT_REVIEW_PHASE_TEXT: {}, SMART_WRITE_EXTRACTION_OPTIONS: {},
-    request: (url, payload) => new Promise((resolve, reject) => pending.push({url, payload: payload && JSON.parse(JSON.stringify(payload)), resolve, reject})),
+    request: (url, payload, options) => new Promise((resolve, reject) => pending.push({url, options, payload: payload && JSON.parse(JSON.stringify(payload)), resolve, reject})),
     beginTaskPerformance: () => ({}), bindTaskPerformanceTrace() {},
     setDocumentReviewCancelVisible() {}, scheduleWritingPoll() {},
     isFatalWritingPollError: error => error.status === 400,
@@ -1116,6 +1116,106 @@ function writingSubmissionHarness(taskType = 'word.smart_write') {
   return h;
 }
 const flushWritingPromises = () => new Promise(resolve => setImmediate(resolve));
+
+function useRealWritingPreview(h) {
+  Object.assign(h.ctx, {
+    updateResultViewButtons() {}, setResultViewSwitchVisible() {},
+    renderWritingPolicyUsage() {}, renderWritingPolicyAudit() {}
+  });
+  for (const name of ['getLatestOriginalText', 'shouldUseStructuredSmartWriteResult',
+    'normalizeSmartWriteResult', 'renderSmartWritePreviewMode', 'setSmartWriteResult', 'setResultViewMode']) {
+    h.ctx[name] = vm.runInNewContext(`(${functionSource(name)}\n)`, h.ctx);
+  }
+}
+
+test('a history read started before clearing cannot restore deleted Word history', async () => {
+  const h = writingSubmissionHarness();
+  const loading = h.ctx.loadAndRenderWritingHistory();
+  const clearing = h.ctx.handleClearWritingHistory();
+  h.pending[1].resolve({success: true});
+  await clearing;
+  h.pending[0].resolve({data: {items: [{id: 'deleted', result: {rewrittenText: '旧结果'}}]}});
+  await loading;
+  assert.equal(h.state.historyItems.length, 0);
+  assert.ok(!h.byId('word-history-content').innerHTML.includes('旧结果'));
+});
+
+test('clearing one Word feature cannot empty another feature history after a switch', async () => {
+  const h = writingSubmissionHarness();
+  h.state.historyTaskType = 'word.smart_write';
+  const clearing = h.ctx.handleClearWritingHistory();
+  h.state.historyTaskType = 'word.smart_imitation';
+  h.state.historyItems = [{id: 'imitation-record'}];
+  h.byId('word-history-content').innerHTML = '仿写历史';
+  h.pending[0].resolve({success: true});
+  await clearing;
+  assert.equal(h.state.historyItems[0].id, 'imitation-record');
+  assert.equal(h.byId('word-history-content').innerHTML, '仿写历史');
+});
+
+test('a Word history read started during deletion cannot restore the deleted item', async () => {
+  const h = writingSubmissionHarness();
+  h.state.historyItems = [{id: 'deleted'}];
+  const deleting = h.ctx.handleWritingHistoryDeleteItem('deleted');
+  const loading = h.ctx.loadAndRenderWritingHistory();
+  h.pending[0].resolve({success: true});
+  await deleting;
+  h.pending[1].resolve({data: {items: [{id: 'deleted', result: {rewrittenText: '已删除旧结果'}}]}});
+  await loading;
+  assert.equal(h.state.historyItems.length, 0);
+  assert.ok(!h.byId('word-history-content').innerHTML.includes('已删除旧结果'));
+});
+
+for (const operation of ['handleClearWritingHistory', 'handleWritingHistoryDeleteItem']) {
+  for (const outcome of ['success', 'failure']) {
+    test(operation + ' late ' + outcome + ' leaves the settings page untouched', async () => {
+      const h = writingSubmissionHarness();
+      h.state.historyItems = [{id: 'old'}];
+      const deleting = h.ctx[operation]('old');
+      h.state.currentMode = 'settings';
+      h.byId('status-line').textContent = '设置页面';
+      h.byId('word-history-content').innerHTML = '保留历史';
+      if (outcome === 'success') h.pending[0].resolve({success: true});
+      else h.pending[0].reject(Error('旧删除错误'));
+      await deleting;
+      assert.equal(h.byId('status-line').textContent, '设置页面');
+      assert.equal(h.byId('word-history-content').innerHTML, '保留历史');
+    });
+  }
+}
+
+for (const taskType of ['word.smart_write', 'word.smart_imitation']) {
+  test(taskType + ' renders the newest completed text through the real preview renderer', async () => {
+    const h = writingSubmissionHarness(taskType);
+    useRealWritingPreview(h);
+    const results = ['第一轮的独立结果', '第二轮的新目标结果', '第三轮的新目标结果'];
+    for (let round = 0; round < results.length; round += 1) {
+      h.ctx.extractDocument = () => ({selectionMode: 'selection', content: {plainText: '目标段落' + round}});
+      h.byId('imitation-template-text').value = '模板段落' + round;
+      h.start();
+      if (h.timers.length) h.timers.shift()();
+      const call = h.pending.filter(item => item.payload && item.payload.clientJobId)[round];
+      call.resolve({data: {jobId: call.payload.clientJobId, status: 'completed', result: {rewrittenText: results[round]}}});
+      await flushWritingPromises();
+      assert.equal(h.byId('result-output').textContent, results[round]);
+      assert.equal(h.state.rewriteResult.rewrittenText, results[round]);
+      h.ctx.setResultViewMode('plain');
+      assert.equal(h.byId('result-output').textContent, results[round]);
+      h.ctx.switchWordHistoryView(true);
+      h.ctx.switchWordHistoryView(false);
+      assert.equal(h.byId('result-output').textContent, results[round]);
+    }
+  });
+
+  test(taskType + ' starts a new submission from history in the visible active result panel', () => {
+    const h = writingSubmissionHarness(taskType);
+    h.ctx.switchWordHistoryView(true);
+    h.start();
+    assert.equal(h.state.historyOpen, false);
+    assert.equal(h.byId('word-result-section').hidden, false);
+    assert.equal(h.byId('word-history-view').hidden, true);
+  });
+}
 
 for (const taskType of ['word.smart_write', 'word.smart_imitation']) {
   test(taskType + ' identical inputs execute new submissions, hide old results, and reject rapid clicks', async () => {
@@ -1301,3 +1401,224 @@ for (const outcome of ['cancelled', 'completed', 'network-error']) {
     assert.equal(h.state.modelTaskBusy, true);
   });
 }
+
+for (const taskType of ['word.smart_write', 'word.smart_imitation']) {
+  test(taskType + ' exposes stop while submission is still awaiting acknowledgment', () => {
+    const h = writingSubmissionHarness(taskType);
+    for (const name of ['setDocumentReviewCancelVisible', 'setWritingJob']) {
+      h.ctx[name] = vm.runInNewContext(`(${functionSource(name)}\n)`, h.ctx);
+    }
+    h.byId('btn-cancel-document-review-job').hidden = true;
+    h.start();
+    if (h.timers.length) h.timers.shift()();
+    assert.equal(h.byId('btn-cancel-document-review-job').hidden, false);
+    assert.equal(h.byId('btn-cancel-document-review-job').disabled, false);
+  });
+
+  test(taskType + ' returning to an unconfirmed in-memory task does not start an early recovery GET', () => {
+    const h = writingSubmissionHarness(taskType);
+    h.start();
+    if (h.timers.length) h.timers.shift()();
+    h.ctx.loadWritingActiveJob = () => ({jobId:h.state.writingJobId, taskType, mode:h.mode, documentSessionId:'doc_1'});
+    h.ctx.resumeWritingActiveJob();
+    assert.equal(h.pending.length, 1, 'keep the original submission until it is acknowledged or times out');
+  });
+
+  test(taskType + ' an interrupted task cannot be resurrected by its delayed submit response', async () => {
+    const h = writingSubmissionHarness(taskType);
+    h.start();
+    if (h.timers.length) h.timers.shift()();
+    const call = h.pending[0];
+    h.ctx.failWritingJob(call.payload.clientJobId, taskType, h.mode, Error('任务不存在'), 'doc_1');
+    call.resolve({data:{jobId:call.payload.clientJobId,status:'running',canCancel:true}});
+    await flushWritingPromises();
+    assert.equal(h.ctx.getActiveWritingJobRecord(taskType, 'doc_1'), null);
+    assert.equal(h.state.modelTaskBusy, false);
+    h.start();
+    if (h.timers.length) h.timers.shift()();
+    assert.equal(h.pending.filter(item => item.payload && item.payload.clientJobId).length, 2);
+  });
+
+  test(taskType + ' a missing task without an adapter error code releases the slot for a fresh task', async () => {
+    const h = writingSubmissionHarness(taskType);
+    h.ctx.setInterruptedRetryVisible = vm.runInNewContext(`(${functionSource('setInterruptedRetryVisible')}\n)`, h.ctx);
+    h.byId('btn-resubmit-interrupted-job').hidden = true;
+    h.ctx.isFatalWritingPollError = vm.runInNewContext(`(${functionSource('isFatalWritingPollError')}\n)`, h.ctx);
+    h.ctx.setActiveWritingJobRecord(taskType, 'doc_1', {jobId:'missing-job'});
+    helpers.claimTaskSlot(h.state.activeTaskSlots, 'wps', taskType, 'doc_1', 'missing-job');
+    h.ctx.setWritingJob('missing-job', taskType, h.mode);
+    h.ctx.pollWritingJob('missing-job', taskType, h.mode, true, 'doc_1');
+    h.pending[0].reject(Object.assign(Error('HTTP 404'), {httpStatus:404}));
+    await flushWritingPromises();
+    assert.equal(h.state.modelTaskBusy, false);
+    assert.equal(helpers.isTaskSlotBusy(h.state.activeTaskSlots, 'wps', taskType, 'doc_1'), false);
+    assert.equal(h.ctx.getActiveWritingJobRecord(taskType, 'doc_1'), null);
+    assert.equal(h.byId('btn-resubmit-interrupted-job').hidden, false);
+  });
+
+  test(taskType + ' repeated adapter outages pause automatic polling and allow an explicit GET retry', async () => {
+    const h = writingSubmissionHarness(taskType);
+    const scheduled = [];
+    h.ctx.scheduleWritingPoll = (...args) => scheduled.push(args);
+    h.ctx.isFatalWritingPollError = vm.runInNewContext(`(${functionSource('isFatalWritingPollError')}\n)`, h.ctx);
+    h.ctx.setInterruptedRetryVisible = vm.runInNewContext(`(${functionSource('setInterruptedRetryVisible')}\n)`, h.ctx);
+    h.ctx.setActiveWritingJobRecord(taskType, 'doc_1', {jobId:'offline-job'});
+    h.ctx.setWritingJob('offline-job', taskType, h.mode);
+    h.state.writingJobPollErrorCount = 0;
+    h.byId('btn-resubmit-interrupted-job').hidden = true;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      h.ctx.pollWritingJob('offline-job', taskType, h.mode, false, 'doc_1');
+      h.pending[attempt].reject(Error('Adapter无法连接'));
+      await flushWritingPromises();
+    }
+    assert.equal(scheduled.length, 2, 'do not poll an unreachable adapter forever');
+    assert.equal(h.byId('btn-resubmit-interrupted-job').hidden, false);
+    assert.equal(h.byId('btn-resubmit-interrupted-job').textContent, '继续查询');
+    h.ctx.retryInterruptedTask = vm.runInNewContext(`(${functionSource('retryInterruptedTask')}\n)`, h.ctx);
+    h.ctx.retryInterruptedTask();
+    assert.equal(h.pending.length, 4);
+    assert.equal(h.pending[3].payload, null);
+    assert.ok(h.pending[3].url.includes('/offline-job?resume=1'));
+  });
+
+  test(taskType + ' stop before submit acceptance is retried against the same accepted task', async () => {
+    const h = writingSubmissionHarness(taskType);
+    h.ctx.cancelQueuedWritingJob = vm.runInNewContext(`(${functionSource('cancelQueuedWritingJob')}\n)`, h.ctx);
+    h.start();
+    if (h.timers.length) h.timers.shift()();
+    const first = h.pending[0];
+    h.ctx.cancelQueuedWritingJob();
+    h.pending[1].reject(Object.assign(Error('尚未登记'), {httpStatus:404}));
+    await flushWritingPromises();
+    first.resolve({data:{jobId:first.payload.clientJobId,status:'running',canCancel:true}});
+    await flushWritingPromises();
+    const cancellations = h.pending.filter(item => item.options && item.options.method === 'DELETE');
+    assert.equal(cancellations.length, 2);
+    assert.ok(cancellations.every(item => item.url.includes('/' + first.payload.clientJobId + '?resume=1')));
+    assert.equal(h.pending.filter(item => item.payload && item.payload.clientJobId).length, 1);
+  });
+
+  test(taskType + ' returning to a paused task restores its session and explicit recovery actions', () => {
+    const h = writingSubmissionHarness(taskType);
+    h.ctx.setInterruptedRetryVisible = vm.runInNewContext(`(${functionSource('setInterruptedRetryVisible')}\n)`, h.ctx);
+    h.ctx.setActiveWritingJobRecord(taskType, 'doc_1', {jobId:'paused-job',pollPaused:true});
+    h.ctx.loadWritingActiveJob = () => ({jobId:'paused-job',taskType,mode:h.mode,documentSessionId:'doc_1'});
+    h.ctx.getActiveDocument = () => ({__sessionId:'doc_1'});
+    h.state.documentSessionId = 'another-doc';
+    h.byId('btn-resubmit-interrupted-job').hidden = true;
+    h.ctx.resumeWritingActiveJob();
+    assert.equal(h.state.documentSessionId, 'doc_1');
+    assert.equal(h.byId('btn-resubmit-interrupted-job').hidden, false);
+    assert.equal(h.byId('btn-resubmit-interrupted-job').textContent, '继续查询');
+    assert.equal(h.pending.length, 0);
+  });
+}
+
+for (const entry of [
+  {mode:'documentReview',field:'documentReviewJobId',query:'pollDocumentReviewJob',cancel:'cancelQueuedDocumentReviewJob'},
+  {mode:'documentReview',field:'fullDocumentReviewJobId',query:'pollFullDocumentReviewJob',cancel:'cancelFullDocumentReviewJob'},
+  {mode:'formatReview',field:'deterministicFormatReviewJobId',query:'pollDeterministicFormatReviewJob',cancel:'cancelDeterministicFormatReviewJob'}
+]) {
+  test(entry.field + ' recovery and stop are routed to the visible feature, not a background writing task', () => {
+    const h=writingSubmissionHarness();
+    const actions=[];
+    h.state.currentMode=entry.mode;
+    h.state.writingJobId='background-writing';
+    h.state[entry.field]='visible-job';
+    for(const name of ['pollWritingJob','pollDocumentReviewJob','pollFullDocumentReviewJob','pollDeterministicFormatReviewJob',
+      'cancelQueuedWritingJob','cancelQueuedDocumentReviewJob','cancelFullDocumentReviewJob','cancelDeterministicFormatReviewJob']) {
+      h.ctx[name]=()=>actions.push(name);
+    }
+    vm.runInNewContext(`(${functionSource('retryInterruptedTask')}\n)`,h.ctx)();
+    assert.deepStrictEqual(actions,[entry.query]);
+    const binding=taskpaneSource.indexOf('byId("btn-cancel-document-review-job").addEventListener');
+    const start=taskpaneSource.indexOf('function () {',binding);
+    const end=taskpaneSource.indexOf('\n    });',start);
+    vm.runInNewContext('('+taskpaneSource.slice(start,end)+'\n})',h.ctx)();
+    assert.deepStrictEqual(actions,[entry.query,entry.cancel]);
+  });
+}
+
+test('stopping a writing task after a connection pause resumes GET until the stop is acknowledged', async () => {
+  const h=writingSubmissionHarness();
+  h.ctx.setActiveWritingJobRecord(h.taskType,'doc_1',{jobId:'paused-stop',pollPaused:true});
+  h.ctx.setWritingJob('paused-stop',h.taskType,h.mode);
+  h.state.writingJobPollErrorCount=3;
+  vm.runInNewContext(`(${functionSource('cancelQueuedWritingJob')}\n)`,h.ctx)();
+  h.pending[0].resolve({data:{status:'running',cancelRequested:true,canCancel:false}});
+  await flushWritingPromises();
+  assert.equal(h.pending.length,2);
+  assert.ok(h.pending[1].url.includes('/paused-stop?resume=1'));
+  assert.equal(h.ctx.getActiveWritingJobRecord(h.taskType,'doc_1').pollPaused,false);
+});
+
+test('returning from material composer reveals the primary writing action', () => {
+  const h=writingSubmissionHarness();
+  h.state.currentMode='materialImport';
+  h.byId('btn-run-primary').hidden=true;
+  h.ctx.switchMode('smartWrite');
+  assert.equal(h.byId('btn-run-primary').hidden,false);
+});
+
+test('stopping a running writing task without partial text does not claim the model was never called', async () => {
+  const h=writingSubmissionHarness();
+  h.ctx.setActiveWritingJobRecord(h.taskType,'doc_1',{jobId:'running-without-text'});
+  h.ctx.setWritingJob('running-without-text',h.taskType,h.mode);
+  h.ctx.pollWritingJob('running-without-text',h.taskType,h.mode,false,'doc_1');
+  h.pending[0].resolve({data:{status:'cancelled',phase:'cancelled'}});
+  await flushWritingPromises();
+  assert.ok(!h.byId('result-output').textContent.includes('未调用模型后台'));
+  assert.ok(h.byId('status-line').textContent.includes('已停止'));
+});
+
+for (const outcome of ['completed','failed','cancelled']) {
+  test('a background writing ' + outcome + ' response cannot unlock or replace an active review', async () => {
+    const h=writingSubmissionHarness();
+    h.ctx.setWritingJob=vm.runInNewContext(`(${functionSource('setWritingJob')}\n)`,h.ctx);
+    h.ctx.setActiveWritingJobRecord(h.taskType,'doc_1',{jobId:'background-writing'});
+    h.ctx.setWritingJob('background-writing',h.taskType,h.mode);
+    if(outcome==='cancelled') vm.runInNewContext(`(${functionSource('cancelQueuedWritingJob')}\n)`,h.ctx)();
+    h.state.currentMode='documentReview';
+    h.state.documentReviewJobId='foreground-review';
+    h.state.modelTaskBusy=true;
+    h.byId('status-line').textContent='审查进行中';
+    h.byId('result-output').textContent='本轮审查进度';
+    if(outcome==='completed') h.ctx.completeWritingJob({rewrittenText:'后台编写结果'},'trace',h.taskType,false,h.mode,'background-writing','doc_1');
+    else if(outcome==='failed') h.ctx.failWritingJob('background-writing',h.taskType,h.mode,Error('后台编写错误'),'doc_1');
+    else {h.pending[0].resolve({data:{status:'cancelled'}}); await flushWritingPromises();}
+    assert.equal(h.state.modelTaskBusy,true);
+    assert.equal(h.byId('status-line').textContent,'审查进行中');
+    assert.equal(h.byId('result-output').textContent,'本轮审查进度');
+    assert.equal(h.ctx.getActiveWritingJobRecord(h.taskType,'doc_1'),null);
+  });
+}
+
+test('retrying a background writing stop does not replace review controls or its failure message', async () => {
+  const h=writingSubmissionHarness();
+  h.ctx.setDocumentReviewCancelVisible=vm.runInNewContext(`(${functionSource('setDocumentReviewCancelVisible')}\n)`,h.ctx);
+  h.ctx.setActiveWritingJobRecord(h.taskType,'doc_1',{jobId:'background-stop',cancelRequested:true});
+  h.ctx.setWritingJob('background-stop',h.taskType,h.mode);
+  h.state.currentMode='documentReview';
+  h.byId('status-line').textContent='前台审查进行中';
+  h.byId('btn-cancel-document-review-job').disabled=false;
+  vm.runInNewContext(`(${functionSource('cancelQueuedWritingJob')}\n)`,h.ctx)('background-stop',h.taskType,'doc_1',h.mode);
+  assert.equal(h.byId('status-line').textContent,'前台审查进行中');
+  assert.equal(h.byId('btn-cancel-document-review-job').disabled,false);
+  assert.equal(h.pending[0].options.method,'DELETE');
+  h.pending[0].reject(Error('后台取消网络错误'));
+  await flushWritingPromises();
+  assert.equal(h.byId('status-line').textContent,'前台审查进行中');
+});
+
+test('writing stop intent survives reopening the task pane', () => {
+  const h=writingSubmissionHarness();
+  const saved=new Map();
+  h.ctx.window={localStorage:{getItem:key=>saved.get(key)||null,setItem:(key,value)=>saved.set(key,value),removeItem:key=>saved.delete(key),key:i=>Array.from(saved.keys())[i],get length(){return saved.size;}}};
+  h.ctx.FRONTEND_BUILD_VERSION='test';h.ctx.WRITING_ACTIVE_JOB_STORAGE_KEY='writing-legacy';
+  for(const name of ['getWritingActiveJobStorageKey','saveWritingActiveJob','loadWritingActiveJob','cancelQueuedWritingJob']) {
+    h.ctx[name]=vm.runInNewContext(`(${functionSource(name)}\n)`,h.ctx);
+  }
+  h.start();h.timers.shift()();
+  h.ctx.cancelQueuedWritingJob();
+  assert.equal(h.ctx.loadWritingActiveJob(h.taskType,'doc_1').cancelRequested,true);
+});

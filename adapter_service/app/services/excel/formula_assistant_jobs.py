@@ -102,6 +102,7 @@ class ExcelFormulaAssistantJobStore:
                 },
                 failure_code="EXCEL_FORMULA_JOB_FAILED",
                 failure_message="公式助手后台任务执行失败，请稍后重试或查看最近一次任务诊断。",
+                allow_running_cancel=True,
                 public_metadata={
                     "runningMessage": RUNNING_MESSAGE,
                     "providerTimeoutSeconds": EXCEL_FORMULA_ASSISTANT_TIMEOUT_SECONDS,
@@ -116,7 +117,7 @@ class ExcelFormulaAssistantJobStore:
         return self.coordinator.get(job_id, task_type="excel.formula_assistant")
 
     def cancel(self, job_id: str) -> Optional[Dict]:
-        return self.coordinator.cancel(job_id, task_type="excel.formula_assistant")
+        return self.coordinator.request_cancel(job_id, task_type="excel.formula_assistant")
 
     def _run(self, snapshot: Dict, progress) -> Dict:
         doc_session = str(snapshot.get("documentSessionId") or "").strip()

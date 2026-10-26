@@ -128,6 +128,32 @@ for (const taskType of ["word.smart_write", "word.smart_imitation"]) {
     assert.equal(reopened.button.hidden, false);
   });
 
+  test(`${taskType}: reopening a stopping stream preserves cancellation and the event protocol`, () => {
+    const h = harness(taskType);
+    h.activate();
+    h.fns.cancelQueuedWritingJob();
+    const reopened = harness(taskType, h.storage);
+    reopened.fns.resumeWritingActiveJob();
+    const active = reopened.fns.getActiveWritingJobRecord(taskType, "doc-1");
+    assert.equal(active.streamingEnabled, true);
+    assert.equal(active.cancelRequested, true);
+    assert.equal(reopened.pending[0].options.method, "DELETE");
+    assert.ok(reopened.pending[0].url.includes("/job-1?resume=1"));
+    assert.ok(reopened.pending[1].url.includes("/job-1/events?"));
+    assert.equal(reopened.pending.length, 2);
+  });
+
+  test(`${taskType}: legacy event payloads preserve streaming during recovery`, async () => {
+    const h = harness(taskType);
+    h.activate();
+    h.fns.pollWritingJobEvents("job-1", taskType, h.mode, false, "doc-1", 0, 0);
+    const payload = eventPayload();
+    delete payload.data.streamingEnabled;
+    h.pending[0].resolve(payload);
+    await settle();
+    assert.equal(h.fns.loadWritingActiveJob(taskType, "doc-1").streamingEnabled, true);
+  });
+
   test(`${taskType}: status fallback preserves streaming, including legacy responses without the flag`, async () => {
     const h = harness(taskType);
     h.activate();

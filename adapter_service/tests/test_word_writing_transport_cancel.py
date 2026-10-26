@@ -174,17 +174,21 @@ def test_cancel_stops_writing_transport_before_releasing_document_slot(
 
 @pytest.mark.parametrize("task_type", ["word.smart_write", "word.smart_imitation"])
 @pytest.mark.parametrize("stage", ["fallback-json", "fallback-error"])
-def test_stream_fallback_keeps_blocking_request_non_cancellable(task_type, stage):
+def test_stream_fallback_keeps_blocking_request_cancellable(task_type, stage):
     provider = ProviderClient(AppSettings())
     coordinator = LongTaskCoordinator(max_running=1)
+    transport_finished = threading.Event()
     with waiting_model(stage) as (url, received, entered, release):
         def runner(snapshot, control):
-            return provider._post_direct_task(
-                task_type, "fallback-transport", "示例内容",
-                {"providerBaseUrl": url, "modelName": "local-test", "apiKey": "local-test",
-                 "streamingCapability": "validated", "directStreamingEnabled": True},
-                timeout=5, progress_callback=control,
-            )
+            try:
+                return provider._post_direct_task(
+                    task_type, "fallback-transport", "示例内容",
+                    {"providerBaseUrl": url, "modelName": "local-test", "apiKey": "local-test",
+                     "streamingCapability": "validated", "directStreamingEnabled": True},
+                    timeout=5, progress_callback=control,
+                )
+            finally:
+                transport_finished.set()
 
         coordinator.submit(
             job_id="fallback-transport", trace_id="fallback-transport", task_type=task_type,
@@ -194,13 +198,15 @@ def test_stream_fallback_keeps_blocking_request_non_cancellable(task_type, stage
         try:
             assert entered.wait(2)
             assert [body["stream"] for body in received] == [True, False]
-            assert coordinator.get("fallback-transport", task_type=task_type)["canCancel"] is False
-            with pytest.raises(AdapterError) as refused:
-                coordinator.request_cancel("fallback-transport", task_type=task_type)
-            assert refused.value.code == "LONG_TASK_NOT_CANCELLABLE"
+            assert coordinator.get("fallback-transport", task_type=task_type)["canCancel"] is True
+            requested = coordinator.request_cancel("fallback-transport", task_type=task_type)
+            assert requested["cancelRequested"] is True
+            assert transport_finished.wait(1), "cancel must interrupt the fallback connection"
+            cancelled = coordinator.wait("fallback-transport", task_type=task_type)
+            assert cancelled["status"] == "cancelled"
+            assert not release.is_set(), "cancel must finish before the server responds"
+            assert coordinator.diagnostics()["runningCount"] == 0
+            assert len(received) == 2, "cancellation must not start another request"
         finally:
             release.set()
-            completed = coordinator.wait("fallback-transport", task_type=task_type)
-        assert completed["status"] == "completed"
-        assert completed["result"]["answer"] == "生成文本。"
-        assert len(received) == 2
+            coordinator.wait("fallback-transport", task_type=task_type)

@@ -96,6 +96,7 @@ class ExcelAnalysisJobStore:
                 },
                 failure_code="EXCEL_ANALYSIS_JOB_FAILED",
                 failure_message="智能分析后台任务执行失败，请稍后重试或查看最近一次任务诊断。",
+                allow_running_cancel=True,
                 public_metadata={
                     "runningMessage": RUNNING_MESSAGE,
                     "providerTimeoutSeconds": EXCEL_ANALYSIS_TIMEOUT_SECONDS,
@@ -111,7 +112,7 @@ class ExcelAnalysisJobStore:
         return self.coordinator.get(job_id, task_type="excel.analysis")
 
     def cancel(self, job_id: str) -> Optional[Dict]:
-        return self.coordinator.cancel(job_id, task_type="excel.analysis")
+        return self.coordinator.request_cancel(job_id, task_type="excel.analysis")
 
     def run_sync(self, request: ExcelAnalysisRequest, trace_id: str) -> Dict:
         job = self.start(request, trace_id)

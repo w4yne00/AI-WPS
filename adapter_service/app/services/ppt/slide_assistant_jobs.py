@@ -126,6 +126,7 @@ class PptSlideAssistantJobStore:
                     },
                     failure_code="PPT_SLIDE_JOB_FAILED",
                     failure_message=JOB_FAILED_MESSAGE,
+                    allow_running_cancel=True,
                     public_metadata={
                         "runningMessage": (
                             DOCUMENT_RUNNING_MESSAGE
@@ -152,7 +153,7 @@ class PptSlideAssistantJobStore:
         return self.coordinator.get(job_id, task_type="ppt.slide_assistant")
 
     def cancel(self, job_id: str) -> Optional[Dict]:
-        job = self.coordinator.cancel(job_id, task_type="ppt.slide_assistant")
+        job = self.coordinator.request_cancel(job_id, task_type="ppt.slide_assistant")
         if job is not None and job.get("status") == "cancelled":
             if self.document_file_store:
                 self.document_file_store.release(job_id)

@@ -157,7 +157,7 @@ class WritingJobStore:
                     "SYSTEM_PROMPT_DAMAGED",
                 },
                 priority_class=PRIORITY_INTERACTIVE,
-                allow_running_cancel=is_streaming,
+                allow_running_cancel=True,
             )
             self._job_identities[job_id] = identity
             if doc_session:

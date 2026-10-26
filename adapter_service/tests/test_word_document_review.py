@@ -504,7 +504,7 @@ class WordDocumentReviewerTests(unittest.TestCase):
         self.assertEqual(provider.calls[1]["taskAuth"]["apiKey"], "secret-b")
         self.assertNotIn("secret-b", str(completed))
 
-    def test_document_review_job_store_cancels_only_queued_jobs(self) -> None:
+    def test_document_review_job_store_cancels_queued_and_running_jobs(self) -> None:
         provider = BlockingDocumentReviewProvider()
         coordinator = LongTaskCoordinator(max_running=1, max_queued=1)
         store = DocumentReviewJobStore(
@@ -521,10 +521,12 @@ class WordDocumentReviewerTests(unittest.TestCase):
         cancelled = store.cancel(queued["jobId"])
         self.assertEqual(cancelled["status"], "cancelled")
         self.assertFalse(cancelled["canCancel"])
-        with self.assertRaises(AdapterError) as raised:
-            store.cancel(running["jobId"])
-        self.assertEqual(raised.exception.code, "LONG_TASK_NOT_CANCELLABLE")
+        stopping = store.cancel(running["jobId"])
+        self.assertEqual(stopping["phase"], "stopping")
+        self.assertTrue(stopping["cancelRequested"])
         provider.release.set()
+        terminal = coordinator.wait(running["jobId"], task_type="word.document_review")
+        self.assertEqual(terminal["status"], "cancelled")
 
     def test_document_review_auth_snapshot_failure_returns_sanitized_error(self) -> None:
         store = DocumentReviewJobStore(
@@ -1092,11 +1094,9 @@ class WordDocumentReviewerTests(unittest.TestCase):
         self.assertEqual(cancelled["status"], 200)
         self.assertEqual(cancelled["body"]["message"], "cancelled")
         self.assertEqual(cancelled["body"]["data"]["status"], "cancelled")
-        self.assertEqual(running_cancel["status"], 409)
-        self.assertEqual(
-            running_cancel["body"]["errors"][0]["code"],
-            "LONG_TASK_NOT_CANCELLABLE",
-        )
+        self.assertEqual(running_cancel["status"], 200)
+        self.assertEqual(running_cancel["body"]["data"]["phase"], "stopping")
+        self.assertTrue(running_cancel["body"]["data"]["cancelRequested"])
         self.assertEqual(interrupted["status"], 404)
         self.assertEqual(
             interrupted["body"]["errors"][0]["code"],

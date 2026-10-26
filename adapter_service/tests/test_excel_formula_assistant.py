@@ -445,11 +445,7 @@ class ExcelFormulaAssistantTests(unittest.TestCase):
         duplicate = store.start(request, trace_id="trace-formula-duplicate")
         self.assertEqual(running["jobId"], "client-formula-running")
         self.assertEqual(duplicate["traceId"], "trace-formula-running")
-        self.assertFalse(duplicate["canCancel"])
-
-        with self.assertRaises(AdapterError) as running_cancel:
-            store.cancel("client-formula-running")
-        self.assertEqual(running_cancel.exception.code, "LONG_TASK_NOT_CANCELLABLE")
+        self.assertTrue(duplicate["canCancel"])
 
         assistant.release.set()
         completed = wait_for_job(store, "client-formula-running")
@@ -457,6 +453,24 @@ class ExcelFormulaAssistantTests(unittest.TestCase):
         self.assertEqual(completed["result"]["primaryFormula"], "=SUM(B2:B3)")
         self.assertIn("provider_processing", completed["phaseDurations"])
         self.assertIn("parsing", completed["phaseDurations"])
+
+    def test_running_formula_job_can_cancel_without_publishing_result(self):
+        assistant = BlockingFormulaAssistant()
+        store = ExcelFormulaAssistantJobStore(
+            assistant=assistant, coordinator=LongTaskCoordinator(max_running=1),
+        )
+        store.start(self._request(client_job_id="client-formula-running"), "trace-formula-cancel")
+        self.assertTrue(assistant.started.wait(timeout=1))
+        stopping = store.cancel("client-formula-running")
+        self.assertEqual(stopping["phase"], "stopping")
+        self.assertTrue(stopping["cancelRequested"])
+
+        assistant.release.set()
+        cancelled = wait_for_job(store, "client-formula-running", expected="cancelled")
+        self.assertEqual(assistant.call_count, 1)
+        self.assertIsNone(cancelled.get("result"))
+        self.assertIn("provider_processing", cancelled["phaseDurations"])
+        self.assertIn("parsing", cancelled["phaseDurations"])
 
     @unittest.skipUnless(HAS_FASTAPI, "fastapi is required for formula route tests")
     def test_fastapi_formula_job_routes_use_independent_envelope(self):
