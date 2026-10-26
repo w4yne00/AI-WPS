@@ -540,7 +540,7 @@ class ProviderClientDirectStreamingIntegrationTests(unittest.TestCase):
         # Second request was blocking fallback
         req2_body = json.loads(sent_requests[1].data.decode("utf-8"))
         self.assertFalse(req2_body.get("stream"))
-        self.assertTrue(control.running_cancel_disabled)
+        self.assertFalse(control.running_cancel_disabled)
 
     def test_post_direct_task_falls_back_when_stream_response_is_not_sse(self):
         from unittest.mock import patch
@@ -629,7 +629,7 @@ class ProviderClientDirectStreamingIntegrationTests(unittest.TestCase):
         self.assertEqual(debug["performance"]["providerAttempts"], 2)
         self.assertTrue(json.loads(sent_requests[0].data.decode("utf-8"))["stream"])
         self.assertFalse(json.loads(sent_requests[1].data.decode("utf-8"))["stream"])
-        self.assertTrue(control.running_cancel_disabled)
+        self.assertFalse(control.running_cancel_disabled)
 
     def test_post_direct_task_uses_blocking_when_feature_flag_disabled(self):
         from unittest.mock import patch
@@ -1072,7 +1072,7 @@ class SmartImitationStreamingTests(unittest.TestCase):
         self.assertTrue(req1_body.get("stream"))
         req2_body = json.loads(sent_requests[1].data.decode("utf-8"))
         self.assertFalse(req2_body.get("stream"))
-        self.assertTrue(control.running_cancel_disabled)
+        self.assertFalse(control.running_cancel_disabled)
         self.assertIn("仿写阻塞回退结果", res["answer"])
 
     def test_smart_imitation_post_delta_disconnect_fails_without_blocking_retry(self):

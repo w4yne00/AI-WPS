@@ -1230,3 +1230,18 @@ test('an unrelated 404 remains an explicit binding failure and does not advance 
   await h.flush();
   assert.deepEqual(binds, ['doc-a', 'doc-a']);
 });
+
+test('uncertain composer submission keeps stop available without hiding its explicit same-ID retry', () => {
+  const nodes={};
+  const byId=id=>nodes[id]||(nodes[id]={value:'',disabled:false,hidden:false,textContent:''});
+  const render=load('renderMaterialComposerView',{
+    getMaterialComposerSessionId:()=> 'doc-a',byId,window:{renderMaterialComposer(){}}
+  });
+  const view={documentSessionId:'doc-a',clientJobId:'unconfirmed',jobId:'',status:'queued',busy:false,error:'请求超时',input:{instruction:'继续原请求'}};
+  render(view);
+  assert.equal(byId('btn-material-cancel').hidden,false);
+  assert.equal(byId('btn-material-cancel').disabled,false);
+  assert.equal(byId('btn-material-generate').hidden,false);
+  render({...view,cancelPending:true});
+  assert.equal(byId('btn-material-cancel').disabled,true);
+});

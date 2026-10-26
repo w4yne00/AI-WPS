@@ -16,7 +16,7 @@
   var PPT_SLIDE_POLL_SLOW_RETRY_DELAY_MS = 30000;
   var PPT_SLIDE_POLL_REQUEST_TIMEOUT_MS = 10000;
   var SETTINGS_REFRESH_REQUEST_TIMEOUT_MS = 8000;
-  var PPT_SLIDE_POLL_MAX_ERRORS = 240;
+  var PPT_SLIDE_POLL_MAX_ERRORS = 3;
   var PPT_SLIDE_POLL_MAX_WAIT_MS = 60 * 60 * 1000;
   var PPT_SLIDE_ACTIVE_JOB_STORAGE_KEY = "ai-wps-ppt-slide-assistant-active-job-v1";
   var PPT_STRUCTURE_ACTIVE_JOB_STORAGE_KEY = "ai-wps-ppt-structure-review-active-job-v1";
@@ -46,6 +46,9 @@
     busy: false,
     startedAt: 0,
     pollErrors: 0,
+    pollPaused: false,
+    submitPending: false,
+    cancelRequested: false,
     resumeExpected: false,
     currentView: "home",
     activeTaskSlots: {},
@@ -53,6 +56,7 @@
     documentDisplayName: "",
     historyOpen: false,
     historyItems: [],
+    historyRequestId: 0,
     historyUnreadCount: 0,
     slideAssistantResultsBySession: {},
     taskPerformanceByJobId: {},
@@ -662,10 +666,15 @@
     return [prefix, Date.now().toString(36), Math.random().toString(36).slice(2, 10)].join("-");
   }
 
-  function loadActiveJob() {
+  function loadActiveJob(docSessionId) {
     try {
+      var pres = typeof getActivePresentation === "function" ? getActivePresentation() : null;
+      var session = docSessionId || (pres && helpers.getDocumentSessionId ? helpers.getDocumentSessionId(pres) : state.documentSessionId);
+      var scoped = session && window.localStorage && window.localStorage.getItem("ai-wps:wpp:ppt.slide_assistant:" + session);
+      if (scoped) return JSON.parse(scoped);
       var raw = window.localStorage && window.localStorage.getItem(PPT_SLIDE_ACTIVE_JOB_STORAGE_KEY);
-      return raw ? JSON.parse(raw) : null;
+      var legacy = raw ? JSON.parse(raw) : null;
+      return legacy && (!session || !legacy.documentSessionId || legacy.documentSessionId === session) ? legacy : null;
     } catch (error) {
       return null;
     }
@@ -678,6 +687,10 @@
           var prev = loadActiveJob();
           job.documentSessionId = (prev && prev.documentSessionId) || state.documentSessionId || "";
         }
+        job.submitPending = Boolean(state.jobId === job.jobId && state.submitPending);
+        job.cancelRequested = Boolean(state.jobId === job.jobId && state.cancelRequested);
+        job.pollPaused = Boolean(state.jobId === job.jobId && state.pollPaused);
+        if (job.documentSessionId) window.localStorage.setItem("ai-wps:wpp:ppt.slide_assistant:" + job.documentSessionId, JSON.stringify(job));
         window.localStorage.setItem(PPT_SLIDE_ACTIVE_JOB_STORAGE_KEY, JSON.stringify(job));
       }
     } catch (error) {
@@ -687,7 +700,14 @@
 
   function clearActiveJob(jobId) {
     try {
-      var active = loadActiveJob();
+      for (var i = window.localStorage.length - 1; i >= 0; i -= 1) {
+        var key = window.localStorage.key(i);
+        if (key && key.indexOf("ai-wps:wpp:ppt.slide_assistant:") === 0) {
+          var scoped = JSON.parse(window.localStorage.getItem(key) || "null");
+          if (!jobId || (scoped && scoped.jobId === jobId)) window.localStorage.removeItem(key);
+        }
+      }
+      var active = JSON.parse(window.localStorage.getItem(PPT_SLIDE_ACTIVE_JOB_STORAGE_KEY) || "null");
       if (!jobId || !active || !active.jobId || active.jobId === jobId) {
         window.localStorage.removeItem(PPT_SLIDE_ACTIVE_JOB_STORAGE_KEY);
       }
@@ -741,6 +761,9 @@
           host: "wpp",
           taskType: PPT_STRUCTURE_WORKFLOW_TASK_TYPE,
           documentSessionId: currentDoc,
+          submitPending: Boolean(state.jobId === job.jobId && state.submitPending),
+          cancelRequested: Boolean(state.jobId === job.jobId && state.cancelRequested),
+          pollPaused: Boolean(state.jobId === job.jobId && state.pollPaused),
           startedAt: job.startedAt || state.startedAt || Date.now()
         });
         if (currentDoc) {
@@ -761,7 +784,8 @@
       var pres = typeof getActivePresentation === "function" ? getActivePresentation() : null;
       var currentDoc = docSessionId || (helpers.getDocumentSessionId && pres ? helpers.getDocumentSessionId(pres) : state.documentSessionId);
       if (currentDoc) {
-        window.localStorage.removeItem(getStructureActiveJobStorageKey(currentDoc));
+        var scopedJob = loadStructureActiveJob(currentDoc);
+        if (!jobId || !scopedJob || scopedJob.jobId === jobId) window.localStorage.removeItem(getStructureActiveJobStorageKey(currentDoc));
       }
       for (var i = window.localStorage.length - 1; i >= 0; i -= 1) {
         var k = window.localStorage.key(i);
@@ -817,7 +841,8 @@
   function setPptJobActionVisibility(job) {
     var cancelButton = byId("btn-cancel-ppt-slide-job");
     if (cancelButton) {
-      cancelButton.hidden = !(job && job.status === "queued" && job.canCancel);
+      cancelButton.hidden = !(job ? job.status === "queued" || job.status === "running" : state.jobId);
+      cancelButton.textContent = "停止任务";
       cancelButton.disabled = false;
     }
   }
@@ -826,6 +851,8 @@
     var button = byId("btn-resubmit-interrupted-job");
     if (button) {
       button.hidden = !visible;
+      button.textContent = state.pollPaused ? "继续查询任务" : "重新提交总结";
+      button.disabled = false;
     }
   }
 
@@ -1114,6 +1141,8 @@
 
   function isFatalPollError(error) {
     return error && (
+      error.status === 404 ||
+      error.adapterCode === "LONG_TASK_NOT_FOUND" ||
       error.adapterCode === "PPT_SLIDE_JOB_NOT_FOUND" ||
       error.adapterCode === "PPT_SLIDE_JOB_INTERRUPTED" ||
       error.adapterCode === "REQUEST_VALIDATION_FAILED" ||
@@ -1130,6 +1159,12 @@
     }, delay);
   }
 
+  function isPptTaskDocumentActive(docSession) {
+    var pres = typeof getActivePresentation === "function" ? getActivePresentation() : null;
+    var currentSession = helpers.getDocumentSessionId && pres ? helpers.getDocumentSessionId(pres) : state.documentSessionId;
+    return !docSession || !currentSession || docSession === currentSession;
+  }
+
   function finishJob(jobId, result, targetDocSession) {
     var traceId = arguments[3] || "";
     var completionTimestamp = arguments[4];
@@ -1142,6 +1177,9 @@
       state.jobId = "";
       state.jobSourceMode = "";
       state.resumeExpected = false;
+      state.pollPaused = false;
+      state.submitPending = false;
+      state.cancelRequested = false;
       setPptJobActionVisibility(null);
       setRunDisabled(false);
     }
@@ -1192,10 +1230,13 @@
     var failureMessage = safeText(message) || "后台任务执行失败。";
     clearActiveJob(jobId, jobSession);
     releaseTaskSlotsForJob(jobId);
-    if (state.jobId === jobId) {
+    if (!state.jobId || state.jobId === jobId) {
       state.jobId = "";
       state.jobSourceMode = "";
       state.resumeExpected = false;
+      state.pollPaused = false;
+      state.submitPending = false;
+      state.cancelRequested = false;
       setPptJobActionVisibility(null);
       setRunDisabled(false);
     }
@@ -1206,12 +1247,14 @@
       return;
     }
     state.result = null;
+    var retryButton = byId("btn-resubmit-interrupted-job");
+    if (retryButton) { retryButton.hidden = false; retryButton.disabled = false; retryButton.textContent = "重新提交总结"; }
     setStatus((statusMessage || "总结失败") + "：" + failureMessage);
     setPlainResult(failureMessage);
   }
 
   function pollPptSlideJob(jobId, targetDocSession) {
-    if (!jobId || state.jobId !== jobId) {
+    if (!jobId || state.jobId !== jobId || state.pollPaused) {
       return;
     }
     var pres = typeof getActivePresentation === "function" ? getActivePresentation() : null;
@@ -1223,7 +1266,7 @@
       { timeoutMs: PPT_SLIDE_POLL_REQUEST_TIMEOUT_MS }
     ).then(function (body) {
       var job = body.data || {};
-      if (state.jobId !== jobId) {
+      if (state.jobId !== jobId || state.pollPaused) {
         return;
       }
       state.pollErrors = 0;
@@ -1259,9 +1302,11 @@
         state.jobSourceMode || state.sourceMode,
         jobId
       );
-      setStatus(progress.status);
-      setPptJobActionVisibility(job);
-      showProgressText(progress.detail);
+      if (isPptTaskDocumentActive(docSession)) {
+        setStatus(progress.status);
+        setPptJobActionVisibility(job);
+        showProgressText(progress.detail);
+      }
       schedulePoll(jobId, PPT_SLIDE_POLL_INTERVAL_MS, docSession);
     }).catch(function (error) {
       var elapsed = Date.now() - (state.startedAt || Date.now());
@@ -1270,25 +1315,28 @@
         return;
       }
       state.pollErrors += 1;
+      if (state.submitPending && elapsed >= PPT_SLIDE_POLL_REQUEST_TIMEOUT_MS * 2) state.submitPending = false;
       if (error && error.adapterCode === "PPT_SLIDE_JOB_INTERRUPTED") {
         clearActiveJob(jobId, docSession);
         releaseTaskSlotsForJob(jobId);
         state.jobId = "";
         state.jobSourceMode = "";
         state.resumeExpected = false;
-        state.result = null;
         setRunDisabled(false);
         setPptJobActionVisibility(null);
-        setInterruptedRetryVisible(true);
-        setStatus("adapter 已重启，原智能总结任务已中断，请重新提交。");
-        setPlainResult("adapter 已重启，原智能总结任务无法恢复，请使用“重新提交总结”。\n任务编号：" + jobId);
+        if (isPptTaskDocumentActive(docSession)) {
+          state.result = null;
+          setInterruptedRetryVisible(true);
+          setStatus("adapter 已重启，原智能总结任务已中断，请重新提交。");
+          setPlainResult("adapter 已重启，原智能总结任务无法恢复，请使用“重新提交总结”。\n任务编号：" + jobId);
+        }
         return;
       }
-      if (isFatalPollError(error)) {
+      if (isFatalPollError(error) && !(state.submitPending && (error.status === 404 || error.adapterCode === "LONG_TASK_NOT_FOUND"))) {
         failJob(jobId, error.message, "状态查询失败", docSession);
         return;
       }
-      within = state.pollErrors <= PPT_SLIDE_POLL_MAX_ERRORS && elapsed <= PPT_SLIDE_POLL_MAX_WAIT_MS;
+      within = state.pollErrors < PPT_SLIDE_POLL_MAX_ERRORS && elapsed <= PPT_SLIDE_POLL_MAX_WAIT_MS;
       saveActiveJob({
         jobId: jobId,
         startedAt: state.startedAt,
@@ -1296,10 +1344,21 @@
         stage: "job",
         documentSessionId: docSession
       });
-      setStatus(within
-        ? "状态查询暂时未连接本地 adapter，继续等待模型后台..."
-        : "连接中断，正在低频恢复查询...");
-      showProgressText("任务编号已保留，不会重复提交。\n最近错误：" + error.message);
+      if (!within) {
+        state.pollPaused = true;
+        setRunDisabled(false);
+        if (isPptTaskDocumentActive(docSession)) {
+          setInterruptedRetryVisible(true);
+          setStatus("连接中断，已暂停等待。可继续查询同一任务或停止任务，不会重新调用模型。");
+        }
+        return;
+      }
+      if (isPptTaskDocumentActive(docSession)) {
+        setStatus(within
+          ? "状态查询暂时未连接本地 adapter，继续等待模型后台..."
+          : "连接中断，正在低频恢复查询...");
+        showProgressText("任务编号已保留，不会重复提交。\n最近错误：" + error.message);
+      }
       schedulePoll(
         jobId,
         within ? PPT_SLIDE_POLL_ERROR_RETRY_DELAY_MS : PPT_SLIDE_POLL_SLOW_RETRY_DELAY_MS,
@@ -1316,15 +1375,20 @@
       ? validateActiveDirectTaskSelection("ppt.slide_assistant")
       : { valid: true };
     if (readiness && !readiness.valid) {
+      failJob(payload.clientJobId, readiness.error, "无法提交任务", payload.documentSessionId);
       setStatus("无法提交任务：" + readiness.error);
       return;
     }
     var clientJobId = payload.clientJobId;
     var docSession = payload.documentSessionId || state.documentSessionId;
     state.jobSourceMode = payload.sourceMode || "slide";
+    state.jobStage = "job";
     state.jobId = clientJobId;
     state.startedAt = Date.now();
     state.pollErrors = 0;
+    state.pollPaused = false;
+    state.submitPending = true;
+    state.cancelRequested = false;
     state.resumeExpected = true;
     setInterruptedRetryVisible(false);
     setPptJobActionVisibility(null);
@@ -1352,6 +1416,7 @@
       if (state.jobId !== clientJobId) {
         return;
       }
+      state.submitPending = false;
       state.jobId = jobId;
       saveActiveJob({
         jobId: jobId,
@@ -1366,18 +1431,22 @@
         finishJob(jobId, job.result || {}, docSession, traceId, completionTimestamp);
         return;
       }
+      if (state.cancelRequested) { cancelQueuedPptSlideJob(); return; }
       var progress = helpers.describePptJobProgress(job, state.jobSourceMode, jobId);
-      setStatus(progress.status);
-      setPptJobActionVisibility(job);
-      showProgressText(progress.detail);
+      if (isPptTaskDocumentActive(docSession)) {
+        setStatus(progress.status);
+        setPptJobActionVisibility(job);
+        showProgressText(progress.detail);
+      }
       pollPptSlideJob(jobId, docSession);
     }).catch(function (error) {
       if (state.jobId !== clientJobId) return;
+      state.submitPending = false;
       if (isFatalPollError(error)) {
         failJob(clientJobId, error.message, "提交失败", docSession);
         return;
       }
-      setStatus("提交响应未确认，正在按任务编号恢复查询...");
+      if (isPptTaskDocumentActive(docSession)) setStatus("提交响应未确认，正在按任务编号恢复查询...");
       pollPptSlideJob(clientJobId, docSession);
     });
   }
@@ -1423,6 +1492,7 @@
           return;
         }
         state.result = null;
+        if (state.historyOpen) switchHistoryView(false);
         showProgressText("正在准备提交当前页总结...");
         payload.sourceMode = "slide";
         payload.documentSessionId = docSession;
@@ -1475,7 +1545,13 @@
       byId("ppt-slide-count").value = "10";
     }
     state.result = null;
+    if (state.historyOpen) switchHistoryView(false);
     clientJobId = buildPptSlideClientJobId("document");
+    state.jobId = clientJobId;
+    state.jobSourceMode = "document";
+    state.jobStage = "uploading";
+    state.startedAt = Date.now();
+    setPptJobActionVisibility(null);
     if (helpers.claimTaskSlot) {
       helpers.claimTaskSlot(state.activeTaskSlots, "wpp", state.workflowTaskType, docSession, clientJobId);
     }
@@ -1495,6 +1571,7 @@
     showProgressText("正在读取文档并准备上传，请稍候。");
     var readStart = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
     readFileAsBase64(file).then(function (contentBase64) {
+      if (state.jobId !== clientJobId) return;
       var readEnd = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
       perf.localExtractionMs = Math.max(0, Math.round(readEnd - readStart));
       setStatus("正在上传文档到本地 adapter...");
@@ -1505,6 +1582,7 @@
         contentBase64: contentBase64
       }, { timeoutMs: 60000 });
     }).then(function (body) {
+      if (state.jobId !== clientJobId) return;
       var upload = body.data || {};
       if (!upload.fileToken) {
         throw new Error("本地 adapter 未返回可用的文件凭证。");
@@ -1531,18 +1609,23 @@
         documentDisplayName: docName
       }, perf);
     }).catch(function (error) {
+      if (state.jobId !== clientJobId) return;
       releaseTaskSlotsForJob(clientJobId);
-      if (state.jobId) {
-        return;
-      }
-      clearActiveJob(clientJobId, docSession);
-      setRunDisabled(false);
-      setStatus("文档上传失败：" + error.message);
-      setPlainResult("文档上传失败：" + error.message);
+      failJob(clientJobId, error.message, "文档上传失败", docSession);
     });
   }
 
   function runPptSlideAssistant() {
+    if (state.pollPaused && state.jobId) {
+      if (!isPptTaskDocumentActive(state.documentSessionId)) { setStatus("请返回原演示文稿继续查询或停止任务。"); return; }
+      state.pollPaused = false;
+      state.pollErrors = 0;
+      setInterruptedRetryVisible(false);
+      setRunDisabled(true);
+      if (state.cancelRequested) cancelQueuedPptSlideJob();
+      else pollPptSlideJob(state.jobId, state.documentSessionId);
+      return;
+    }
     if (state.adapterHealthStatus === "recovery" || !state.modelTasksAllowed) {
       setStatus("Adapter 当前处于恢复模式，模型任务已被安全阻止。");
       return;
@@ -1565,7 +1648,8 @@
 
   function setStructureJobActionVisibility(job) {
     var cancelButton = byId("btn-cancel-structure-review-job");
-    cancelButton.hidden = !(job && job.status === "queued" && job.canCancel);
+    cancelButton.hidden = !(job ? job.status === "queued" || job.status === "running" : state.jobId);
+    cancelButton.textContent = "停止任务";
     cancelButton.disabled = false;
   }
 
@@ -1706,6 +1790,9 @@
     if (state.jobId === jobId) {
       state.jobId = "";
       state.resumeExpected = false;
+      state.pollPaused = false;
+      state.submitPending = false;
+      state.cancelRequested = false;
       setStructureJobActionVisibility(null);
       setRunDisabled(false);
     }
@@ -1755,9 +1842,12 @@
     var failureMessage = safeText(message) || "结构审查后台任务执行失败。";
     clearStructureActiveJob(jobId, jobSession);
     releaseTaskSlotsForJob(jobId);
-    if (state.jobId === jobId) {
+    if (!state.jobId || state.jobId === jobId) {
       state.jobId = "";
       state.resumeExpected = false;
+      state.pollPaused = false;
+      state.submitPending = false;
+      state.cancelRequested = false;
       setStructureJobActionVisibility(null);
       setRunDisabled(false);
     }
@@ -1768,6 +1858,8 @@
       return;
     }
     state.structureResult = null;
+    var retryButton = byId("btn-resubmit-structure-review");
+    if (retryButton) { retryButton.hidden = false; retryButton.disabled = false; retryButton.textContent = "重新提交审查"; }
     byId("btn-copy-review-conclusion").disabled = true;
     byId("btn-copy-recommended-outline").disabled = true;
     setStatus((statusMessage || "结构审查失败") + "：" + failureMessage);
@@ -1776,6 +1868,8 @@
 
   function isFatalStructurePollError(error) {
     return error && (
+      error.status === 404 ||
+      error.adapterCode === "LONG_TASK_NOT_FOUND" ||
       error.adapterCode === "PPT_STRUCTURE_JOB_NOT_FOUND" ||
       error.adapterCode === "PPT_STRUCTURE_JOB_INTERRUPTED" ||
       error.adapterCode === "PPT_STRUCTURE_RANGE_INVALID" ||
@@ -1789,7 +1883,7 @@
   }
 
   function pollStructureReviewJob(jobId, targetDocSession) {
-    if (!jobId || state.jobId !== jobId || state.taskMode !== "pptStructureReview") {
+    if (!jobId || state.jobId !== jobId || state.taskMode !== "pptStructureReview" || state.pollPaused) {
       return;
     }
     var pres = typeof getActivePresentation === "function" ? getActivePresentation() : null;
@@ -1802,7 +1896,7 @@
     ).then(function (body) {
       var job = body.data || {};
       var progress;
-      if (state.jobId !== jobId) {
+      if (state.jobId !== jobId || state.pollPaused) {
         return;
       }
       state.pollErrors = 0;
@@ -1827,9 +1921,11 @@
         return;
       }
       progress = describeStructureProgress(job, jobId);
-      setStatus(progress.status);
-      setStructureJobActionVisibility(job);
-      byId("structure-result-output").textContent = progress.detail;
+      if (isPptTaskDocumentActive(docSession)) {
+        setStatus(progress.status);
+        setStructureJobActionVisibility(job);
+        byId("structure-result-output").textContent = progress.detail;
+      }
       setTimeout(function () { pollStructureReviewJob(jobId, docSession); }, PPT_SLIDE_POLL_INTERVAL_MS);
     }).catch(function (error) {
       var elapsed = Date.now() - (state.startedAt || Date.now());
@@ -1838,26 +1934,41 @@
         return;
       }
       state.pollErrors += 1;
+      if (state.submitPending && elapsed >= PPT_SLIDE_POLL_REQUEST_TIMEOUT_MS * 2) state.submitPending = false;
       if (error && error.adapterCode === "PPT_STRUCTURE_JOB_INTERRUPTED") {
         clearStructureActiveJob(jobId, docSession);
         releaseTaskSlotsForJob(jobId);
         state.jobId = "";
         state.resumeExpected = false;
         setRunDisabled(false);
-        byId("btn-resubmit-structure-review").hidden = false;
-        setStatus("adapter 已重启，原结构审查任务已中断，请重新提交。");
-        byId("structure-result-output").textContent = "任务编号：" + jobId;
+        if (isPptTaskDocumentActive(docSession)) {
+          byId("btn-resubmit-structure-review").hidden = false;
+          setStatus("adapter 已重启，原结构审查任务已中断，请重新提交。");
+          byId("structure-result-output").textContent = "任务编号：" + jobId;
+        }
         return;
       }
-      if (isFatalStructurePollError(error)) {
+      if (isFatalStructurePollError(error) && !(state.submitPending && (error.status === 404 || error.adapterCode === "LONG_TASK_NOT_FOUND"))) {
         failStructureJob(jobId, error.message, "状态查询失败", docSession);
         return;
       }
-      within = state.pollErrors <= PPT_SLIDE_POLL_MAX_ERRORS && elapsed <= PPT_SLIDE_POLL_MAX_WAIT_MS;
+      within = state.pollErrors < PPT_SLIDE_POLL_MAX_ERRORS && elapsed <= PPT_SLIDE_POLL_MAX_WAIT_MS;
       saveStructureActiveJob({ jobId: jobId, startedAt: state.startedAt, documentSessionId: docSession });
-      setStatus(within
-        ? "状态查询暂时未连接本地 adapter，继续等待模型后台..."
-        : "连接中断，正在低频恢复查询...");
+      if (!within) {
+        state.pollPaused = true;
+        setRunDisabled(false);
+        if (isPptTaskDocumentActive(docSession)) {
+          byId("btn-resubmit-structure-review").hidden = false;
+          byId("btn-resubmit-structure-review").textContent = "继续查询任务";
+          setStatus("连接中断，已暂停等待。可继续查询同一任务或停止任务，不会重新调用模型。");
+        }
+        return;
+      }
+      if (isPptTaskDocumentActive(docSession)) {
+        setStatus(within
+          ? "状态查询暂时未连接本地 adapter，继续等待模型后台..."
+          : "连接中断，正在低频恢复查询...");
+      }
       setTimeout(
         function () { pollStructureReviewJob(jobId, docSession); },
         within ? PPT_SLIDE_POLL_ERROR_RETRY_DELAY_MS : PPT_SLIDE_POLL_SLOW_RETRY_DELAY_MS
@@ -1873,6 +1984,7 @@
       ? validateActiveDirectTaskSelection("ppt.structure_review")
       : { valid: true };
     if (readiness && !readiness.valid) {
+      failStructureJob(payload.clientJobId, readiness.error, "无法提交任务", payload.documentSessionId);
       setStatus("无法提交任务：" + readiness.error);
       return;
     }
@@ -1882,8 +1994,12 @@
     state.jobId = clientJobId;
     state.startedAt = Date.now();
     state.pollErrors = 0;
+    state.pollPaused = false;
+    state.submitPending = true;
+    state.cancelRequested = false;
     state.resumeExpected = true;
     byId("btn-resubmit-structure-review").hidden = true;
+    setStructureJobActionVisibility(null);
     saveStructureActiveJob({ jobId: clientJobId, startedAt: state.startedAt, documentSessionId: docSession });
     setStatus("正在提交结构审查任务...");
     request("/ppt/structure-review/jobs", payload, {
@@ -1901,6 +2017,7 @@
       if (state.jobId !== clientJobId) {
         return;
       }
+      state.submitPending = false;
       state.jobId = jobId;
       saveStructureActiveJob({ jobId: jobId, startedAt: state.startedAt, documentSessionId: docSession });
       if (job.status === "completed") {
@@ -1908,23 +2025,37 @@
         finishStructureJob(jobId, job.result || {}, docSession, traceId, completionTimestamp);
         return;
       }
+      if (state.cancelRequested) { cancelQueuedStructureReviewJob(); return; }
       progress = describeStructureProgress(job, jobId);
-      setStatus(progress.status);
-      setStructureJobActionVisibility(job);
-      byId("structure-result-output").textContent = progress.detail;
+      if (isPptTaskDocumentActive(docSession)) {
+        setStatus(progress.status);
+        setStructureJobActionVisibility(job);
+        byId("structure-result-output").textContent = progress.detail;
+      }
       pollStructureReviewJob(jobId, docSession);
     }).catch(function (error) {
       if (state.jobId !== clientJobId) return;
+      state.submitPending = false;
       if (isFatalStructurePollError(error)) {
         failStructureJob(clientJobId, error.message, "提交失败", docSession);
         return;
       }
-      setStatus("提交响应未确认，正在按任务编号恢复查询...");
+      if (isPptTaskDocumentActive(docSession)) setStatus("提交响应未确认，正在按任务编号恢复查询...");
       pollStructureReviewJob(clientJobId, docSession);
     });
   }
 
   function runPptStructureReview() {
+    if (state.pollPaused && state.jobId) {
+      if (!isPptTaskDocumentActive(state.documentSessionId)) { setStatus("请返回原演示文稿继续查询或停止任务。"); return; }
+      state.pollPaused = false;
+      state.pollErrors = 0;
+      byId("btn-resubmit-structure-review").hidden = true;
+      setRunDisabled(true);
+      if (state.cancelRequested) cancelQueuedStructureReviewJob();
+      else pollStructureReviewJob(state.jobId, state.documentSessionId);
+      return;
+    }
     var clickTimestamp = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
     var startSlide;
     var endSlide;
@@ -1993,6 +2124,7 @@
         payload.documentDisplayName = docName;
         payload.host = "wpp";
         state.structureResult = null;
+        if (state.historyOpen) switchHistoryView(false);
         byId("btn-copy-review-conclusion").disabled = true;
         byId("btn-copy-recommended-outline").disabled = true;
         byId("structure-result-output").textContent = "正在提交结构审查任务...";
@@ -2010,21 +2142,38 @@
 
   function cancelQueuedStructureReviewJob() {
     var jobId = state.jobId;
+    var docSession = state.documentSessionId;
     var button = byId("btn-cancel-structure-review-job");
     if (!jobId) {
       return;
     }
+    state.cancelRequested = true;
+    saveStructureActiveJob({ jobId: jobId, documentSessionId: docSession, startedAt: state.startedAt });
     button.disabled = true;
     request("/ppt/structure-review/jobs/" + encodeURIComponent(jobId), null, {
       method: "DELETE",
       timeoutMs: PPT_SLIDE_POLL_REQUEST_TIMEOUT_MS
     }).then(function (body) {
-      if (state.jobId === jobId && (body.data || {}).status === "cancelled") {
-        failStructureJob(jobId, "排队中的结构审查任务已取消，未调用模型后台。", "结构审查已取消");
-      }
+      if (state.jobId !== jobId) return;
+      var job = body.data || {};
+      if (job.status === "cancelled") failStructureJob(jobId, "任务已停止。", "结构审查已停止", docSession);
+      else if (job.status === "completed") finishStructureJob(jobId, job.result || {}, docSession);
+      else if (job.status === "failed") failStructureJob(jobId, job.error && job.error.message, "结构审查失败", docSession);
+      else { button.disabled = false; if (isPptTaskDocumentActive(docSession)) setStatus("停止尚未确认，请重试停止或继续查询任务。"); }
     }).catch(function (error) {
-      button.removeAttribute("disabled");
-      setStatus("取消排队任务失败：" + error.message);
+      if (state.jobId !== jobId) return;
+      button.disabled = false;
+      if (isFatalStructurePollError(error) && !state.submitPending) {
+        failStructureJob(jobId, error.message, "任务已中断", docSession);
+        return;
+      }
+      state.pollPaused = true;
+      setRunDisabled(false);
+      if (isPptTaskDocumentActive(docSession)) {
+        byId("btn-resubmit-structure-review").hidden = false;
+        byId("btn-resubmit-structure-review").textContent = "继续查询任务";
+        setStatus("停止未确认，已退出等待；任务编号已保留，可重试停止或继续查询。" + error.message);
+      }
     });
   }
 
@@ -2182,8 +2331,8 @@
 
     var runBtn = byId("btn-run-outline");
     if (runBtn) {
-      runBtn.disabled = v.busy;
-      runBtn.textContent = v.busy ? (v.phaseLabel || "正在生成...") : "生成逐页大纲";
+      runBtn.disabled = v.busy && !v.pollPaused;
+      runBtn.textContent = v.pollPaused ? "继续查询任务" : (v.busy ? (v.phaseLabel || "正在生成...") : "生成逐页大纲");
     }
     var cancelBtn = byId("btn-cancel-outline-job");
     if (cancelBtn) {
@@ -2408,13 +2557,13 @@
 
     if (v.status === "running") {
       if (generateBtn) {
-        generateBtn.disabled = true;
-        generateBtn.textContent = "正在生成正文页...";
+        generateBtn.disabled = !v.pollPaused;
+        generateBtn.textContent = v.pollPaused ? "继续查询任务" : "正在生成正文页...";
       }
       if (cancelBtn) cancelBtn.hidden = false;
       if (statusEl) {
         statusEl.hidden = false;
-        statusEl.textContent = "正在请求模型生成标准正文页...";
+        statusEl.textContent = (v.error && v.error.message) || "正在请求模型生成标准正文页...";
       }
       if (overflowEl) overflowEl.hidden = true;
     } else if (v.status === "OVERFLOW_REJECTED") {
@@ -2497,6 +2646,7 @@
   function ensureTemplateDeck() {
     if (!templateDeck && typeof window.createTemplateDeck === "function") {
       templateDeck = window.createTemplateDeck({
+        storage: window.localStorage,
         request: request,
         storage: window.localStorage,
         getSessionId: getPptOutlineSessionId,
@@ -2535,6 +2685,7 @@
     var statusEl = byId("ppt-template-deck-status");
     var previewEl = byId("ppt-template-deck-preview");
     var generateBtn = byId("btn-ppt-generate-template-deck");
+    var cancelBtn = byId("btn-ppt-cancel-template-deck");
     var confirmBtn = byId("btn-ppt-confirm-template-deck");
     var appendBtn = byId("btn-ppt-append-template-deck");
     var verifyBtn = byId("btn-ppt-verify-template-deck");
@@ -2577,9 +2728,10 @@
       if (v.error) lines.push("<p>" + helpers.escapeHtml(v.error.message || "") + "</p>");
     }
     var running = v.status === "running";
+    if (cancelBtn) cancelBtn.hidden = !running && v.status !== "paused";
     if (generateBtn) {
       generateBtn.disabled = running;
-      generateBtn.textContent = running ? "正在生成整套内容..." : "生成整套内容";
+      generateBtn.textContent = v.status === "paused" ? "继续查询并生成剩余内容" : (running ? "正在生成整套内容..." : "生成整套内容");
     }
     if (statusEl) {
       statusEl.hidden = !v.error && !running;
@@ -5688,14 +5840,25 @@
     state.startedAt = active.startedAt || Date.now();
     state.pollErrors = 0;
     state.resumeExpected = true;
+    state.submitPending = Boolean(active.submitPending) && Date.now() - state.startedAt < PPT_SLIDE_POLL_REQUEST_TIMEOUT_MS * 2;
+    state.cancelRequested = Boolean(active.cancelRequested);
+    state.pollPaused = Boolean(active.pollPaused);
     if (active.documentSessionId && helpers.claimTaskSlot) {
       helpers.claimTaskSlot(state.activeTaskSlots, "wpp", PPT_WORKFLOW_TASK_TYPE, active.documentSessionId, active.jobId);
     }
     setInterruptedRetryVisible(false);
     setRunDisabled(true);
+    setPptJobActionVisibility(null);
+    if (state.pollPaused) {
+      setRunDisabled(false);
+      setInterruptedRetryVisible(true);
+      setStatus("任务编号已恢复，可继续查询或重试停止，不会再次提交模型。");
+      return;
+    }
     setStatus("正在恢复未完成的智能总结任务...");
     showProgressText("任务编号已恢复，正在继续查询模型后台状态。");
-    pollPptSlideJob(active.jobId);
+    if (state.cancelRequested) cancelQueuedPptSlideJob();
+    else pollPptSlideJob(active.jobId);
   }
 
   function resumeStructureReviewJob() {
@@ -5715,6 +5878,20 @@
       state.documentSessionId = currentDocSession;
     }
 
+    state.startedAt = active.startedAt || Date.now();
+    state.submitPending = Boolean(active.submitPending) && Date.now() - state.startedAt < PPT_SLIDE_POLL_REQUEST_TIMEOUT_MS * 2;
+    state.cancelRequested = Boolean(active.cancelRequested);
+    if (active.pollPaused) {
+      state.jobId = active.jobId;
+      state.pollPaused = true;
+      setRunDisabled(false);
+      setStructureJobActionVisibility(null);
+      byId("btn-resubmit-structure-review").hidden = false;
+      byId("btn-resubmit-structure-review").textContent = "继续查询任务";
+      setStatus("任务编号已恢复，可继续查询或重试停止，不会再次提交模型。");
+      return;
+    }
+
     return request("/ppt/structure-review/jobs/" + encodeURIComponent(active.jobId) + "?resume=1", null, {
       timeoutMs: PPT_SLIDE_POLL_REQUEST_TIMEOUT_MS
     }).then(function (body) {
@@ -5724,7 +5901,7 @@
         return;
       }
       if (job.status === "failed" || job.status === "cancelled") {
-        clearStructureActiveJob(active.jobId, currentDocSession);
+        failStructureJob(active.jobId, (job.error && job.error.message) || "原任务已结束，请重新提交。", "原任务无法继续", currentDocSession);
         return;
       }
       if (job.status === "queued" || job.status === "running") {
@@ -5735,6 +5912,9 @@
         state.startedAt = active.startedAt || Date.now();
         state.pollErrors = 0;
         state.resumeExpected = true;
+        state.submitPending = Boolean(active.submitPending) && Date.now() - state.startedAt < PPT_SLIDE_POLL_REQUEST_TIMEOUT_MS * 2;
+        state.cancelRequested = Boolean(active.cancelRequested);
+        state.pollPaused = false;
         if (active.documentSessionId && helpers.claimTaskSlot) {
           helpers.claimTaskSlot(state.activeTaskSlots, "wpp", PPT_STRUCTURE_WORKFLOW_TASK_TYPE, active.documentSessionId, active.jobId);
         }
@@ -5745,33 +5925,71 @@
         byId("structure-result-output").textContent =
           "任务编号已恢复，正在继续查询模型后台状态。\n" + progress.detail;
         setStructureJobActionVisibility(job);
-        setTimeout(function () { pollStructureReviewJob(active.jobId, currentDocSession); }, PPT_SLIDE_POLL_INTERVAL_MS);
+        if (state.cancelRequested) cancelQueuedStructureReviewJob();
+        else setTimeout(function () { pollStructureReviewJob(active.jobId, currentDocSession); }, PPT_SLIDE_POLL_INTERVAL_MS);
       }
     }).catch(function (error) {
-      if (error && (error.adapterCode === "LONG_TASK_NOT_FOUND" || error.adapterCode === "PPT_STRUCTURE_JOB_INTERRUPTED")) {
-        clearStructureActiveJob(active.jobId, currentDocSession);
+      if (!state.jobId && state.submitPending && error && (error.status === 404 || error.adapterCode === "LONG_TASK_NOT_FOUND")) {
+        state.jobId = active.jobId;
+        state.resumeExpected = true;
+        state.pollErrors = 0;
+        setRunDisabled(true);
+        setStructureJobActionVisibility(null);
+        setStatus("提交尚未确认，正在按原任务编号查询，可停止任务。");
+        setTimeout(function () { pollStructureReviewJob(active.jobId, currentDocSession); }, PPT_SLIDE_POLL_INTERVAL_MS);
+        return;
       }
+      if (state.jobId) return;
+      if (isFatalStructurePollError(error)) {
+        failStructureJob(active.jobId, error.message, "原任务无法恢复，请重新提交", currentDocSession);
+        return;
+      }
+      state.jobId = active.jobId;
+      state.resumeExpected = true;
+      state.pollPaused = true;
+      if (helpers.claimTaskSlot) helpers.claimTaskSlot(state.activeTaskSlots, "wpp", PPT_STRUCTURE_WORKFLOW_TASK_TYPE, currentDocSession, active.jobId);
+      saveStructureActiveJob({ jobId: active.jobId, startedAt: state.startedAt, documentSessionId: currentDocSession });
+      setRunDisabled(false);
+      setStructureJobActionVisibility(null);
+      byId("btn-resubmit-structure-review").hidden = false;
+      byId("btn-resubmit-structure-review").textContent = "继续查询任务";
+      setStatus("恢复查询未确认，可继续查询原任务或停止任务。" + error.message);
     });
   }
 
   function cancelQueuedPptSlideJob() {
     var jobId = state.jobId;
+    var docSession = state.documentSessionId;
     var button = byId("btn-cancel-ppt-slide-job");
     if (!jobId) {
       return;
     }
+    state.cancelRequested = true;
+    if (state.jobStage === "uploading") { failJob(jobId, "文档读取或上传已停止，未提交模型任务。", "智能总结已停止", docSession); return; }
+    saveActiveJob({ jobId: jobId, documentSessionId: docSession, startedAt: state.startedAt, sourceMode: state.jobSourceMode, stage: "job" });
     button.disabled = true;
     request("/ppt/slide-assistant/jobs/" + encodeURIComponent(jobId), null, {
       method: "DELETE",
       timeoutMs: PPT_SLIDE_POLL_REQUEST_TIMEOUT_MS
     }).then(function (body) {
-      if (state.jobId === jobId && (body.data || {}).status === "cancelled") {
-        failJob(jobId, "排队中的智能总结任务已取消，未调用模型后台。", "智能总结已取消");
-      }
+      if (state.jobId !== jobId) return;
+      var job = body.data || {};
+      if (job.status === "cancelled") failJob(jobId, "任务已停止。", "智能总结已停止", docSession);
+      else if (job.status === "completed") finishJob(jobId, job.result || {}, docSession);
+      else if (job.status === "failed") failJob(jobId, job.error && job.error.message, "智能总结失败", docSession);
+      else { button.disabled = false; if (isPptTaskDocumentActive(docSession)) setStatus("停止尚未确认，请重试停止或继续查询任务。"); }
     }).catch(function (error) {
-      if (state.jobId === jobId) {
-        button.removeAttribute("disabled");
-        setStatus("取消排队任务失败：" + error.message);
+      if (state.jobId !== jobId) return;
+      button.disabled = false;
+      if (isFatalPollError(error) && !state.submitPending) {
+        failJob(jobId, error.message, "任务已中断", docSession);
+        return;
+      }
+      state.pollPaused = true;
+      setRunDisabled(false);
+      if (isPptTaskDocumentActive(docSession)) {
+        setInterruptedRetryVisible(true);
+        setStatus("停止未确认，已退出等待；任务编号已保留，可重试停止或继续查询。" + error.message);
       }
     });
   }
@@ -5861,6 +6079,8 @@
   }
 
   function loadAndRenderHistory() {
+    var requestId = (state.historyRequestId || 0) + 1;
+    state.historyRequestId = requestId;
     var contentEl = byId("ppt-history-content");
     if (contentEl) {
       contentEl.innerHTML = '<div class="ppt-history-empty">正在加载历史记录...</div>';
@@ -5871,6 +6091,7 @@
     request("/history?taskType=" + encodeURIComponent(taskType), null, {
       timeoutMs: 8000
     }).then(function (body) {
+      if (state.historyRequestId !== requestId) return;
       var data = body && body.data;
       var items = (data && Array.isArray(data.items)) ? data.items : (Array.isArray(data) ? data : []);
       state.historyItems = items;
@@ -5878,6 +6099,7 @@
         contentEl.innerHTML = helpers.renderHistoryList(state.historyItems);
       }
     }).catch(function (error) {
+      if (state.historyRequestId !== requestId) return;
       if (contentEl) {
         contentEl.innerHTML = '<div class="ppt-history-empty">读取历史记录失败：' + (helpers.escapeHtml ? helpers.escapeHtml(error.message) : error.message) + '</div>';
       }
@@ -5885,6 +6107,9 @@
   }
 
   function handleClearHistory() {
+    var requestedMode = state.taskMode;
+    var requestId = (state.historyRequestId || 0) + 1;
+    state.historyRequestId = requestId;
     var taskType = typeof homeWorkflowTaskType === "function"
       ? homeWorkflowTaskType()
       : (typeof PPT_WORKFLOW_TASK_TYPE !== "undefined" ? PPT_WORKFLOW_TASK_TYPE : "ppt.slide_assistant");
@@ -5892,6 +6117,8 @@
       method: "DELETE",
       timeoutMs: 8000
     }).then(function () {
+      if (state.taskMode !== requestedMode || homeWorkflowTaskType() !== taskType) return;
+      state.historyRequestId = (state.historyRequestId || 0) + 1;
       state.historyItems = [];
       var contentEl = byId("ppt-history-content");
       if (contentEl) {
@@ -5899,6 +6126,7 @@
       }
       setStatus("历史记录已清空。");
     }).catch(function (error) {
+      if (state.taskMode !== requestedMode || state.historyRequestId !== requestId || homeWorkflowTaskType() !== taskType) return;
       setStatus("清空历史记录失败：" + error.message);
     });
   }
@@ -6082,10 +6310,16 @@
     if (!id) {
       return;
     }
+    var requestedMode = state.taskMode;
+    var taskType = homeWorkflowTaskType();
+    var requestId = (state.historyRequestId || 0) + 1;
+    state.historyRequestId = requestId;
     request("/history/" + encodeURIComponent(id), null, {
       method: "DELETE",
       timeoutMs: 8000
     }).then(function () {
+      if (state.taskMode !== requestedMode || homeWorkflowTaskType() !== taskType) return;
+      state.historyRequestId = (state.historyRequestId || 0) + 1;
       state.historyItems = state.historyItems.filter(function (it) {
         return it.id !== id;
       });
@@ -6095,6 +6329,7 @@
       }
       setStatus("已删除该条历史记录。");
     }).catch(function (error) {
+      if (state.taskMode !== requestedMode || state.historyRequestId !== requestId || homeWorkflowTaskType() !== taskType) return;
       setStatus("删除历史记录失败：" + error.message);
     });
   }
@@ -6300,7 +6535,10 @@
     if (byId("btn-run-outline")) {
       byId("btn-run-outline").addEventListener("click", function () {
         var ctrl = ensureMaterialOutline();
-        if (ctrl) ctrl.submit();
+        if (ctrl) {
+          if (state.historyOpen) switchHistoryView(false);
+          ctrl.submit();
+        }
       });
     }
     if (byId("btn-cancel-outline-job")) {
@@ -6438,6 +6676,12 @@
           if (helpers.getDocumentSessionId(getActivePresentation()) !== docSession) return;
           setStatus(err.message || String(err));
         });
+      });
+    }
+    if (byId("btn-ppt-cancel-template-deck")) {
+      byId("btn-ppt-cancel-template-deck").addEventListener("click", function () {
+        var ctrl = ensureTemplateDeck();
+        if (ctrl) ctrl.cancelJob().catch(function (error) { setStatus(error.message || String(error)); });
       });
     }
     if (byId("btn-ppt-confirm-template-deck")) {

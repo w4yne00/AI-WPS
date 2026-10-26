@@ -352,9 +352,10 @@ class ModelConfigurationStoreTests(unittest.TestCase):
             )
             self.assertTrue(changed["imageExternalAuthorization"]["stale"])
             self.assertTrue(changed["imageSemanticValidation"]["stale"])
+            self.assertFalse(changed["imageSemanticReadiness"]["ready"])
             self.assertEqual(
                 changed["imageSemanticReadiness"]["code"],
-                "authorization_required",
+                "validation_required",
             )
 
     def test_legacy_workflow_facade_writes_the_new_configuration_store(self) -> None:

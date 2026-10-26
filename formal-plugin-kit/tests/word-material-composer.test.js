@@ -29,7 +29,7 @@ function harness(shared) {
     storage: { getItem: k => saved.get(k), setItem: (k,v) => saved.set(k,v) },
     getSessionId: () => h.session,
     request: async (url, body, method) => {
-      h.calls.push({url,body,method:method.method});
+      h.calls.push({url,body,method:method.method,timeoutMs:method.timeoutMs});
       if (h.error) throw Error('offline');
       if (url.startsWith('/word/materials/catalog')) {
         const cached = JSON.parse(saved.get('word.material-composer:' + h.session) || '{}');
@@ -38,7 +38,7 @@ function harness(shared) {
       if (url.startsWith('/word/material-composer/conflicts')) {
         return h.conflictResponse || { success: true, data: { conflicts: [] } };
       }
-      return h.respond ? h.respond() : h.response;
+      return h.respond ? h.respond(url, body, method) : h.response;
     },
     render: v => h.views.push(v), copyText: t => h.copied.push(t), schedule: fn => h.scheduled.push(fn),
     applyText: async (t, opts) => {
@@ -188,6 +188,93 @@ test('late catalog restore cannot overwrite a newer material import', async () =
 });
 test('cancel requests the original job and renders cancellation', async () => {
  const h=harness(); h.api.setMaterial({materialId:'m1'}); await h.api.start({sectionTitle:'范围',instruction:'编写'}); h.response={success:true,data:{jobId:'job-a',status:'cancelled',documentSessionId:'doc-a'}}; await h.api.cancel(); assert.equal(h.last().status,'cancelled'); assert.equal(h.calls[1].url,'/word/material-composer/jobs/job-a/cancel'); assert.equal(h.calls[1].body.documentSessionId,'doc-a');
+});
+test('composer requests use finite waits and a submission timeout retains its retry key', async () => {
+ const h=harness(); h.api.setMaterial({materialId:'m1'});
+ h.respond=(url,body,opts)=>{ assert.ok(opts.timeoutMs > 0 && opts.timeoutMs <= 30000); throw Error('请求超时'); };
+ await h.api.start({instruction:'编写'});
+ const key=h.calls[0].body.clientJobId;
+ assert.equal(h.last().busy,false); assert.equal(h.last().clientJobId,key); assert.ok(h.last().error.includes('超时'));
+ h.respond=null; await h.api.start({instruction:'新要求'});
+ assert.equal(h.calls[1].body.clientJobId,key); assert.equal(h.calls[1].body.instruction,'编写');
+ await h.api.refresh(); await h.api.cancel(); await h.api.restore(); await h.api.checkConflicts({instruction:'编写'});
+ assert.ok(h.calls.every(call=>call.timeoutMs > 0 && call.timeoutMs <= 30000));
+});
+test('cancel during unconfirmed submission uses the client key and ignores a late running response', async () => {
+ const h=harness(); h.api.setMaterial({materialId:'m1'}); let finish;
+ h.respond=(url,body)=>url.endsWith('/cancel') ? {success:true,data:{jobId:h.calls[0].body.clientJobId,status:'cancelled',documentSessionId:'doc-a'}} : new Promise(resolve=>{finish=resolve;});
+ const submitting=h.api.start({instruction:'编写'}); const key=h.calls[0].body.clientJobId;
+ await h.api.cancel();
+ assert.equal(h.calls[1].url,'/word/material-composer/jobs/'+key+'/cancel');
+ assert.equal(h.last().status,'cancelled'); assert.equal(h.last().busy,false); assert.equal(h.last().cancelPending,false);
+ finish({success:true,data:{jobId:key,status:'running',documentSessionId:'doc-a'}}); await submitting;
+ assert.equal(h.last().status,'cancelled'); assert.equal(h.last().result,null);
+});
+test('cancel during polling ignores its late response and permits a fresh task', async () => {
+ const h=harness(); h.api.setMaterial({materialId:'m1'}); await h.api.start({instruction:'编写'}); let finish;
+ h.respond=(url)=>url.endsWith('/cancel') ? {success:true,data:{jobId:'job-a',status:'cancelled',documentSessionId:'doc-a'}} : new Promise(resolve=>{finish=resolve;});
+ const polling=h.api.refresh(); await h.api.cancel();
+ assert.equal(h.last().status,'cancelled'); assert.equal(h.last().busy,false);
+ h.respond=(url,body)=>({success:true,data:{jobId:body.clientJobId,status:'running',documentSessionId:'doc-a'}});
+ await h.api.start({instruction:'重提'}); const newKey=h.last().jobId;
+ finish({success:true,data:{jobId:'job-a',status:'completed',documentSessionId:'doc-a',result:result()}}); await polling;
+ assert.equal(h.last().jobId,newKey); assert.equal(h.last().status,'running'); assert.equal(h.last().result,null); assert.equal(h.last().error,'');
+});
+test('cancel before server registration preserves intent and retries after the original POST confirms', async () => {
+ const h=harness(); h.api.setMaterial({materialId:'m1'}); let finish; let cancellations=0;
+ h.respond=(url)=>{
+  if(!url.endsWith('/cancel')) return new Promise(resolve=>{finish=resolve;});
+  cancellations++;
+  if(cancellations===1) throw Object.assign(Error('not found'),{httpStatus:404});
+  return {success:true,data:{jobId:h.calls[0].body.clientJobId,status:'cancelled',documentSessionId:'doc-a'}};
+ };
+ const submitting=h.api.start({instruction:'编写'}); const key=h.calls[0].body.clientJobId;
+ await h.api.cancel(); assert.equal(h.last().cancelRequested,true); assert.equal(h.last().cancelPending,false);
+ finish({success:true,data:{jobId:key,status:'running',documentSessionId:'doc-a'}}); await submitting;
+ assert.equal(cancellations,2); assert.equal(h.last().status,'cancelled'); assert.equal(h.last().cancelRequested,false);
+ assert.equal(h.calls.filter(call=>call.url==='/word/material-composer/jobs').length,1);
+});
+test('a failed cancellation can be retried without waiting for a pending query', async () => {
+ const h=harness(); h.api.setMaterial({materialId:'m1'}); await h.api.start({instruction:'编写'}); let finish; let cancelFinish;
+ h.respond=url=>url.endsWith('/cancel') ? new Promise((resolve,reject)=>{cancelFinish={resolve,reject};}) : new Promise(resolve=>{finish=resolve;});
+ const polling=h.api.refresh(); const cancelling=h.api.cancel();
+ assert.equal(h.last().cancelPending,true); await h.api.cancel(); assert.equal(h.calls.length,3);
+ cancelFinish.reject(Error('取消请求超时')); await cancelling;
+ assert.equal(h.last().cancelPending,false); assert.equal(h.last().cancelRequested,true);
+ const retry=h.api.cancel(); cancelFinish.resolve({success:true,data:{jobId:'job-a',status:'cancelled',documentSessionId:'doc-a'}}); await retry;
+ finish({success:true,data:{jobId:'job-a',status:'running',documentSessionId:'doc-a'}}); await polling;
+ assert.equal(h.last().status,'cancelled');
+});
+test('a missing known job after reopening releases its key for a new task', async () => {
+ const h=harness(); h.api.setMaterial({materialId:'m1'}); await h.api.start({instruction:'原要求'}); const oldKey=h.last().clientJobId;
+ const reopened=harness(h.saved); reopened.respond=()=>{throw Object.assign(Error('任务已失效'),{httpStatus:404});};
+ await reopened.api.restore(); assert.equal(reopened.last().jobId,''); assert.equal(reopened.last().clientJobId,''); assert.equal(reopened.last().status,'idle');
+ reopened.respond=null; await reopened.api.start({instruction:'新要求'});
+ assert.notEqual(reopened.calls[2].body.clientJobId,oldKey); assert.equal(reopened.calls[2].body.instruction,'新要求');
+});
+test('a delayed cancellation reply cannot revive a task already completed by a query', async () => {
+ const h=harness(); h.api.setMaterial({materialId:'m1'}); await h.api.start({instruction:'编写'}); let cancelFinish;
+ h.respond=url=>url.endsWith('/cancel') ? new Promise(resolve=>{cancelFinish=resolve;}) : {success:true,data:{jobId:'job-a',status:'completed',documentSessionId:'doc-a',result:result()}};
+ const cancelling=h.api.cancel(); await h.api.refresh();
+ cancelFinish({success:true,data:{jobId:'job-a',status:'running',documentSessionId:'doc-a'}}); await cancelling;
+ assert.equal(h.last().status,'succeeded'); assert.equal(h.last().cancelPending,false); await h.api.copy(); assert.deepEqual(h.copied,['正文']);
+});
+test('a missing known job during cancellation releases pending state for a new task', async () => {
+ const h=harness(); h.api.setMaterial({materialId:'m1'}); await h.api.start({instruction:'编写'}); let cancelFinish;
+ h.respond=url=>url.endsWith('/cancel') ? new Promise(resolve=>{cancelFinish=resolve;}) : Promise.reject(Object.assign(Error('任务失效'),{httpStatus:404}));
+ const cancelling=h.api.cancel(); await h.api.refresh();
+ cancelFinish({success:true,data:{jobId:'job-a',status:'cancelled',documentSessionId:'doc-a'}}); await cancelling;
+ assert.equal(h.last().status,'idle'); assert.equal(h.last().cancelPending,false);
+ h.respond=null; await h.api.start({instruction:'新要求'}); assert.equal(h.last().status,'running');
+});
+test('reopening retries a persisted cancellation intent by querying without resubmission', async () => {
+ const h=harness(); h.api.setMaterial({materialId:'m1'}); await h.api.start({instruction:'编写'});
+ h.respond=()=>Promise.reject(Error('取消请求超时')); await h.api.cancel();
+ const reopened=harness(h.saved);
+ reopened.respond=url=>({success:true,data:{jobId:'job-a',status:url.endsWith('/cancel')?'cancelled':'running',documentSessionId:'doc-a'}});
+ await reopened.api.restore();
+ assert.equal(reopened.last().status,'cancelled'); assert.equal(reopened.calls.filter(call=>call.url==='/word/material-composer/jobs').length,0);
+ assert.equal(reopened.calls.filter(call=>call.url.endsWith('/cancel')).length,1);
 });
 test('running job phase shows the matching Chinese progress label', async () => {
  const h=harness(); h.api.setMaterial({materialId:'m1'});

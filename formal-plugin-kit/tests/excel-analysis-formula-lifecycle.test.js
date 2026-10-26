@@ -17,7 +17,8 @@ function functionSource(name) {
   }
   assert.ok(start >= 0, `missing function ${name}`);
   const next = taskpaneSource.indexOf("\n  function ", start + 3);
-  const common = ['getCurrentExcelDocumentSession', 'getExcelTaskSession', 'isExcelTaskVisible', 'restoreSmartFillSessionState'];
+  const common = ['getCurrentExcelDocumentSession', 'getExcelTaskSession', 'isExcelTaskVisible', 'restoreSmartFillSessionState',
+    'excelTaskMeta', 'markExcelTaskUnavailable', 'pauseExcelTaskWaiting'];
   const dependencies = common.includes(name) ? '' : common.map(functionSource).join('\n');
   return dependencies + '\n' + taskpaneSource.slice(start, next === -1 ? taskpaneSource.length : next);
 }
@@ -158,11 +159,12 @@ function createBaseTestContext(initialOverrides = {}) {
     setTrace: () => {},
     refreshDiagnostics: () => Promise.resolve(),
     EXCEL_ANALYSIS_POLL_REQUEST_TIMEOUT_MS: 30000,
+    EXCEL_ANALYSIS_POLL_ERROR_RETRY_DELAY_MS: 15000,
     EXCEL_WORKFLOW_TASK_TYPE: "excel.analysis",
     EXCEL_FORMULA_WORKFLOW_TASK_TYPE: "excel.formula_assistant",
     EXCEL_SMART_FILL_WORKFLOW_TASK_TYPE: "excel.smart_fill",
     FRONTEND_BUILD_VERSION: "1.0.0",
-    setTimeout: global.setTimeout,
+    setTimeout: (fn, ms) => ms < 1000 ? global.setTimeout(fn, ms) : { fn, ms },
     clearTimeout: global.clearTimeout,
     defaultWorkbook: {
       Name: "工作簿1.xlsx",

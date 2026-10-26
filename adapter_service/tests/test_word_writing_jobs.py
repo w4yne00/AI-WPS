@@ -359,7 +359,10 @@ class WritingJobStoreTests(unittest.TestCase):
             document_display_name="全链路.docx",
         )
 
-        with patch.dict("os.environ", {"AI_WPS_ENABLE_DIRECT_STREAMING": "1"}), patch("app.services.provider_client._open_task_response", fake_urlopen):
+        with patch.dict("os.environ", {"AI_WPS_ENABLE_DIRECT_STREAMING": "1"}), patch(
+            "app.services.provider_client._open_task_response",
+            side_effect=lambda req, timeout, *_: fake_urlopen(req, timeout),
+        ):
             store.start(req, "trace-e2e-1")
             res = self.wait_completed(store, "client-write-e2e-1")
 
@@ -372,7 +375,7 @@ class WritingJobStoreTests(unittest.TestCase):
         self.assertEqual("".join(d["delta"] for d in deltas), "全链路流式正文")
         self.assertEqual(events_resp["previewSnapshot"]["text"], "全链路流式正文")
 
-    def test_streaming_job_allows_running_cancel_while_blocking_does_not(self):
+    def test_streaming_and_blocking_jobs_allow_running_cancel(self):
         blocking_worker = BlockingWritingWorker()
         coordinator = LongTaskCoordinator(max_running=1, max_queued=2)
         blocking_store = SmartWriteJobStore(worker=blocking_worker, coordinator=coordinator)
@@ -381,13 +384,12 @@ class WritingJobStoreTests(unittest.TestCase):
         blocking_store.start(req_blocking, "trace-block-1")
         self.assertTrue(blocking_worker.started.wait(timeout=2))
 
-        # While running, blocking job should reject cancellation with LONG_TASK_NOT_CANCELLABLE
-        with self.assertRaises(AdapterError) as ctx:
-            blocking_store.cancel("client-block-cancel-1")
-        self.assertEqual(ctx.exception.code, "LONG_TASK_NOT_CANCELLABLE")
-        self.assertEqual(ctx.exception.status_code, 409)
+        stopping = blocking_store.cancel("client-block-cancel-1")
+        self.assertTrue(stopping["cancelRequested"])
+        self.assertEqual(stopping["phase"], "stopping")
         blocking_worker.release.set()
-        self.wait_completed(blocking_store, "client-block-cancel-1")
+        terminal = coordinator.wait("client-block-cancel-1", task_type=blocking_store.task_type)
+        self.assertEqual(terminal["status"], "cancelled")
 
         # Now test streaming job with validated streaming capability
         class StreamingWorker:
@@ -456,10 +458,9 @@ class WritingJobStoreTests(unittest.TestCase):
 
             # Check history: cancelled jobs MUST NOT be written to task history
             history_entries = self.history_store.list_history("word.smart_write")
-            self.assertEqual(len(history_entries), 1)  # only the blocking completed one
-            self.assertEqual(history_entries[0]["jobId"], "client-block-cancel-1")
+            self.assertEqual(len(history_entries), 0)
 
-    def test_smart_imitation_streaming_allows_cancel_while_blocking_does_not(self):
+    def test_smart_imitation_streaming_and_blocking_allow_running_cancel(self):
         blocking_worker = BlockingWritingWorker()
         coordinator = LongTaskCoordinator(max_running=1, max_queued=2)
         blocking_store = SmartImitationJobStore(worker=blocking_worker, coordinator=coordinator)
@@ -468,18 +469,15 @@ class WritingJobStoreTests(unittest.TestCase):
         blocking_store.start(req_blocking, "trace-im-block-1")
         self.assertTrue(blocking_worker.started.wait(timeout=2))
 
-        # While running, blocking job should reject cancellation with LONG_TASK_NOT_CANCELLABLE
-        with self.assertRaises(AdapterError) as ctx:
-            blocking_store.cancel("client-im-block-cancel-1")
-        self.assertEqual(ctx.exception.code, "LONG_TASK_NOT_CANCELLABLE")
-        self.assertEqual(ctx.exception.status_code, 409)
+        stopping = blocking_store.cancel("client-im-block-cancel-1")
+        self.assertTrue(stopping["cancelRequested"])
+        self.assertEqual(stopping["phase"], "stopping")
         blocking_worker.release.set()
-        self.wait_completed(blocking_store, "client-im-block-cancel-1")
+        terminal = coordinator.wait("client-im-block-cancel-1", task_type=blocking_store.task_type)
+        self.assertEqual(terminal["status"], "cancelled")
 
-        # History should contain the completed blocking imitation job
         history_entries = self.history_store.list_history("word.smart_imitation")
-        self.assertEqual(len(history_entries), 1)
-        self.assertEqual(history_entries[0]["jobId"], "client-im-block-cancel-1")
+        self.assertEqual(len(history_entries), 0)
 
         # Now test streaming job with validated streaming capability
         class StreamingWorker:
@@ -547,8 +545,7 @@ class WritingJobStoreTests(unittest.TestCase):
 
             # Check history: cancelled imitation job MUST NOT be written to task history
             history_entries_after = self.history_store.list_history("word.smart_imitation")
-            self.assertEqual(len(history_entries_after), 1)  # only the earlier blocking completed one
-            self.assertEqual(history_entries_after[0]["jobId"], "client-im-block-cancel-1")
+            self.assertEqual(len(history_entries_after), 0)
 
     def test_smart_write_and_smart_imitation_document_session_isolation(self):
         worker = BlockingWritingWorker()

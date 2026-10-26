@@ -301,6 +301,9 @@ test("three hosts keep history in the result area with copy and clear, without w
       getCurrentWorkflowTaskType() {
         return host.taskType;
       },
+      homeWorkflowTaskType() {
+        return host.taskType;
+      },
       renderCurrentTaskHistoryList() {
         return "excel-list";
       },

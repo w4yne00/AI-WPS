@@ -107,6 +107,9 @@
           error: (saved && saved.error) || "",
           pendingRequest: (saved && saved.pendingRequest) || null,
           busy: Boolean(saved && saved.jobId && (!saved.status || saved.status === "running" || saved.status === "queued")),
+          pollPaused: Boolean(saved && saved.pollPaused),
+          pollErrors: 0,
+          cancelRequested: Boolean(saved && saved.cancelRequested),
           pollScheduled: false,
           activeDrawerPageIndex: null,
           // Confirmation Gate State
@@ -139,6 +142,8 @@
           phase: s.phase,
           error: s.error,
           pendingRequest: s.pendingRequest,
+          pollPaused: s.pollPaused,
+          cancelRequested: s.cancelRequested,
           confirmationStatus: s.confirmationStatus,
           confirmedOutline: s.confirmedOutline,
           confirmedAt: s.confirmedAt,
@@ -462,7 +467,11 @@
 
     async function submit() {
       var s = current();
+      if (s.busy && s.pollPaused) { s.pollPaused = false; s.pollErrors = 0; return poll(s.documentSessionId, s.jobId); }
       if (s.busy) return;
+      s.pollPaused = false;
+      s.pollErrors = 0;
+      s.cancelRequested = false;
       s.error = "";
       s.result = null;
       s.confirmationStatus = "unconfirmed";
@@ -502,12 +511,20 @@
           s.phaseLabel = OUTLINE_PHASE_TEXT[s.phase] || OUTLINE_PHASE_TEXT.provider_processing;
           persist(s);
           render();
+          if (s.cancelRequested) { await cancel(s.documentSessionId); return; }
           schedulePoll(s, s.jobId);
         } else {
           throw new Error((res && res.message) || "任务提交失败");
         }
       } catch (err) {
         if (s.jobId !== clientJobId || !s.busy) return;
+        if (err.name === "AbortError" || err.name === "TypeError" || err.status >= 500 || err.status === 408) {
+          s.error = "提交响应未确认，正在按原任务编号查询，不会重复提交。";
+          persist(s);
+          render();
+          schedulePoll(s, clientJobId);
+          return;
+        }
         s.busy = false;
         s.status = "failed";
         s.phase = "failed";
@@ -521,11 +538,12 @@
     async function poll(sessionId, expectedJobId) {
       var s = sessionId ? stateFor(sessionId) : current();
       var jobId = expectedJobId || s.jobId;
-      if (!jobId || s.jobId !== jobId || !s.busy) return;
+      if (!jobId || s.jobId !== jobId || !s.busy || s.pollPaused) return;
       try {
         var res = await request("/ppt/material-outline/jobs/" + encodeURIComponent(jobId) + "?documentSessionId=" + encodeURIComponent(s.documentSessionId));
         if (s.jobId !== jobId || !s.busy) return;
         if (!res || !res.success || !res.data) throw new Error("任务状态响应无效");
+        s.pollErrors = 0;
         if (res && res.success && res.data) {
           var job = res.data;
           s.status = job.status || s.status;
@@ -553,6 +571,7 @@
             render();
           } else {
             // Still running or queued
+            if (s.cancelRequested) { await cancel(s.documentSessionId); return; }
             persist(s);
             render();
             schedulePoll(s, jobId);
@@ -571,7 +590,10 @@
           persist(s);
           render();
         } else {
+          s.pollErrors = (s.pollErrors || 0) + 1;
+          if (s.pollErrors >= 3) s.pollPaused = true;
           s.error = (err && err.message) || "状态查询暂时失败，正在重试。";
+          if (s.pollPaused) s.error += " 已暂停等待，可继续查询同一任务或重试停止。";
           persist(s);
           render();
           schedulePoll(s, jobId);
@@ -580,7 +602,7 @@
     }
 
     function schedulePoll(s, jobId) {
-      if (s.pollScheduled === jobId || !s.busy || s.jobId !== jobId) return;
+      if (s.pollScheduled === jobId || !s.busy || s.jobId !== jobId || s.pollPaused) return;
       s.pollScheduled = jobId;
       schedule(function () {
         if (s.pollScheduled === jobId) s.pollScheduled = false;
@@ -588,9 +610,10 @@
       }, 1000);
     }
 
-    async function cancel() {
-      var s = current();
+    async function cancel(sessionId) {
+      var s = sessionId ? stateFor(sessionId) : current();
       if (!s.jobId || !s.busy) return;
+      s.cancelRequested = true;
       var jobId = s.jobId;
       try {
         var res = await request("/ppt/material-outline/jobs/" + encodeURIComponent(jobId) + "/cancel", {
@@ -610,6 +633,7 @@
         return res;
       } catch (err) {
         if (s.jobId !== jobId) return;
+        s.pollPaused = true;
         s.error = "取消失败：" + ((err && err.message) || "请稍后重试");
         persist(s);
         render();

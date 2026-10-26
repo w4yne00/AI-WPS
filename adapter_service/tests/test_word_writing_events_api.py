@@ -332,7 +332,7 @@ class WordWritingEventsApiTests(unittest.TestCase):
             final_job_2 = coordinator.wait("imitation-events-job-002", task_type="word.smart_imitation")
             self.assertEqual(final_job_2["status"], "cancelled")
 
-            # Blocking job cancel returns 409 LONG_TASK_NOT_CANCELLABLE on both
+            # Non-streaming jobs accept cooperative running cancellation on both runtimes.
             blocking_worker = BlockingWritingWorker()
             blocking_store = SmartImitationJobStore(worker=blocking_worker, coordinator=coordinator)
             word_api.smart_imitation_jobs = blocking_store
@@ -344,15 +344,16 @@ class WordWritingEventsApiTests(unittest.TestCase):
             self.assertTrue(blocking_worker.started.wait(timeout=2))
 
             fa_block_del = self._invoke_fastapi("DELETE", "/word/smart-imitation/jobs/imitation-block-job-003")
-            self.assertEqual(fa_block_del["status"], 409)
-            self.assertEqual(fa_block_del["body"]["errors"][0]["code"], "LONG_TASK_NOT_CANCELLABLE")
+            self.assertEqual(fa_block_del["status"], 200)
+            self.assertIn(fa_block_del["body"]["data"]["status"], {"running", "cancelled"})
 
             sa_block_del = self._invoke_standalone("do_DELETE", "/word/smart-imitation/jobs/imitation-block-job-003")
-            self.assertEqual(sa_block_del["status"], 409)
-            self.assertEqual(sa_block_del["body"]["errors"][0]["code"], "LONG_TASK_NOT_CANCELLABLE")
-
+            self.assertEqual(sa_block_del["status"], 200)
+            self.assertIn(sa_block_del["body"]["data"]["status"], {"running", "cancelled"})
+            blocking_worker.step_event.set()
             blocking_worker.release_event.set()
-            coordinator.wait("imitation-block-job-003", task_type="word.smart_imitation")
+            self.assertEqual(coordinator.wait("imitation-block-job-003", task_type="word.smart_imitation")["status"], "cancelled")
+
         finally:
             word_api.smart_imitation_jobs = orig_im_fa
             standalone_adapter.SMART_IMITATION_JOB_STORE = orig_im_sa

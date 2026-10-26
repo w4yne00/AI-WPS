@@ -14,7 +14,7 @@ function functionSource(name) {
 }
 
 function loadFunctions(names, context) {
-  names = [...new Set(["getWritingDocTaskKey", "isCurrentWritingJob", ...names])];
+  names = [...new Set(["getWritingDocTaskKey", "isCurrentWritingJob", "getActiveWritingJobRecord", ...names])];
   const declarations = names.map(functionSource).join("\n");
   const exports = names.map((name) => `${name}: ${name}`).join(",");
   return vm.runInNewContext(

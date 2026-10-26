@@ -217,7 +217,7 @@ assert.ok(pptJs.includes("requestedSlideCount"));
 assert.ok(pptJs.includes("userInstruction"));
 assert.ok(pptJs.includes("clientJobId"));
 assert.ok(pptJs.includes("PPT_SLIDE_POLL_REQUEST_TIMEOUT_MS = 10000"));
-assert.ok(pptJs.includes("PPT_SLIDE_POLL_MAX_ERRORS = 240"));
+assert.ok(pptJs.includes("PPT_SLIDE_POLL_MAX_ERRORS = 3"));
 assert.ok(pptJs.includes("PPT_SLIDE_POLL_MAX_WAIT_MS = 60 * 60 * 1000"));
 assert.ok(pptJs.includes("ai-wps-ppt-slide-assistant-active-job-v1"));
 assert.ok(pptJs.includes('stage: "uploaded"'));
@@ -228,7 +228,8 @@ assert.ok(pptJs.includes('"ppt-source-slide"'));
 assert.ok(pptJs.includes('"ppt-document-file"'));
 assert.ok(pptJs.includes('(statusMessage || "总结失败") + "：" + failureMessage'));
 assert.ok(pptJs.includes('"btn-open-settings"'));
-assert.ok(!pptJs.includes("button.disabled = false"));
+const pptRunControls = pptJs.slice(pptJs.indexOf("function setRunDisabled("), pptJs.indexOf("function setPptJobActionVisibility("));
+assert.ok(!pptRunControls.includes("button.disabled = false"));
 [
   "Slides.Add",
   "Shapes.Add",
@@ -592,7 +593,7 @@ assert.ok(excelJs.includes("/excel/analysis"));
 assert.ok(excelJs.includes("/excel/analysis/jobs"));
 assert.ok(excelJs.includes("/excel/formula-assistant/jobs"));
 assert.ok(excelJs.includes("pollExcelAnalysisJob"));
-assert.ok(excelJs.includes("EXCEL_ANALYSIS_POLL_MAX_ERRORS = 240"));
+assert.ok(excelJs.includes("EXCEL_ANALYSIS_POLL_MAX_ERRORS = 3"));
 assert.ok(excelJs.includes("EXCEL_ANALYSIS_POLL_ERROR_RETRY_DELAY_MS = 15000"));
 assert.ok(excelJs.includes("EXCEL_ANALYSIS_POLL_SLOW_RETRY_DELAY_MS = 30000"));
 assert.ok(excelJs.includes("EXCEL_ANALYSIS_POLL_REQUEST_TIMEOUT_MS = 10000"));
@@ -610,7 +611,7 @@ assert.ok(excelJs.includes("job.canCancel"));
 assert.ok(excelJs.includes('job.status === "cancelled"'));
 assert.ok(excelJs.includes('method: "DELETE"'));
 assert.ok(excelJs.includes("EXCEL_ANALYSIS_JOB_INTERRUPTED"));
-assert.ok(excelJs.includes("adapter 已重启，原智能分析任务已中断"));
+assert.ok(excelJs.includes("任务不存在或已中断，请重新提交。"));
 assert.ok(excelJs.includes('"?resume=1"'));
 const excelSubmitStart = excelJs.indexOf("function runExcelAnalysisAction()");
 const excelSubmitEnd = excelJs.indexOf("\n  function ", excelSubmitStart + 1);
@@ -638,7 +639,7 @@ assert.ok(!excelJs.includes("/word/document-review"));
 
 assert.ok(pptHtml.includes('id="btn-cancel-ppt-slide-job"'));
 assert.ok(pptHtml.includes('id="btn-resubmit-interrupted-job"'));
-assert.ok(pptJs.includes("job.canCancel"));
+assert.ok(pptJs.includes('cancelButton.textContent = "停止任务"'));
 assert.ok(pptJs.includes('method: "DELETE"'));
 assert.ok(pptJs.includes("PPT_SLIDE_JOB_INTERRUPTED"));
 assert.ok(pptJs.includes("adapter 已重启，原智能总结任务已中断"));

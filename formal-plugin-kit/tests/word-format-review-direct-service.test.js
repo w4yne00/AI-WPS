@@ -334,7 +334,7 @@ test("real format submission reaches background jobs when semantic validation is
     state: { deterministicFormatReviewEnabled: true, activeTaskSlots: {}, taskModelSelections: { 'word.format_review': selection },
       taskApiKeys: { 'word.format_review': { accessMethod: 'direct_model', activeProfileId: service.id } } },
     findDirectService: () => service, getActiveDocument: () => ({}), resolveSelectionScope: () => ({ ok: true }),
-    setStatus: noop, setPlainResult: noop, setResult: message => complete(new Error(message)), setActiveResultRecord: noop,
+    setStatus: noop, setPlainResult: noop, setResult: message => complete(new Error(message)), setActiveResultRecord: noop, switchWordHistoryView: noop,
     clearDeterministicFormatReviewPresentation: noop, clearDeterministicFormatReviewActiveJob: noop, setModelTaskBusy: noop,
     setTimeout, DETERMINISTIC_FORMAT_REVIEW_REQUEST_TIMEOUT_MS: 1000,
     extractDeterministicFormatReviewSnapshot: () => ({ blocks: [], contentSha256: 'c', structureSha256: 's', formatSha256: 'f', documentIdentity: {}, coverage: {}, editSequence: '1' }),

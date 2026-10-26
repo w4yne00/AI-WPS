@@ -238,8 +238,12 @@
       writtenToSlide: false,
       newSlideIndex: null
     };
+    var initialState = JSON.stringify(currentState);
 
     function notify() {
+      if (currentState.documentSessionId) {
+        try { storage.setItem("ppt.template-page-job:" + currentState.documentSessionId, JSON.stringify(currentState)); } catch (e) {}
+      }
       try {
         render(getState());
       } catch (e) {
@@ -313,6 +317,14 @@
     }
 
     function startGenerate(params) {
+      getState();
+      if (currentState.status === "running" && currentState.pollPaused) {
+        currentState.pollPaused = false;
+        currentState.pollErrors = 0;
+        currentState.error = null;
+        notify();
+        return _pollJob(currentState.jobId, currentState.documentSessionId);
+      }
       var p = params || {};
       try { assertNoRecovery(); } catch (recoveryErr) { return Promise.reject(recoveryErr); }
       if (currentState.status === "running") return Promise.reject(new Error("正文页任务正在运行。"));
@@ -341,6 +353,9 @@
       currentState.phase = "preparing";
       currentState.jobId = clientJobId;
       currentState.clientJobId = clientJobId;
+      currentState.cancelRequested = false;
+      currentState.pollPaused = false;
+      currentState.pollErrors = 0;
       currentState.currentCandidate = candidate;
       currentState.result = null;
       currentState.error = null;
@@ -371,10 +386,18 @@
           }
           var jobId = (startResp.data && startResp.data.jobId) || clientJobId;
           currentState.jobId = jobId;
+          notify();
+          if (currentState.cancelRequested) return cancelJob().then(function () { return _pollJob(jobId, sessionId); });
           return _pollJob(jobId, sessionId);
         }).catch(function (err) {
           if (currentState.documentSessionId !== sessionId || currentState.clientJobId !== clientJobId) throw err;
           if (currentState.status === "cancelled") return { status: "CANCELLED" };
+          if (err.name === "AbortError" || err.name === "TypeError" || err.status >= 500 || err.status === 408) {
+            currentState.pollPaused = true;
+            currentState.error = { message: "提交或停止未确认，已暂停等待；可继续查询原任务或重试停止。" };
+            notify();
+            return { status: "PAUSED" };
+          }
           currentState.status = "failed";
           currentState.phase = "failed";
           currentState.error = { message: err.message || String(err) };
@@ -391,6 +414,7 @@
             resolve({ status: "CANCELLED" });
             return;
           }
+          if (currentState.pollPaused) { resolve({ status: "PAUSED" }); return; }
 
           var url = "/ppt/template-page/jobs/" + encodeURIComponent(jobId) + "?documentSessionId=" + encodeURIComponent(sessionId);
           request(url, null, { method: "GET" })
@@ -401,6 +425,7 @@
                 throw new Error((resp && resp.message) || "查询任务失败");
               }
               var data = resp.data || {};
+              currentState.pollErrors = 0;
               currentState.phase = data.phase || currentState.phase;
 
               if (data.status === "completed") {
@@ -457,12 +482,25 @@
               }
 
               // Still queued / running
+              if (currentState.cancelRequested) {
+                cancelJob().then(function () { schedule(check, pollIntervalMs); }).catch(function () { resolve({ status: "PAUSED" }); });
+                return;
+              }
               notify();
               schedule(check, pollIntervalMs);
             })
             .catch(function (err) {
               if (currentState.documentSessionId !== sessionId || currentState.jobId !== jobId) { resolve({ status: "STALE" }); return; }
               if (currentState.status === "cancelled") { resolve({ status: "CANCELLED" }); return; }
+              if (!(err && (err.status === 404 || err.adapterCode === "LONG_TASK_NOT_FOUND")) && (err.name === "AbortError" || err.name === "TypeError" || err.status >= 500)) {
+                currentState.pollErrors = (currentState.pollErrors || 0) + 1;
+                if (currentState.pollErrors < 3) { schedule(check, pollIntervalMs); return; }
+                currentState.pollPaused = true;
+                currentState.error = { message: "连接中断，已暂停等待，可继续查询原任务或停止任务。" };
+                notify();
+                resolve({ status: "PAUSED" });
+                return;
+              }
               currentState.status = "failed";
               currentState.phase = "failed";
               currentState.error = { message: err.message || String(err) };
@@ -476,10 +514,12 @@
     }
 
     function cancelJob() {
+      getState();
       if (currentState.status !== "running") return Promise.resolve();
       var jobId = currentState.jobId;
       var clientJobId = currentState.clientJobId;
       var sessionId = currentState.documentSessionId;
+      currentState.cancelRequested = true;
       currentState.phase = "stopping";
       notify();
       return request("/ppt/template-page/jobs/" + encodeURIComponent(jobId) + "/cancel", {
@@ -491,10 +531,11 @@
           currentState.status = "cancelled";
           currentState.phase = "cancelled";
           currentState.result = null;
-        }
+        } else throw new Error("服务端尚未确认停止，请继续查询或重试停止。");
         notify();
       }).catch(function (err) {
         if (currentState.documentSessionId === sessionId && currentState.clientJobId === clientJobId) {
+          currentState.pollPaused = true;
           currentState.error = { message: "取消未确认：" + (err.message || String(err)) };
           notify();
         }
@@ -555,6 +596,15 @@
 
     function getState() {
       var sessionId = getSessionId();
+      if (currentState.documentSessionId !== sessionId) {
+        var task = null;
+        try { task = JSON.parse(storage.getItem("ppt.template-page-job:" + sessionId) || "null"); } catch (e) {}
+        currentState = task || Object.assign(JSON.parse(initialState), { documentSessionId: sessionId });
+        if (task && currentState.status === "running") {
+          currentState.pollPaused = true;
+          currentState.error = { message: "原任务编号已恢复，请继续查询或停止任务，不会再次提交模型。" };
+        }
+      }
       var saved = recoveryFor(sessionId);
       var view = currentState.documentSessionId && currentState.documentSessionId !== sessionId ?
         { status: "idle", result: null, documentSessionId: sessionId, error: null } : Object.assign({}, currentState);
