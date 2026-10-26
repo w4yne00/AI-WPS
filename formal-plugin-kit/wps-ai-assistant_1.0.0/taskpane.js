@@ -625,11 +625,13 @@
     if (record) {
       state.activeWritingJobs[key] = record;
       state.activeWritingJobsByTask[taskType] = record;
-      // Keep the latest identity after cleanup to reject callbacks from earlier tasks.
+      // Track the latest identity to reject callbacks from earlier tasks.
       state.latestWritingJobIds = state.latestWritingJobIds || {};
       state.latestWritingJobIds[key] = record.jobId;
     } else {
       delete state.activeWritingJobs[key];
+      state.latestWritingJobIds = state.latestWritingJobIds || {};
+      state.latestWritingJobIds[key] = "";
       if (state.activeWritingJobsByTask[taskType]) {
         var existingJob = state.activeWritingJobsByTask[taskType];
         if (!docSessionId || !existingJob || !existingJob.documentSessionId || existingJob.documentSessionId === docSessionId) {
@@ -749,6 +751,7 @@
     var key = getWritingActiveJobStorageKey(job.taskType, job.documentSessionId);
     try {
       if (window.localStorage) {
+        var previous = loadWritingActiveJob(job.taskType, job.documentSessionId);
         var record = JSON.stringify({
           jobId: job.jobId,
           taskType: job.taskType,
@@ -756,7 +759,7 @@
           documentSessionId: job.documentSessionId || "",
           traceId: job.traceId || "",
           startedAt: job.startedAt || Date.now(),
-          streamingEnabled: typeof job.streamingEnabled === "boolean" ? job.streamingEnabled : false,
+          streamingEnabled: typeof job.streamingEnabled === "boolean" ? job.streamingEnabled : Boolean(previous && previous.jobId === job.jobId && previous.streamingEnabled),
           frontendVersion: FRONTEND_BUILD_VERSION
         });
         window.localStorage.setItem(key, record);
@@ -9651,6 +9654,7 @@
         mode: mode,
         documentSessionId: targetDocSession,
         traceId: body.traceId || job.traceId || "",
+        streamingEnabled: job.streamingEnabled,
         startedAt: state.writingJobStartedAt || Date.now()
       });
       if (job.status === "completed") {
@@ -9918,6 +9922,7 @@
         mode: mode,
         documentSessionId: targetDocSession,
         traceId: body.traceId || jobId,
+        streamingEnabled: payload.streamingEnabled,
         startedAt: (state && state.writingJobStartedAt) || Date.now()
       });
 
@@ -9930,7 +9935,7 @@
           setWritingJobPreviewSnapshot(consumerKey, payload.previewSnapshot, taskType, jobId, targetDocSession, mode);
         }
         if (isCurrentWritingView()) {
-          renderWritingJobProgress(payload.previewSnapshot, taskType, jobId);
+          renderWritingJobProgress(Object.assign({}, payload.previewSnapshot, payload), taskType, jobId);
         }
       }
 
@@ -9947,8 +9952,12 @@
             appendWritingJobPreviewDelta(consumerKey, evt.delta, taskType, jobId, targetDocSession, mode);
           }
         } else if (isCurrentWritingView()) {
-          renderWritingJobProgress(evt, taskType, jobId);
+          renderWritingJobProgress(Object.assign({}, evt, payload), taskType, jobId);
         }
+      }
+
+      if (!payload.previewSnapshot && events.every(function (evt) { return evt.type === "delta"; }) && isCurrentWritingView()) {
+        renderWritingJobProgress(payload, taskType, jobId);
       }
 
       if (payload.previewTruncated && !isTerminal && isCurrentWritingView()) {
@@ -10134,7 +10143,7 @@
 
     state.documentSessionId = docSession;
     if (helpers.isTaskSlotBusy && helpers.isTaskSlotBusy(state.activeTaskSlots, "wps", taskType, docSession)) {
-      setModelTaskBusy(false);
+      setModelTaskBusy(true);
       setStatus("已有" + writingTaskLabel(taskType) + "任务尚未结束，请等待当前任务完成。");
       return;
     }
@@ -10273,6 +10282,7 @@
       taskType: active.taskType,
       mode: active.mode,
       documentSessionId: docSession,
+      streamingEnabled: active.streamingEnabled,
       startedAt: state.writingJobStartedAt
     };
     setActiveWritingJobRecord(active.taskType, docSession, jobRecord);
@@ -10329,6 +10339,15 @@
         var consumerKey = [taskType, targetDocSession, jobId].join("::");
         var preview = state && state.writingJobPreviews && state.writingJobPreviews[consumerKey];
         var previewText = (preview && preview.text) || (job.previewSnapshot && job.previewSnapshot.text) || (job.result && job.result.previewText) || "";
+        if (preview) {
+          if (preview.renderTimer) {
+            clearTimeout(preview.renderTimer);
+          }
+          delete state.writingJobPreviews[consumerKey];
+        }
+        if (state.writingEventConsumers) {
+          delete state.writingEventConsumers[consumerKey];
+        }
         if (previewText) {
           if (typeof setPlainResult === "function") {
             setPlainResult(previewText, previewText);

@@ -142,7 +142,7 @@ def _cancellable_urlopen(request, timeout, control):
 
 
 def _open_task_response(request, timeout, task_type, control):
-    if (task_type in ("word.material_composer", "ppt.material_outline") and control is not None
+    if (task_type in ("word.smart_write", "word.smart_imitation", "word.material_composer", "ppt.material_outline") and control is not None
             and hasattr(control, "set_cancel_callback") and hasattr(control, "clear_cancel_callback")):
         return _cancellable_urlopen(request, timeout, control)
     return urllib_request.urlopen(request, timeout=timeout)
@@ -3697,7 +3697,7 @@ class ProviderClient:
             t_headers = time.monotonic()
             status = int(exc.code)
             raw_error_body, error_body_complete = _read_http_error_raw_result(
-                exc, progress_callback if task_type in ("word.material_composer", "ppt.material_outline") else None,
+                exc, progress_callback if task_type in ("word.smart_write", "word.smart_imitation", "word.material_composer", "ppt.material_outline") else None,
                 deadline=deadline,
             )
             t_complete = time.monotonic() if error_body_complete else None
@@ -4076,7 +4076,7 @@ class ProviderClient:
             except error.HTTPError as exc:
                 t_headers = time.monotonic()
                 raw_error_body, error_body_complete = _read_http_error_raw_result(
-                    exc, progress_callback if task_type in ("word.material_composer", "ppt.material_outline") else None
+                    exc, progress_callback if task_type in ("word.smart_write", "word.smart_imitation", "word.material_composer", "ppt.material_outline") else None
                 )
                 error_body = _sanitize_provider_error_body(
                     raw_error_body,

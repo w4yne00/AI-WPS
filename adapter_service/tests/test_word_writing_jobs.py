@@ -342,7 +342,7 @@ class WritingJobStoreTests(unittest.TestCase):
 
         sent_requests = []
 
-        def fake_urlopen(req, timeout=None):
+        def fake_urlopen(req, timeout=None, task_type=None, control=None):
             sent_requests.append(req)
             return FakeHTTPResponse([sse_payload])
 
@@ -359,7 +359,7 @@ class WritingJobStoreTests(unittest.TestCase):
             document_display_name="全链路.docx",
         )
 
-        with patch.dict("os.environ", {"AI_WPS_ENABLE_DIRECT_STREAMING": "1"}), patch("urllib.request.urlopen", fake_urlopen):
+        with patch.dict("os.environ", {"AI_WPS_ENABLE_DIRECT_STREAMING": "1"}), patch("app.services.provider_client._open_task_response", fake_urlopen):
             store.start(req, "trace-e2e-1")
             res = self.wait_completed(store, "client-write-e2e-1")
 

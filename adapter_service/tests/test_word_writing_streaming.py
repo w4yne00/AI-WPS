@@ -372,7 +372,7 @@ class ProviderClientDirectStreamingIntegrationTests(unittest.TestCase):
 
         with patch.dict(
             "os.environ", {"AI_WPS_ENABLE_DIRECT_STREAMING": "1"}
-        ), patch("urllib.request.urlopen", return_value=response):
+        ), patch("app.services.provider_client._open_task_response", return_value=response):
             coordinator.submit(
                 job_id="silent-cancel-job",
                 trace_id="trace-silent-cancel",
@@ -977,7 +977,7 @@ class SmartImitationStreamingTests(unittest.TestCase):
 
         with patch.dict(
             "os.environ", {"AI_WPS_ENABLE_DIRECT_STREAMING": "1"}
-        ), patch("urllib.request.urlopen", return_value=response):
+        ), patch("app.services.provider_client._open_task_response", return_value=response):
             coordinator.submit(
                 job_id="silent-cancel-imitation-job",
                 trace_id="trace-silent-cancel-imitation",
